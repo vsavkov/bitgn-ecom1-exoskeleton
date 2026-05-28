@@ -19,6 +19,9 @@
 - Run the full benchmark via Make: `make run`
 - Run selected tasks via Make: `make task TASKS="t01 t04"`
 
+## Commits
+
+Оформляй коммиты с подробными пояснениями, что в него включено.
 
 ## BITGN Architecture
 
