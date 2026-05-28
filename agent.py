@@ -29,7 +29,14 @@ from pydantic import BaseModel, Field, ValidationError
 
 class ReportTaskCompletion(BaseModel):
     completed_steps_laconic: List[str]
-    message: str = Field(description="Include <YES> or <NO> tokens in the response for relevant questions")
+    message: str = Field(
+        description=(
+            "Exact final user-visible answer. If the task asks for an exact "
+            "format, this field must contain only that format and no prose. "
+            "Use <YES> or <NO> only for yes/no questions when no exact output "
+            "format was requested."
+        )
+    )
     grounding_refs: List[str] = Field(default_factory=list)
     outcome: Literal[
         "OUTCOME_OK",
@@ -208,8 +215,9 @@ TOOLS = [
         ReportTaskCompletion,
         name="report_completion",
         description=(
-            "Submit the final task answer to the ECOM runtime with outcome and "
-            "grounding references."
+            "Submit the final task answer to the ECOM runtime. The message is "
+            "the exact final answer that will be graded; keep explanations in "
+            "completed_steps_laconic and references in grounding_refs."
         ),
     ),
 ]
