@@ -427,6 +427,8 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
     context = []
 
     must = [
+        ReqRead(path="/AGENTS.MD", number=False, start_line=0, end_line=0),
+        ReqTree(level=2, root="/"),
         ReqExec(path="/bin/date"),
         ReqExec(path="/bin/id"),
     ]

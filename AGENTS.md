@@ -13,6 +13,9 @@
 При этом нужно не затачиваться под конкретные задачи, а выявлять на основе них нюансы и правила поведения,
 которые должны быть отражены в агенте.
 
+В [agent_original.py](agent_original.py) оригинальная версия агента, 
+которая предоставляется как пример с https://github.com/bitgn/sample-agents/tree/main/ecom-py.
+
 ## Commands
 
 - Install or update the local environment: `make sync`

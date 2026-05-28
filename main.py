@@ -10,6 +10,7 @@ from bitgn.harness_pb2 import (
     StartTrialRequest,
     StatusRequest,
     SubmitRunRequest,
+    TRIAL_STATE_DONE,
 )
 from connectrpc.errors import ConnectError
 
@@ -36,7 +37,6 @@ CLI_BLUE = "\x1B[34m"
 
 def main() -> None:
     task_filter = os.sys.argv[1:]
-    scores = []
 
     try:
         client = HarnessServiceClientSync(BITGN_URL)
@@ -58,44 +58,54 @@ def main() -> None:
 
         try:
             for trial_id in run.trial_ids:
-                trial = client.start_trial(
+                t = client.start_trial(
                     StartTrialRequest(trial_id=trial_id),
                 )
-                if task_filter and trial.task_id not in task_filter:
+                if task_filter and t.task_id not in task_filter:
                     continue
 
-                print(f"{'=' * 30} Starting task: {trial.task_id} {'=' * 30}")
-                print(f"{CLI_BLUE}{trial.instruction}{CLI_CLR}\n{'-' * 80}")
+                print(f"{'=' * 30} Starting task: {t.task_id} {'=' * 30}")
+                print(f"{CLI_BLUE}{t.instruction}{CLI_CLR}\n{'-' * 80}")
                 try:
-                    run_agent(MODEL_ID, trial.harness_url, trial.instruction)
+                    run_agent(MODEL_ID, t.harness_url, t.instruction)
                 except Exception as exc:
                     print(exc)
 
-                result = client.end_trial(EndTrialRequest(trial_id=trial.trial_id))
-                if result.score_available:
-                    scores.append((trial.task_id, result.score))
-                    style = CLI_GREEN if result.score == 1 else CLI_RED
-                    explain = textwrap.indent("\n".join(result.score_detail), "  ")
-                    print(
-                        f"\n{style}Score: {result.score:0.2f}\n{explain}\n{CLI_CLR}"
-                    )
-                else:
-                    print(f"\n{CLI_BLUE}Score: not available{CLI_CLR}\n")
+                client.end_trial(EndTrialRequest(trial_id=t.trial_id))
         finally:
-            client.submit_run(SubmitRunRequest(run_id=run.run_id, force=True))
+            print(f"\n{CLI_GREEN}>>>> Submitting run... <<<<{CLI_CLR}")
+            result = client.submit_run(SubmitRunRequest(run_id=run.run_id, force=True))
+
+            if result.score_available:
+                print(f"FINAL SCORE: {result.score:0.2f}")
+                incomplete = 0
+                for t in result.trials:
+                    if t.state != TRIAL_STATE_DONE:
+                        incomplete += 1
+                        continue
+
+                    style = CLI_GREEN if t.score == 1 else CLI_RED
+                    explain = "\n" + textwrap.indent(
+                        "\n".join(t.score_detail),
+                        "  ",
+                    ) + "\n"
+                    print(
+                        f"- {t.task_id}: {style}Score: {t.score:0.2f}{CLI_CLR}"
+                        f"{explain}".strip("\n ")
+                    )
+
+                if incomplete > 0:
+                    print(f"{CLI_RED}incomplete trials: {incomplete}{CLI_CLR}")
+            else:
+                print(
+                    f"\n{CLI_RED}Score is not available. Results are sealed and "
+                    f"will be revealed later{CLI_CLR}\n"
+                )
 
     except ConnectError as exc:
         print(f"{exc.code}: {exc.message}")
     except KeyboardInterrupt:
         print(f"{CLI_RED}Interrupted{CLI_CLR}")
-
-    if scores:
-        for task_id, score in scores:
-            style = CLI_GREEN if score == 1 else CLI_RED
-            print(f"{task_id}: {style}{score:0.2f}{CLI_CLR}")
-
-        total = sum(score for _, score in scores) / len(scores) * 100.0
-        print(f"FINAL: {total:0.2f}%")
 
 
 if __name__ == "__main__":
