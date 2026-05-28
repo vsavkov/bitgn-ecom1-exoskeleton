@@ -1,7 +1,7 @@
 # AICODE-NOTE: Keep these wrappers aligned with the README commands so the sample
 # stays trivial to run from a fresh checkout without inventing parallel workflows.
 
-.PHONY: sync run task
+.PHONY: sync run task dump
 
 sync:
 	uv sync
