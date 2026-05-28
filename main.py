@@ -50,7 +50,7 @@ def main() -> None:
 
         run = client.start_run(
             StartRunRequest(
-                name="@dev_salikhov bitgn ecom1",
+                name=f"@dev_salikhov ecom1 {MODEL_ID}",
                 benchmark_id=BENCH_ID,
                 api_key=BITGN_API_KEY,
             )

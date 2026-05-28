@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 class ReportTaskCompletion(BaseModel):
     completed_steps_laconic: List[str]
-    message: str
+    message: str = Field(description="Include <YES> or <NO> tokens in the response for relevant questions")
     grounding_refs: List[str] = Field(default_factory=list)
     outcome: Literal[
         "OUTCOME_OK",
@@ -153,7 +153,13 @@ TOOLS = [
     _responses_function_tool(
         ReqTree,
         name="tree",
-        description="List a runtime filesystem tree under an absolute path.",
+        description=(
+            "List a runtime filesystem tree under an absolute path. Tree output is "
+            "enriched once per trial: extensionless file entries include their "
+            "'<path> --help' output, and AGENTS.md/README.md files are read "
+            "case-insensitively. Repeated enrichment for the same path is "
+            "suppressed."
+        ),
     ),
     _responses_function_tool(
         ReqFind,
@@ -339,6 +345,95 @@ def _format_result(cmd: BaseModel, result) -> str:
     return json.dumps(MessageToDict(result), indent=2)
 
 
+INSTRUCTION_FILENAMES = {"agents.md", "readme.md"}
+
+
+def _normalize_runtime_path(path: str) -> str:
+    if not path or path == "/":
+        return "/"
+    return f"/{path.strip('/')}"
+
+
+def _child_runtime_path(parent: str, name: str) -> str:
+    parent = _normalize_runtime_path(parent)
+    if parent == "/":
+        return f"/{name}"
+    return f"{parent}/{name}"
+
+
+def _iter_tree_paths(root_path: str, entry):
+    root_path = _normalize_runtime_path(root_path)
+    yield root_path, entry
+    for child in list(getattr(entry, "children", []) or []):
+        name = getattr(child, "name", "")
+        if not name:
+            continue
+        yield from _iter_tree_paths(_child_runtime_path(root_path, name), child)
+
+
+def _remember_seen_tool_use(cmd: BaseModel, seen_help: set[str], seen_read: set[str]) -> None:
+    if isinstance(cmd, ReqRead):
+        seen_read.add(_normalize_runtime_path(cmd.path))
+    if isinstance(cmd, ReqExec) and cmd.args == ["--help"]:
+        seen_help.add(_normalize_runtime_path(cmd.path))
+
+
+def _is_command_path(path: str, entry) -> bool:
+    if getattr(entry, "kind", None) != NodeKind.NODE_KIND_FILE:
+        return False
+    name = path.rsplit("/", 1)[-1]
+    return "." not in name
+
+
+def _tree_followup_commands(
+    cmd: ReqTree,
+    result,
+    seen_help: set[str],
+    seen_read: set[str],
+) -> list[BaseModel]:
+    help_commands = []
+    read_commands = []
+
+    for path, entry in _iter_tree_paths(cmd.root, result.root):
+        if getattr(entry, "kind", None) != NodeKind.NODE_KIND_FILE:
+            continue
+
+        name = path.rsplit("/", 1)[-1]
+        lower_name = name.lower()
+        if _is_command_path(path, entry) and path not in seen_help:
+            seen_help.add(path)
+            help_commands.append(ReqExec(path=path, args=["--help"]))
+
+        if lower_name in INSTRUCTION_FILENAMES and path not in seen_read:
+            seen_read.add(path)
+            read_commands.append(
+                ReqRead(path=path, number=False, start_line=0, end_line=0)
+            )
+
+    return read_commands + help_commands
+
+
+def _format_result_with_tree_followups(
+    vm: EcomRuntimeClientSync,
+    cmd: BaseModel,
+    result,
+    seen_help: set[str],
+    seen_read: set[str],
+) -> str:
+    parts = [_format_result(cmd, result)]
+    if not isinstance(cmd, ReqTree):
+        return parts[0]
+
+    for followup in _tree_followup_commands(cmd, result, seen_help, seen_read):
+        try:
+            followup_result = dispatch(vm, followup)
+            parts.append(_format_result(followup, followup_result))
+        except ConnectError as exc:
+            print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
+
+    return "\n\n".join(parts)
+
+
 def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
     if isinstance(cmd, ReqTree):
         return vm.tree(TreeRequest(root=cmd.root, level=cmd.level))
@@ -425,24 +520,30 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
     client = OpenAI()
     vm = EcomRuntimeClientSync(harness_url)
     context = []
+    tree_help_paths: set[str] = set()
+    tree_read_paths: set[str] = set()
 
     must = [
-        ReqRead(path="/AGENTS.MD", number=False, start_line=0, end_line=0),
         ReqTree(level=2, root="/"),
+        ReqTree(level=3, root="/bin"),
+        ReqTree(level=3, root="/docs"),
         ReqExec(path="/bin/date"),
         ReqExec(path="/bin/id"),
     ]
 
     for cmd in must:
         result = dispatch(vm, cmd)
-        formatted = _format_result(cmd, result)
+        _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
+        formatted = _format_result_with_tree_followups(
+            vm, cmd, result, tree_help_paths, tree_read_paths
+        )
         print(f"{CLI_GREEN}AUTO{CLI_CLR}: {formatted}")
         context.append({"role": "user", "content": formatted})
 
     context.append({"role": "user", "content": task_text})
 
     for i in range(30):
-        step = f"step_{i + 1}"
+        step = f"STEP_{i + 1}"
         started = time.time()
         resp = client.responses.create(
             model=model,
@@ -471,7 +572,7 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
             continue
 
         print(
-            f"Next {step}... {len(tool_calls)} responses tool call(s) "
+            f"{CLI_GREEN}{step}{CLI_CLR}: {len(tool_calls)} responses tool call(s) "
             f"({elapsed_ms} ms)"
         )
         context.extend(resp.output or [])
@@ -489,7 +590,10 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
 
             try:
                 result = dispatch(vm, cmd)
-                txt = _format_result(cmd, result)
+                _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
+                txt = _format_result_with_tree_followups(
+                    vm, cmd, result, tree_help_paths, tree_read_paths
+                )
                 print(f"{CLI_GREEN}OUT{CLI_CLR}: {txt}")
             except ConnectError as exc:
                 txt = str(exc.message)
