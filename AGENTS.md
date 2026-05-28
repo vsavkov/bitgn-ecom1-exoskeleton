@@ -49,3 +49,22 @@
 - Финальный `answer` должен содержать правильный `Outcome`: `OK` только когда действие/ответ реально завершены; `DENIED_SECURITY` для identity/role/override отказов; `NONE_UNSUPPORTED` для разрешенного пользователя, но неподдерживаемого состояния; `NONE_CLARIFICATION` только при настоящей неоднозначности.
 - Grounding refs важны для оценки: при policy-based решениях включать документ policy и конкретные record paths. Для yes/no ответов явно использовать `<YES>` или `<NO>`, как требует `/AGENTS.MD`.
 
+## LangSmith Trace Analysis
+
+Для разбора уже выполненного прогона используй read-only helper `scripts/langsmith_trace_report.py`; он читает LangSmith traces и не стартует BitGN run/trial.
+
+- Список последних root traces: `uv run python scripts/langsmith_trace_report.py --limit 80`.
+- Несколько задач по индексам: `uv run python scripts/langsmith_trace_report.py --limit 80 --indices 3,6,14-16`.
+- Детальный разбор с child LLM/tool spans: `uv run python scripts/langsmith_trace_report.py --limit 80 --indices 38-40 --children --output-limit 3000`.
+- Один trace по id: `uv run python scripts/langsmith_trace_report.py --run-id <RUN_ID> --children`.
+- Индексы в helper — это порядок root traces по `start_time`; перед сопоставлением с `tXX` проверь, нет ли более ранних одиночных запусков в том же проекте.
+
+## Run Reports
+
+Отчеты по прогонам складывай в `reports/report_run<N>_<YYYYMMDD_HHMMSS>.md`.
+
+- В начале укажи источник данных: score output пользователя, LangSmith project, диапазон root spans/revision и факт, что BitGN прогоны во время анализа не запускались.
+- Добавь сводку: итоговый score, количество full/zero/partial задач и основные группы проблем.
+- Добавь общую таблицу по всем задачам: task, score, деталь из grader output, категория.
+- Для неудачных и частичных кейсов опиши: затронутые task id, наблюдения из trace, корневую причину и обобщаемое предложение по улучшению агента.
+- Не затачивай выводы под конкретные SKU, basket id, payment id или customer id; используй их только как evidence в отчете, а предложения формулируй как общие правила поведения агента.
