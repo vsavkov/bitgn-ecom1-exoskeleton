@@ -23,6 +23,8 @@ from bitgn.vm.ecom.ecom_pb2 import (
 from connectrpc.errors import ConnectError
 from google.protobuf.json_format import MessageToDict
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from langsmith import traceable
+from langsmith.wrappers import wrap_openai
 from openai import OpenAI, pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError
 
@@ -129,6 +131,8 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "exec": ReqExec,
     "report_completion": ReportTaskCompletion,
 }
+
+TOOL_NAMES_BY_MODEL = {model: name for name, model in TOOL_MODELS.items()}
 
 
 def _render_system_prompt() -> str:
@@ -353,6 +357,43 @@ def _format_result(cmd: BaseModel, result) -> str:
     return json.dumps(MessageToDict(result), indent=2)
 
 
+def _trace_cmd(cmd: BaseModel) -> dict:
+    return {
+        "tool": TOOL_NAMES_BY_MODEL.get(type(cmd), type(cmd).__name__),
+        "args": cmd.model_dump(),
+    }
+
+
+def _trace_dispatch_inputs(inputs: dict) -> dict:
+    cmd = inputs.get("cmd")
+    if isinstance(cmd, BaseModel):
+        return _trace_cmd(cmd)
+    return {"tool": type(cmd).__name__}
+
+
+def _trace_dispatch_outputs(output) -> dict:
+    if output is None:
+        return {}
+    try:
+        return MessageToDict(output, preserving_proto_field_name=True)
+    except Exception:
+        return {"output": str(output)}
+
+
+def _trace_agent_inputs(inputs: dict) -> dict:
+    return {
+        "model": inputs.get("model"),
+        "task_text": inputs.get("task_text"),
+        "harness_url": "<redacted>" if inputs.get("harness_url") else None,
+    }
+
+
+def _trace_agent_outputs(output) -> dict:
+    if isinstance(output, dict):
+        return output
+    return {"output": output}
+
+
 INSTRUCTION_FILENAMES = {"agents.md", "readme.md"}
 
 
@@ -442,6 +483,12 @@ def _format_result_with_tree_followups(
     return "\n\n".join(parts)
 
 
+@traceable(
+    run_type="tool",
+    name="ECOM Runtime Tool",
+    process_inputs=_trace_dispatch_inputs,
+    process_outputs=_trace_dispatch_outputs,
+)
 def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
     if isinstance(cmd, ReqTree):
         return vm.tree(TreeRequest(root=cmd.root, level=cmd.level))
@@ -524,12 +571,19 @@ def _output_text(resp) -> str:
     return "\n".join(chunks)
 
 
-def run_agent(model: str, harness_url: str, task_text: str) -> None:
-    client = OpenAI()
+@traceable(
+    run_type="chain",
+    name="ECOM Agent",
+    process_inputs=_trace_agent_inputs,
+    process_outputs=_trace_agent_outputs,
+)
+def run_agent(model: str, harness_url: str, task_text: str) -> dict:
+    client = wrap_openai(OpenAI())
     vm = EcomRuntimeClientSync(harness_url)
     context = []
     tree_help_paths: set[str] = set()
     tree_read_paths: set[str] = set()
+    final_result: dict = {"completed": False}
 
     must = [
         ReqTree(level=2, root="/"),
@@ -610,6 +664,13 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
             context.append(_function_call_output(tool_call, txt))
 
             if isinstance(cmd, ReportTaskCompletion):
+                final_result = {
+                    "completed": True,
+                    "outcome": cmd.outcome,
+                    "message": cmd.message,
+                    "grounding_refs": cmd.grounding_refs,
+                    "completed_steps_laconic": cmd.completed_steps_laconic,
+                }
                 status = CLI_GREEN if cmd.outcome == "OUTCOME_OK" else CLI_YELLOW
                 print(f"{status}agent {cmd.outcome}{CLI_CLR}. Summary:")
                 for item in cmd.completed_steps_laconic:
@@ -623,3 +684,5 @@ def run_agent(model: str, harness_url: str, task_text: str) -> None:
 
         if completed:
             break
+
+    return final_result

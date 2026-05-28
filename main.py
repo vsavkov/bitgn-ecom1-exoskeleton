@@ -13,6 +13,7 @@ from bitgn.harness_pb2 import (
     TRIAL_STATE_DONE,
 )
 from connectrpc.errors import ConnectError
+from langsmith import Client as LangSmithClient
 
 from agent import run_agent
 from config import load_dotenv
@@ -33,6 +34,22 @@ CLI_RED = "\x1B[31m"
 CLI_GREEN = "\x1B[32m"
 CLI_CLR = "\x1B[0m"
 CLI_BLUE = "\x1B[34m"
+
+
+def _env_flag(name: str) -> bool:
+    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _flush_langsmith() -> None:
+    if not _env_flag("LANGSMITH_TRACING"):
+        return
+    if not os.getenv("LANGSMITH_API_KEY"):
+        return
+
+    try:
+        LangSmithClient().flush(timeout=10)
+    except Exception as exc:
+        print(f"{CLI_RED}LangSmith flush failed: {exc}{CLI_CLR}")
 
 
 def main() -> None:
@@ -73,6 +90,7 @@ def main() -> None:
 
                 client.end_trial(EndTrialRequest(trial_id=t.trial_id))
         finally:
+            _flush_langsmith()
             print(f"\n{CLI_GREEN}>>>> Submitting run... <<<<{CLI_CLR}")
             result = client.submit_run(SubmitRunRequest(run_id=run.run_id, force=True))
 
