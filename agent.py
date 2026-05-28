@@ -382,9 +382,7 @@ def _trace_dispatch_outputs(output) -> dict:
 
 def _trace_agent_inputs(inputs: dict) -> dict:
     return {
-        "model": inputs.get("model"),
         "task_text": inputs.get("task_text"),
-        "harness_url": "<redacted>" if inputs.get("harness_url") else None,
     }
 
 
