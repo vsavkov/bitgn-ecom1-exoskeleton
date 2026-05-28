@@ -40,6 +40,13 @@ def _env_flag(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+AGENT_DEBUG = _env_flag("AGENT_DEBUG")
+
+
+def _color(text: str, color: str) -> str:
+    return f"{color}{text}{CLI_CLR}"
+
+
 def _flush_langsmith() -> None:
     if not _env_flag("LANGSMITH_TRACING"):
         return
@@ -61,9 +68,9 @@ def main() -> None:
         res = client.get_benchmark(GetBenchmarkRequest(benchmark_id=BENCH_ID))
         print(
             f"{EvalPolicy.Name(res.policy)} benchmark: {res.benchmark_id} "
-            f"with {len(res.tasks)} tasks.\n{CLI_GREEN}{res.description}{CLI_CLR}"
+            f"with {len(res.tasks)} tasks.\n{_color(res.description, CLI_GREEN)}"
         )
-        print(f"{CLI_BLUE}Model: {MODEL_ID}{CLI_CLR}")
+        print(_color(f"Model: {MODEL_ID}", CLI_BLUE))
 
         run = client.start_run(
             StartRunRequest(
@@ -82,16 +89,16 @@ def main() -> None:
                     continue
 
                 print(f"{'=' * 30} Starting task: {t.task_id} {'=' * 30}")
-                print(f"{CLI_BLUE}{t.instruction}{CLI_CLR}\n{'-' * 80}")
+                print(f"{_color(t.instruction, CLI_BLUE)}\n{'-' * 80}")
                 try:
                     run_agent(MODEL_ID, t.harness_url, t.instruction)
                 except Exception as exc:
-                    print(exc)
+                    print(_color(str(exc), CLI_RED))
 
                 client.end_trial(EndTrialRequest(trial_id=t.trial_id))
         finally:
             _flush_langsmith()
-            print(f"\n{CLI_GREEN}>>>> Submitting run... <<<<{CLI_CLR}")
+            print(f"\n{_color('>>>> Submitting run... <<<<', CLI_GREEN)}")
             result = client.submit_run(SubmitRunRequest(run_id=run.run_id, force=True))
 
             if result.score_available:
@@ -108,22 +115,25 @@ def main() -> None:
                         "  ",
                     ) + "\n"
                     print(
-                        f"- {t.task_id}: {style}Score: {t.score:0.2f}{CLI_CLR}"
+                        f"- {t.task_id}: {_color(f'Score: {t.score:0.2f}', style)}"
                         f"{explain}".strip("\n ")
                     )
 
                 if incomplete > 0:
-                    print(f"{CLI_RED}incomplete trials: {incomplete}{CLI_CLR}")
+                    print(_color(f"incomplete trials: {incomplete}", CLI_RED))
             else:
                 print(
-                    f"\n{CLI_RED}Score is not available. Results are sealed and "
-                    f"will be revealed later{CLI_CLR}\n"
+                    _color(
+                        "\nScore is not available. Results are sealed and "
+                        "will be revealed later\n",
+                        CLI_RED,
+                    )
                 )
 
     except ConnectError as exc:
         print(f"{exc.code}: {exc.message}")
     except KeyboardInterrupt:
-        print(f"{CLI_RED}Interrupted{CLI_CLR}")
+        print(_color("Interrupted", CLI_RED))
 
 
 if __name__ == "__main__":

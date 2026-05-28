@@ -1,4 +1,5 @@
 import json
+import os
 import shlex
 import time
 from pathlib import Path
@@ -109,6 +110,10 @@ CLI_GREEN = "\x1B[32m"
 CLI_CLR = "\x1B[0m"
 CLI_BLUE = "\x1B[34m"
 CLI_YELLOW = "\x1B[33m"
+
+
+def _env_flag(name: str) -> bool:
+    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 OUTCOME_BY_NAME = {
@@ -466,6 +471,7 @@ def _format_result_with_tree_followups(
     result,
     seen_help: set[str],
     seen_read: set[str],
+    debug: bool,
 ) -> str:
     parts = [_format_result(cmd, result)]
     if not isinstance(cmd, ReqTree):
@@ -476,7 +482,8 @@ def _format_result_with_tree_followups(
             followup_result = dispatch(vm, followup)
             parts.append(_format_result(followup, followup_result))
         except ConnectError as exc:
-            print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
+            if debug:
+                print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 
     return "\n\n".join(parts)
 
@@ -569,6 +576,17 @@ def _output_text(resp) -> str:
     return "\n".join(chunks)
 
 
+def _print_completion(cmd: ReportTaskCompletion) -> None:
+    status = CLI_GREEN if cmd.outcome == "OUTCOME_OK" else CLI_YELLOW
+    print(f"{status}agent {cmd.outcome}{CLI_CLR}. Summary:")
+    for item in cmd.completed_steps_laconic:
+        print(f"- {item}")
+    print(f"\n{CLI_BLUE}AGENT SUMMARY: {cmd.message}{CLI_CLR}")
+    if cmd.grounding_refs:
+        for ref in cmd.grounding_refs:
+            print(f"- {CLI_BLUE}{ref}{CLI_CLR}")
+
+
 @traceable(
     run_type="chain",
     name="ECOM Agent",
@@ -578,6 +596,7 @@ def _output_text(resp) -> str:
 def run_agent(model: str, harness_url: str, task_text: str) -> dict:
     client = wrap_openai(OpenAI())
     vm = EcomRuntimeClientSync(harness_url)
+    debug = _env_flag("AGENT_DEBUG")
     context = []
     tree_help_paths: set[str] = set()
     tree_read_paths: set[str] = set()
@@ -595,9 +614,10 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
         result = dispatch(vm, cmd)
         _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
         formatted = _format_result_with_tree_followups(
-            vm, cmd, result, tree_help_paths, tree_read_paths
+            vm, cmd, result, tree_help_paths, tree_read_paths, debug
         )
-        print(f"{CLI_GREEN}AUTO{CLI_CLR}: {formatted}")
+        if debug:
+            print(f"{CLI_GREEN}AUTO{CLI_CLR}: {formatted}")
         context.append({"role": "user", "content": formatted})
 
     context.append({"role": "user", "content": task_text})
@@ -621,30 +641,34 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
         ]
 
         if not tool_calls:
-            print(
-                f"{CLI_RED}ERR{CLI_CLR}: response returned no function_call items "
-                f"despite tool_choice=required ({elapsed_ms} ms)\n{_output_text(resp)}"
-            )
+            if debug:
+                print(
+                    f"{CLI_RED}ERR{CLI_CLR}: response returned no function_call items "
+                    f"despite tool_choice=required ({elapsed_ms} ms)\n{_output_text(resp)}"
+                )
             context.extend(resp.output or [])
             context.append(
                 {"role": "user", "content": "Use a function tool. Text-only answers are invalid."}
             )
             continue
 
-        print(
-            f"{CLI_GREEN}{step}{CLI_CLR}: {len(tool_calls)} responses tool call(s) "
-            f"({elapsed_ms} ms)"
-        )
+        if debug:
+            print(
+                f"{CLI_GREEN}{step}{CLI_CLR}: {len(tool_calls)} responses tool call(s) "
+                f"({elapsed_ms} ms)"
+            )
         context.extend(resp.output or [])
 
         completed = False
         for idx, tool_call in enumerate(tool_calls, start=1):
             try:
                 cmd = _parse_tool_call(tool_call)
-                print(f"  [{idx}/{len(tool_calls)}] {tool_call.name}: {cmd}")
+                if debug:
+                    print(f"  [{idx}/{len(tool_calls)}] {tool_call.name}: {cmd}")
             except (json.JSONDecodeError, ValidationError, ValueError) as exc:
                 txt = f"Invalid tool call: {exc}"
-                print(f"{CLI_RED}ERR{CLI_CLR}: {txt}")
+                if debug:
+                    print(f"{CLI_RED}ERR{CLI_CLR}: {txt}")
                 context.append(_function_call_output(tool_call, txt))
                 continue
 
@@ -652,12 +676,14 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
                 result = dispatch(vm, cmd)
                 _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
                 txt = _format_result_with_tree_followups(
-                    vm, cmd, result, tree_help_paths, tree_read_paths
+                    vm, cmd, result, tree_help_paths, tree_read_paths, debug
                 )
-                print(f"{CLI_GREEN}OUT{CLI_CLR}: {txt}")
+                if debug:
+                    print(f"{CLI_GREEN}OUT{CLI_CLR}: {txt}")
             except ConnectError as exc:
                 txt = str(exc.message)
-                print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
+                if debug:
+                    print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 
             context.append(_function_call_output(tool_call, txt))
 
@@ -669,14 +695,7 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
                     "grounding_refs": cmd.grounding_refs,
                     "completed_steps_laconic": cmd.completed_steps_laconic,
                 }
-                status = CLI_GREEN if cmd.outcome == "OUTCOME_OK" else CLI_YELLOW
-                print(f"{status}agent {cmd.outcome}{CLI_CLR}. Summary:")
-                for item in cmd.completed_steps_laconic:
-                    print(f"- {item}")
-                print(f"\n{CLI_BLUE}AGENT SUMMARY: {cmd.message}{CLI_CLR}")
-                if cmd.grounding_refs:
-                    for ref in cmd.grounding_refs:
-                        print(f"- {CLI_BLUE}{ref}{CLI_CLR}")
+                _print_completion(cmd)
                 completed = True
                 break
 
