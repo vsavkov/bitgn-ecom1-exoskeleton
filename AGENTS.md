@@ -13,6 +13,13 @@
 При этом нужно не затачиваться под конкретные задачи, а выявлять на основе них нюансы и правила поведения,
 которые должны быть отражены в агенте.
 
+## Commands
+
+- Install or update the local environment: `make sync`
+- Run the full benchmark via Make: `make run`
+- Run selected tasks via Make: `make task TASKS="t01 t04"`
+
+
 ## BITGN Architecture
 
 Важные наблюдения, которые нужно учитывать при улучшении агента:

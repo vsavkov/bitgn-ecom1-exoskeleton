@@ -10,9 +10,9 @@ You will need to provide your own `BITGN_API_KEY` and `OPENAI_API_KEY`, or swap 
 
 ## Setup
 
-1. Export `BITGN_API_KEY`
-2. Export `OPENAI_API_KEY`
-3. Optionally export `BENCH_ID`, `BENCHMARK_ID`, or `MODEL_ID`
+1. Copy `.env.example` to `.env`
+2. Fill in `BITGN_API_KEY` and `OPENAI_API_KEY`
+3. Set `MODEL_ID` in `.env` when switching models
 4. Run `make sync`
 5. Run `make run`
 
@@ -29,4 +29,5 @@ Useful environment overrides:
 
 - `BITGN_API_KEY` is required for official ECOM benchmark runs
 - `BENCH_ID` or `BENCHMARK_ID` defaults to `bitgn/ecom1-dev`
-- `MODEL_ID` defaults to `gpt-4.1-2025-04-14`
+- `MODEL_ID` can be set in `.env`; this checkout currently uses `gpt-5.4-mini`
+- Exported shell variables take precedence over values from `.env`

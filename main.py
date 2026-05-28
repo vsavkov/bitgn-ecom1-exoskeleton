@@ -14,7 +14,10 @@ from bitgn.harness_pb2 import (
 from connectrpc.errors import ConnectError
 
 from agent import run_agent
+from config import load_dotenv
 
+
+load_dotenv()
 
 BITGN_URL = (
     os.getenv("BITGN_HOST")
@@ -43,6 +46,7 @@ def main() -> None:
             f"{EvalPolicy.Name(res.policy)} benchmark: {res.benchmark_id} "
             f"with {len(res.tasks)} tasks.\n{CLI_GREEN}{res.description}{CLI_CLR}"
         )
+        print(f"{CLI_BLUE}Model: {MODEL_ID}{CLI_CLR}")
 
         run = client.start_run(
             StartRunRequest(
