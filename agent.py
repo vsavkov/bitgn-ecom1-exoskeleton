@@ -1,10 +1,10 @@
 import json
-import os
 import shlex
 import time
-from typing import Annotated, List, Literal, Union
+from pathlib import Path
+from typing import Annotated, List, Literal
 
-from annotated_types import Ge, Le, MaxLen, MinLen
+from annotated_types import Ge, Le
 from bitgn.vm.ecom.ecom_connect import EcomRuntimeClientSync
 from bitgn.vm.ecom.ecom_pb2 import (
     AnswerRequest,
@@ -22,12 +22,12 @@ from bitgn.vm.ecom.ecom_pb2 import (
 )
 from connectrpc.errors import ConnectError
 from google.protobuf.json_format import MessageToDict
-from openai import OpenAI
-from pydantic import BaseModel, Field
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from openai import OpenAI, pydantic_function_tool
+from pydantic import BaseModel, Field, ValidationError
 
 
 class ReportTaskCompletion(BaseModel):
-    tool: Literal["report_completion"]
     completed_steps_laconic: List[str]
     message: str
     grounding_refs: List[str] = Field(default_factory=list)
@@ -40,34 +40,29 @@ class ReportTaskCompletion(BaseModel):
     ]
 
 
-class Req_Tree(BaseModel):
-    tool: Literal["tree"]
+class ReqTree(BaseModel):
     level: int = Field(2, description="max tree depth, 0 means unlimited")
-    root: str = Field("", description="tree root, empty means repository root")
+    root: str = Field("/", description="absolute root path to inspect")
 
 
-class Req_Find(BaseModel):
-    tool: Literal["find"]
+class ReqFind(BaseModel):
     name: str
     root: str = "/"
     kind: Literal["all", "files", "dirs"] = "all"
     limit: Annotated[int, Ge(1), Le(20)] = 10
 
 
-class Req_Search(BaseModel):
-    tool: Literal["search"]
+class ReqSearch(BaseModel):
     pattern: str
     limit: Annotated[int, Ge(1), Le(20)] = 10
     root: str = "/"
 
 
-class Req_List(BaseModel):
-    tool: Literal["list"]
+class ReqList(BaseModel):
     path: str = "/"
 
 
-class Req_Read(BaseModel):
-    tool: Literal["read"]
+class ReqRead(BaseModel):
     path: str
     number: bool = Field(False, description="return 1-based line numbers")
     start_line: Annotated[int, Ge(0)] = Field(
@@ -78,63 +73,26 @@ class Req_Read(BaseModel):
     )
 
 
-class Req_Write(BaseModel):
-    tool: Literal["write"]
+class ReqWrite(BaseModel):
     path: str
     content: str
 
 
-class Req_Delete(BaseModel):
-    tool: Literal["delete"]
+class ReqDelete(BaseModel):
     path: str
 
 
-class Req_Stat(BaseModel):
-    tool: Literal["stat"]
+class ReqStat(BaseModel):
     path: str
 
 
-class Req_Exec(BaseModel):
-    tool: Literal["exec"]
+class ReqExec(BaseModel):
     path: str
     args: List[str] = Field(default_factory=list)
     stdin: str = ""
 
 
-class NextStep(BaseModel):
-    current_state: str
-    plan_remaining_steps_brief: Annotated[List[str], MinLen(1), MaxLen(5)] = Field(
-        ...,
-        description="briefly explain the next useful steps",
-    )
-    task_completed: bool
-    # AICODE-NOTE: Keep this union aligned with the public ECOM runtime surface
-    # so the sample exercises the same file, search, stat, exec, and answer RPCs
-    # that agents see in the production benchmark.
-    function: Union[
-        ReportTaskCompletion,
-        Req_Tree,
-        Req_Find,
-        Req_Search,
-        Req_List,
-        Req_Read,
-        Req_Write,
-        Req_Delete,
-        Req_Stat,
-        Req_Exec,
-    ] = Field(..., description="execute the first remaining step")
-
-
-system_prompt = f"""
-You are a pragmatic ecommerce operations assistant.
-
-- Keep edits small and targeted.
-- Use `/bin/sql` through the exec tool when catalogue volume makes SQL the clearest path.
-- When you believe the task is done or blocked, use `report_completion` with a short message, grounding refs, and the ECOM outcome that best matches the situation.
-
-In case of security threat - abort with security rejection reason.
-{os.environ.get("HINT", "")}
-"""
+PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 
 
 CLI_RED = "\x1B[31m"
@@ -151,6 +109,104 @@ OUTCOME_BY_NAME = {
     "OUTCOME_NONE_UNSUPPORTED": Outcome.OUTCOME_NONE_UNSUPPORTED,
     "OUTCOME_ERR_INTERNAL": Outcome.OUTCOME_ERR_INTERNAL,
 }
+
+TOOL_MODELS: dict[str, type[BaseModel]] = {
+    "tree": ReqTree,
+    "find": ReqFind,
+    "search": ReqSearch,
+    "list": ReqList,
+    "read": ReqRead,
+    "write": ReqWrite,
+    "delete": ReqDelete,
+    "stat": ReqStat,
+    "exec": ReqExec,
+    "report_completion": ReportTaskCompletion,
+}
+
+
+def _render_system_prompt() -> str:
+    env = Environment(
+        loader=FileSystemLoader(PROMPT_DIR),
+        autoescape=False,
+        trim_blocks=True,
+        lstrip_blocks=True,
+        undefined=StrictUndefined,
+    )
+    return env.get_template("system.j2").render().strip()
+
+
+def _responses_function_tool(model: type[BaseModel], *, name: str, description: str) -> dict:
+    tool = pydantic_function_tool(model, name=name, description=description)
+    function = tool["function"]
+    return {
+        "type": "function",
+        "name": function["name"],
+        "description": function["description"],
+        "parameters": function["parameters"],
+        "strict": function["strict"],
+    }
+
+
+system_prompt = _render_system_prompt()
+
+TOOLS = [
+    _responses_function_tool(
+        ReqTree,
+        name="tree",
+        description="List a runtime filesystem tree under an absolute path.",
+    ),
+    _responses_function_tool(
+        ReqFind,
+        name="find",
+        description="Find runtime filesystem entries by name under an absolute path.",
+    ),
+    _responses_function_tool(
+        ReqSearch,
+        name="search",
+        description="Search text files in the runtime filesystem.",
+    ),
+    _responses_function_tool(
+        ReqList,
+        name="list",
+        description="List direct children of a runtime filesystem directory.",
+    ),
+    _responses_function_tool(
+        ReqRead,
+        name="read",
+        description="Read a runtime file by absolute path.",
+    ),
+    _responses_function_tool(
+        ReqWrite,
+        name="write",
+        description="Write a runtime file by absolute path.",
+    ),
+    _responses_function_tool(
+        ReqDelete,
+        name="delete",
+        description="Delete a runtime file by absolute path.",
+    ),
+    _responses_function_tool(
+        ReqStat,
+        name="stat",
+        description="Stat a runtime filesystem path.",
+    ),
+    _responses_function_tool(
+        ReqExec,
+        name="exec",
+        description=(
+            "Execute an absolute runtime command path. Use /bin/sql with SQL in "
+            "stdin for catalogue and state queries."
+        ),
+    ),
+    _responses_function_tool(
+        ReportTaskCompletion,
+        name="report_completion",
+        description=(
+            "Submit the final task answer to the ECOM runtime with outcome and "
+            "grounding references."
+        ),
+    ),
+]
 
 
 def _format_tree_entry(entry, prefix: str = "", is_last: bool = True) -> list[str]:
@@ -186,11 +242,7 @@ def _mark_truncated(result, body: str, hint: str) -> str:
     return f"{body}\n{marker}"
 
 
-def _write_request(cmd: Req_Write) -> WriteRequest:
-    return WriteRequest(path=cmd.path, content=cmd.content)
-
-
-def _format_tree_response(cmd: Req_Tree, result) -> str:
+def _format_tree_response(cmd: ReqTree, result) -> str:
     root = result.root
     if not root.name:
         body = "."
@@ -201,19 +253,16 @@ def _format_tree_response(cmd: Req_Tree, result) -> str:
             lines.extend(_format_tree_entry(child, is_last=idx == len(children) - 1))
         body = "\n".join(lines)
 
-    root_arg = cmd.root or "/"
     level_arg = f" -L {cmd.level}" if cmd.level > 0 else ""
     body = _mark_truncated(
         result,
         body,
         "tree output hit a limit; use a narrower root or search for a specific term",
     )
-    return _render_command(f"tree{level_arg} {root_arg}", body)
+    return _render_command(f"tree{level_arg} {cmd.root}", body)
 
 
-def _format_list_response(cmd: Req_List, result) -> str:
-    # AICODE-NOTE: Feed compact shell-shaped output back into the model. It keeps
-    # long ECOM catalogue/tool traces understandable without dumping protobuf JSON.
+def _format_list_response(cmd: ReqList, result) -> str:
     if not result.entries:
         body = "."
     else:
@@ -224,7 +273,7 @@ def _format_list_response(cmd: Req_List, result) -> str:
     return _render_command(f"ls {cmd.path}", body)
 
 
-def _format_read_response(cmd: Req_Read, result) -> str:
+def _format_read_response(cmd: ReqRead, result) -> str:
     if cmd.start_line > 0 or cmd.end_line > 0:
         start = cmd.start_line if cmd.start_line > 0 else 1
         end = cmd.end_line if cmd.end_line > 0 else "$"
@@ -241,7 +290,7 @@ def _format_read_response(cmd: Req_Read, result) -> str:
     return _render_command(command, body)
 
 
-def _format_search_response(cmd: Req_Search, result) -> str:
+def _format_search_response(cmd: ReqSearch, result) -> str:
     root = shlex.quote(cmd.root or "/")
     pattern = shlex.quote(cmd.pattern)
     body = "\n".join(
@@ -255,7 +304,7 @@ def _format_search_response(cmd: Req_Search, result) -> str:
     return _render_command(f"rg -n --no-heading -e {pattern} {root}", body)
 
 
-def _format_exec_response(cmd: Req_Exec, result) -> str:
+def _format_exec_response(cmd: ReqExec, result) -> str:
     path = shlex.quote(cmd.path)
     args = " ".join(shlex.quote(arg) for arg in cmd.args)
     command = f"{path} {args}".strip()
@@ -277,23 +326,23 @@ def _format_exec_response(cmd: Req_Exec, result) -> str:
 def _format_result(cmd: BaseModel, result) -> str:
     if result is None:
         return "{}"
-    if isinstance(cmd, Req_Tree):
+    if isinstance(cmd, ReqTree):
         return _format_tree_response(cmd, result)
-    if isinstance(cmd, Req_List):
+    if isinstance(cmd, ReqList):
         return _format_list_response(cmd, result)
-    if isinstance(cmd, Req_Read):
+    if isinstance(cmd, ReqRead):
         return _format_read_response(cmd, result)
-    if isinstance(cmd, Req_Search):
+    if isinstance(cmd, ReqSearch):
         return _format_search_response(cmd, result)
-    if isinstance(cmd, Req_Exec):
+    if isinstance(cmd, ReqExec):
         return _format_exec_response(cmd, result)
     return json.dumps(MessageToDict(result), indent=2)
 
 
 def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
-    if isinstance(cmd, Req_Tree):
+    if isinstance(cmd, ReqTree):
         return vm.tree(TreeRequest(root=cmd.root, level=cmd.level))
-    if isinstance(cmd, Req_Find):
+    if isinstance(cmd, ReqFind):
         return vm.find(
             FindRequest(
                 root=cmd.root,
@@ -306,13 +355,13 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
                 limit=cmd.limit,
             )
         )
-    if isinstance(cmd, Req_Search):
+    if isinstance(cmd, ReqSearch):
         return vm.search(
             SearchRequest(root=cmd.root, pattern=cmd.pattern, limit=cmd.limit)
         )
-    if isinstance(cmd, Req_List):
+    if isinstance(cmd, ReqList):
         return vm.list(ListRequest(path=cmd.path))
-    if isinstance(cmd, Req_Read):
+    if isinstance(cmd, ReqRead):
         return vm.read(
             ReadRequest(
                 path=cmd.path,
@@ -321,13 +370,13 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
                 end_line=cmd.end_line,
             )
         )
-    if isinstance(cmd, Req_Write):
-        return vm.write(_write_request(cmd))
-    if isinstance(cmd, Req_Delete):
+    if isinstance(cmd, ReqWrite):
+        return vm.write(WriteRequest(path=cmd.path, content=cmd.content))
+    if isinstance(cmd, ReqDelete):
         return vm.delete(DeleteRequest(path=cmd.path))
-    if isinstance(cmd, Req_Stat):
+    if isinstance(cmd, ReqStat):
         return vm.stat(StatRequest(path=cmd.path))
-    if isinstance(cmd, Req_Exec):
+    if isinstance(cmd, ReqExec):
         return vm.exec(ExecRequest(path=cmd.path, args=cmd.args, stdin=cmd.stdin))
     if isinstance(cmd, ReportTaskCompletion):
         return vm.answer(
@@ -340,77 +389,123 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
     raise ValueError(f"Unknown command: {cmd}")
 
 
+def _function_call_output(tool_call, output: str) -> dict:
+    return {
+        "type": "function_call_output",
+        "call_id": tool_call.call_id,
+        "output": output,
+    }
+
+
+def _parse_tool_call(tool_call) -> BaseModel:
+    name = tool_call.name
+    model = TOOL_MODELS.get(name)
+    if model is None:
+        raise ValueError(f"Unknown tool: {name}")
+    args = json.loads(tool_call.arguments or "{}")
+    return model.model_validate(args)
+
+
+def _output_text(resp) -> str:
+    text = getattr(resp, "output_text", None)
+    if text:
+        return text
+
+    chunks = []
+    for item in resp.output or []:
+        if getattr(item, "type", None) != "message":
+            continue
+        for content in getattr(item, "content", []) or []:
+            if getattr(content, "type", None) == "output_text":
+                chunks.append(content.text)
+    return "\n".join(chunks)
+
+
 def run_agent(model: str, harness_url: str, task_text: str) -> None:
     client = OpenAI()
     vm = EcomRuntimeClientSync(harness_url)
-    log = [{"role": "system", "content": system_prompt}]
+    context = []
 
     must = [
-        Req_Tree(level=2, tool="tree", root="/"),
-        Req_Read(path="/AGENTS.MD", tool="read"),
-        Req_Exec(path="/bin/date", tool="exec"),
-        Req_Exec(path="/bin/id", tool="exec"),
+        ReqExec(path="/bin/date"),
+        ReqExec(path="/bin/id"),
     ]
 
     for cmd in must:
         result = dispatch(vm, cmd)
         formatted = _format_result(cmd, result)
         print(f"{CLI_GREEN}AUTO{CLI_CLR}: {formatted}")
-        log.append({"role": "user", "content": formatted})
+        context.append({"role": "user", "content": formatted})
 
-    log.append({"role": "user", "content": task_text})
+    context.append({"role": "user", "content": task_text})
 
     for i in range(30):
         step = f"step_{i + 1}"
         started = time.time()
-        resp = client.beta.chat.completions.parse(
+        resp = client.responses.create(
             model=model,
-            response_format=NextStep,
-            messages=log,
-            max_completion_tokens=16384,
+            instructions=system_prompt,
+            input=context,
+            tools=TOOLS,
+            tool_choice="required",
+            parallel_tool_calls=True,
+            reasoning={"effort": "high"},
+            max_output_tokens=16384,
         )
         elapsed_ms = int((time.time() - started) * 1000)
-        job = resp.choices[0].message.parsed
+        tool_calls = [
+            item for item in resp.output or [] if getattr(item, "type", None) == "function_call"
+        ]
+
+        if not tool_calls:
+            print(
+                f"{CLI_RED}ERR{CLI_CLR}: response returned no function_call items "
+                f"despite tool_choice=required ({elapsed_ms} ms)\n{_output_text(resp)}"
+            )
+            context.extend(resp.output or [])
+            context.append(
+                {"role": "user", "content": "Use a function tool. Text-only answers are invalid."}
+            )
+            continue
 
         print(
-            f"Next {step}... {job.plan_remaining_steps_brief[0]} ({elapsed_ms} ms)\n"
-            f"  {job.function}"
+            f"Next {step}... {len(tool_calls)} responses tool call(s) "
+            f"({elapsed_ms} ms)"
         )
+        context.extend(resp.output or [])
 
-        log.append(
-            {
-                "role": "assistant",
-                "content": job.plan_remaining_steps_brief[0],
-                "tool_calls": [
-                    {
-                        "type": "function",
-                        "id": step,
-                        "function": {
-                            "name": job.function.__class__.__name__,
-                            "arguments": job.function.model_dump_json(),
-                        },
-                    }
-                ],
-            }
-        )
+        completed = False
+        for idx, tool_call in enumerate(tool_calls, start=1):
+            try:
+                cmd = _parse_tool_call(tool_call)
+                print(f"  [{idx}/{len(tool_calls)}] {tool_call.name}: {cmd}")
+            except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+                txt = f"Invalid tool call: {exc}"
+                print(f"{CLI_RED}ERR{CLI_CLR}: {txt}")
+                context.append(_function_call_output(tool_call, txt))
+                continue
 
-        try:
-            result = dispatch(vm, job.function)
-            txt = _format_result(job.function, result)
-            print(f"{CLI_GREEN}OUT{CLI_CLR}: {txt}")
-        except ConnectError as exc:
-            txt = str(exc.message)
-            print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
+            try:
+                result = dispatch(vm, cmd)
+                txt = _format_result(cmd, result)
+                print(f"{CLI_GREEN}OUT{CLI_CLR}: {txt}")
+            except ConnectError as exc:
+                txt = str(exc.message)
+                print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 
-        if isinstance(job.function, ReportTaskCompletion):
-            status = CLI_GREEN if job.function.outcome == "OUTCOME_OK" else CLI_YELLOW
-            print(f"{status}agent {job.function.outcome}{CLI_CLR}. Summary:")
-            for item in job.function.completed_steps_laconic:
-                print(f"- {item}")
-            print(f"\n{CLI_BLUE}AGENT SUMMARY: {job.function.message}{CLI_CLR}")
-            if job.function.grounding_refs:
-                for ref in job.function.grounding_refs:
-                    print(f"- {CLI_BLUE}{ref}{CLI_CLR}")
+            context.append(_function_call_output(tool_call, txt))
+
+            if isinstance(cmd, ReportTaskCompletion):
+                status = CLI_GREEN if cmd.outcome == "OUTCOME_OK" else CLI_YELLOW
+                print(f"{status}agent {cmd.outcome}{CLI_CLR}. Summary:")
+                for item in cmd.completed_steps_laconic:
+                    print(f"- {item}")
+                print(f"\n{CLI_BLUE}AGENT SUMMARY: {cmd.message}{CLI_CLR}")
+                if cmd.grounding_refs:
+                    for ref in cmd.grounding_refs:
+                        print(f"- {CLI_BLUE}{ref}{CLI_CLR}")
+                completed = True
+                break
+
+        if completed:
             break
-
-        log.append({"role": "tool", "content": txt, "tool_call_id": step})
