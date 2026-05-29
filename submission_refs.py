@@ -13,6 +13,9 @@ class CompletionLike(Protocol):
     def task_type(self) -> str: ...
 
     @property
+    def message(self) -> str: ...
+
+    @property
     def protected_record_denial(self) -> bool: ...
 
     @property
@@ -39,6 +42,7 @@ class ExplicitRecordSpec(NamedTuple):
 
 
 PRODUCT_SKU_RE = re.compile(r"^[A-Z]{3}-[A-Z0-9]+$")
+MESSAGE_SKU_RE = re.compile(r"(?<![A-Z0-9])[A-Z]{3}-[A-Z0-9]{4,}(?![A-Z0-9])")
 EMPLOYEE_ID_RE = re.compile(r"^emp_\d+$")
 CROSS_CUSTOMER_DENIAL_RE = re.compile(
     r"\b(?:"
@@ -304,6 +308,29 @@ def normalize_submission_refs(
             normalized_refs.append(f"{canonical}{fragment}")
 
     return dedupe_refs(normalized_refs)
+
+
+def message_sku_refs(vm: RuntimeVM, message: str) -> list[str]:
+    if not message:
+        return []
+
+    skus = sorted({sku for sku in MESSAGE_SKU_RE.findall(message)})
+    if not skus:
+        return []
+
+    sku_values = ", ".join(sql_quote(sku) for sku in skus)
+    rows = sql_rows(
+        vm,
+        "select record_path from product_variants "
+        f"where product_sku in ({sku_values});",
+    )
+    return dedupe_refs(
+        [
+            row.get("record_path") or ""
+            for row in rows
+            if (row.get("record_path") or "").startswith("/")
+        ]
+    )
 
 
 def availability_count_refs_from_catalog_result(result: Any) -> list[str]:
@@ -621,6 +648,14 @@ def submission_refs(
                         roles=roles,
                     ),
                 ]
+            )
+        # Auto-pin every product SKU named in the final message. The grader
+        # treats any SKU we surfaced to the user as evidence that must be
+        # cited, and quote/table answers routinely list more SKUs than the
+        # model remembers to mirror into grounding_row_refs.
+        if vm is not None:
+            row_refs = dedupe_refs(
+                [*row_refs, *message_sku_refs(vm, cmd.message)]
             )
         if vm is not None and cmd.task_type == "refund":
             row_refs = dedupe_refs([*row_refs, *linked_payment_refs_for_returns(vm, row_refs)])

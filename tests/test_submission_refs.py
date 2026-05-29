@@ -8,6 +8,7 @@ from connectrpc.errors import ConnectError
 
 from submission_refs import (
     EXPLICIT_RECORD_SPECS,
+    MESSAGE_SKU_RE,
     availability_count_refs_from_catalog_result,
     can_auto_cite_customer_scoped_record,
     candidate_record_ids,
@@ -20,6 +21,7 @@ from submission_refs import (
     is_cross_customer_protected_record_denial,
     is_document_ref,
     linked_payment_refs_for_returns,
+    message_sku_refs,
     normalize_runtime_path,
     normalize_submission_refs,
     parse_runtime_identity,
@@ -474,6 +476,95 @@ def test_submission_refs_auto_adds_safe_target_record_from_task_text() -> None:
         vm,
         task_text="Can you discount basket_057?",
     ) == ["/docs/security.md", "/proc/baskets/basket_057.json"]
+
+
+def test_message_sku_re_finds_skus_and_skips_short_tokens() -> None:
+    matches = MESSAGE_SKU_RE.findall(
+        "Found STO-2R84BSHQ and PWR-21134N3Q but not EUR-50 or AB-CDEF; PNT-2VEAWKY6."
+    )
+    assert matches == ["STO-2R84BSHQ", "PWR-21134N3Q", "PNT-2VEAWKY6"]
+
+
+def test_message_sku_refs_returns_record_paths_from_sql() -> None:
+    vm = FakeVM(
+        sql_outputs={
+            "from product_variants": csv_rows(
+                "record_path",
+                "/proc/catalog/storage/bins_organizers/STO-2R84BSHQ.json",
+                "/proc/catalog/power_tools/PWR-21134N3Q.json",
+            )
+        }
+    )
+
+    refs = message_sku_refs(
+        vm,
+        "RowID\tSKU\tin_stock\tmatch\nW1\tSTO-2R84BSHQ\t1\ttrue\nW2\tPWR-21134N3Q\t0\tfalse\n",
+    )
+
+    assert refs == [
+        "/proc/catalog/storage/bins_organizers/STO-2R84BSHQ.json",
+        "/proc/catalog/power_tools/PWR-21134N3Q.json",
+    ]
+
+
+def test_message_sku_refs_returns_empty_when_no_skus_in_message() -> None:
+    vm = FakeVM()
+    assert message_sku_refs(vm, "The basket has no available stock today.") == []
+    assert message_sku_refs(vm, "") == []
+
+
+def test_submission_refs_auto_pins_skus_named_in_message() -> None:
+    vm = FakeVM(
+        id_stdout="user: emp_004\nroles: store_associate\n",
+        sql_outputs={
+            "from product_variants": csv_rows(
+                "record_path",
+                "/proc/catalog/storage/bins_organizers/STO-2R84BSHQ.json",
+            ),
+        },
+        existing_paths={
+            "/proc/catalog/storage/bins_organizers/STO-2R84BSHQ.json",
+        },
+    )
+
+    refs = submission_refs(
+        CompletionStub(
+            task_type="catalog_lookup",
+            message="<NO> Checked SKU: STO-2R84BSHQ; the extra capability is absent.",
+            grounding_doc_refs=[],
+            grounding_row_refs=[],
+        ),
+        vm,
+    )
+
+    assert "/proc/catalog/storage/bins_organizers/STO-2R84BSHQ.json" in refs
+
+
+def test_submission_refs_skips_sku_auto_pin_for_count_tasks() -> None:
+    vm = FakeVM(
+        id_stdout="user: emp_004\nroles: store_associate\n",
+        sql_outputs={
+            "from product_variants": csv_rows(
+                "record_path",
+                "/proc/catalog/storage/bins_organizers/STO-2R84BSHQ.json",
+            ),
+        },
+        existing_paths={
+            "/proc/catalog/storage/bins_organizers/STO-2R84BSHQ.json",
+        },
+    )
+
+    refs = submission_refs(
+        CompletionStub(
+            task_type="count",
+            message="42 (smartly counted via STO-2R84BSHQ)",
+            grounding_doc_refs=["/docs/catalogue.md"],
+            grounding_row_refs=[],
+        ),
+        vm,
+    )
+
+    assert refs == ["/docs/catalogue.md"]
 
 
 def test_submission_refs_replaces_customer_facing_employee_ref_and_adds_store() -> None:
