@@ -285,6 +285,12 @@ _STRUCTURED_PROPERTY_LABEL_WORDS = {
     "wattage",
     "width",
 }
+_SUPPORT_NOTE_ID_RE = re.compile(r"\b(?:support|claim)\b", re.IGNORECASE)
+_THAT_HAS_RE = re.compile(r"\bthat\s+has\b", re.IGNORECASE)
+_EXTRA_CLAIM_BOUNDARY_RE = re.compile(
+    r"\band\s+(?:has|supports|is)\b",
+    re.IGNORECASE,
+)
 
 
 def _norm_words(value: str) -> str:
@@ -345,6 +351,81 @@ def _constraint_text_and_label(
         text = constraint.text or f"{constraint.label} {constraint.value}".strip()
         return text, constraint.label
     return constraint, ""
+
+
+def _constraint_text(constraint: str | ParsedCatalogConstraint) -> str:
+    text, _label = _constraint_text_and_label(constraint)
+    return text
+
+
+def _support_note_claim_text_parts(item: CatalogLookupItem) -> tuple[str, str] | None:
+    if not (
+        _SUPPORT_NOTE_ID_RE.search(item.item_id)
+        or _SUPPORT_NOTE_ID_RE.search(item.description)
+    ):
+        return None
+
+    that_has = _THAT_HAS_RE.search(item.description)
+    if not that_has:
+        return None
+
+    constraint_text = item.description[that_has.end() :]
+    extra_boundary = _EXTRA_CLAIM_BOUNDARY_RE.search(constraint_text)
+    if not extra_boundary:
+        return None
+
+    base_text = constraint_text[: extra_boundary.start()].strip(" ,.;")
+    extra_text = constraint_text[extra_boundary.end() :].strip(" ,.;")
+    if not base_text or not extra_text:
+        return None
+    return base_text, extra_text
+
+
+def _constraint_appears_in_text(
+    constraint: str | ParsedCatalogConstraint,
+    text: str,
+) -> bool:
+    normalized_text = _norm_words(text)
+    if not normalized_text:
+        return False
+
+    if isinstance(constraint, ParsedCatalogConstraint):
+        candidates = [
+            constraint.text,
+            f"{constraint.label} {constraint.value}".strip(),
+            constraint.value,
+        ]
+    else:
+        candidates = [constraint]
+
+    return any(
+        bool(normalized_candidate)
+        and normalized_candidate in normalized_text
+        for candidate in candidates
+        if (normalized_candidate := _norm_words(candidate))
+    )
+
+
+def _split_support_note_constraints(
+    item: CatalogLookupItem,
+    constraints: Sequence[ParsedCatalogConstraint],
+) -> tuple[list[ParsedCatalogConstraint], list[ParsedCatalogConstraint], str]:
+    parts = _support_note_claim_text_parts(item)
+    if parts is None:
+        return list(constraints), [], ""
+
+    base_text, extra_text = parts
+    base_constraints: list[ParsedCatalogConstraint] = []
+    extra_constraints: list[ParsedCatalogConstraint] = []
+    for constraint in constraints:
+        in_extra = _constraint_appears_in_text(constraint, extra_text)
+        in_base = _constraint_appears_in_text(constraint, base_text)
+        if in_extra and not in_base:
+            extra_constraints.append(constraint)
+        else:
+            base_constraints.append(constraint)
+
+    return base_constraints or list(constraints), extra_constraints, extra_text
 
 
 def _requires_structured_property_match(constraint: str, label: str = "") -> bool:
@@ -564,8 +645,12 @@ def resolve_catalog_items(
         cmd.items, parsed_items, candidate_rows_by_index, strict=True
     ):
         constraints = parsed.constraints
+        support_base_constraints, support_extra_constraints, support_extra_text = (
+            _split_support_note_constraints(item, constraints)
+        )
         exact_matches: list[dict[str, Any]] = []
         closest_candidates: list[dict[str, Any]] = []
+        support_note_base_matches: list[dict[str, Any]] = []
         threshold = item.requested_quantity or cmd.availability_threshold
 
         for candidate in candidates:
@@ -599,6 +684,34 @@ def resolve_catalog_items(
                 exact_matches.append(candidate_payload)
             closest_candidates.append(candidate_payload)
 
+            if support_extra_text:
+                base_matched, base_missing = _candidate_constraint_matches(
+                    support_base_constraints,
+                    props,
+                    candidate.get("product_name") or "",
+                )
+                if not base_missing:
+                    extra_matched, extra_missing = _candidate_constraint_matches(
+                        support_extra_constraints,
+                        props,
+                        candidate.get("product_name") or "",
+                    )
+                    if not support_extra_constraints:
+                        extra_missing = [support_extra_text]
+                    support_note_base_matches.append(
+                        {
+                            "sku": sku,
+                            "record_path": candidate.get("record_path") or "",
+                            "product_name": candidate.get("product_name") or "",
+                            "base_matched_constraints": base_matched,
+                            "extra_claim_text": support_extra_text,
+                            "extra_claim_matched_constraints": extra_matched,
+                            "extra_claim_missing_constraints": extra_missing,
+                            "available_today_quantity": available_today,
+                            "availability_qualifies": qualifies,
+                        }
+                    )
+
         closest_candidates.sort(
             key=lambda candidate: (
                 -len(candidate["matched_constraints"]),
@@ -628,6 +741,21 @@ def resolve_catalog_items(
             and (match.get("available_today_quantity") or 0) > 0
         ]
         refs_to_submit_for_availability_count = available_qualifying_refs
+        support_note_refs_to_submit = [
+            match["record_path"] for match in support_note_base_matches
+        ]
+        if support_note_base_matches:
+            if any(
+                not match["extra_claim_missing_constraints"]
+                for match in support_note_base_matches
+            ):
+                support_note_answer_hint = "base_product_and_extra_claim_match"
+            else:
+                support_note_answer_hint = "base_product_exists_extra_claim_absent_answer_no"
+        else:
+            support_note_answer_hint = (
+                "base_product_absent" if support_extra_text else ""
+            )
 
         resolved_items.append(
             {
@@ -643,6 +771,22 @@ def resolve_catalog_items(
                 "refs_to_submit_for_availability_count": (
                     refs_to_submit_for_availability_count
                 ),
+                "support_note_extra_claim": {
+                    "base_constraints": [
+                        _constraint_text(constraint)
+                        for constraint in support_base_constraints
+                    ],
+                    "extra_constraints": [
+                        _constraint_text(constraint)
+                        for constraint in support_extra_constraints
+                    ],
+                    "extra_claim_text": support_extra_text,
+                    "base_matches": support_note_base_matches[:12],
+                    "refs_to_submit": support_note_refs_to_submit,
+                    "answer_hint": support_note_answer_hint,
+                }
+                if support_extra_text
+                else None,
             }
         )
 

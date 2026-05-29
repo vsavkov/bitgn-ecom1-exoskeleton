@@ -62,6 +62,7 @@ from submission_refs import (
     dedupe_refs,
     is_catalog_ref,
     submission_refs as _submission_refs,
+    support_note_refs_from_catalog_result,
 )
 
 if TYPE_CHECKING:
@@ -696,6 +697,22 @@ def _apply_availability_count_catalog_refs(
     return cmd.model_copy(update={"grounding_row_refs": row_refs})
 
 
+def _apply_support_note_catalog_refs(
+    cmd: ReportTaskCompletion,
+    checked_refs: list[str],
+) -> ReportTaskCompletion:
+    if cmd.task_type != "catalog_lookup" or not checked_refs:
+        return cmd
+
+    row_refs = dedupe_refs(
+        [
+            *(ref for ref in cmd.grounding_row_refs if not is_catalog_ref(ref)),
+            *checked_refs,
+        ]
+    )
+    return cmd.model_copy(update={"grounding_row_refs": row_refs})
+
+
 @traceable(
     run_type="chain",
     name="ECOM Agent",
@@ -723,6 +740,7 @@ def run_agent(
     tree_read_paths: set[str] = set()
     formatter_output_lines: list[str] = []
     availability_count_catalog_refs: list[str] = []
+    support_note_catalog_refs: list[str] = []
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
@@ -842,6 +860,10 @@ def run_agent(
                     cmd,
                     availability_count_catalog_refs,
                 )
+                cmd = _apply_support_note_catalog_refs(
+                    cmd,
+                    support_note_catalog_refs,
+                )
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,
@@ -875,6 +897,9 @@ def run_agent(
                 canonical_refs = availability_count_refs_from_catalog_result(result)
                 if canonical_refs:
                     availability_count_catalog_refs = canonical_refs
+                checked_refs = support_note_refs_from_catalog_result(result)
+                if checked_refs:
+                    support_note_catalog_refs = checked_refs
 
             if isinstance(cmd, ReportTaskCompletion):
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)

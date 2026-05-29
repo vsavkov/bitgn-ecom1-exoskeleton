@@ -326,6 +326,28 @@ def availability_count_refs_from_catalog_result(result: Any) -> list[str]:
     return dedupe_refs(refs)
 
 
+def support_note_refs_from_catalog_result(result: Any) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+
+    refs: list[str] = []
+    items = result.get("items")
+    if not isinstance(items, list):
+        return []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        support_note = item.get("support_note_extra_claim")
+        if not isinstance(support_note, dict):
+            continue
+        item_refs = support_note.get("refs_to_submit")
+        if isinstance(item_refs, list):
+            refs.extend(ref for ref in item_refs if isinstance(ref, str) and ref)
+
+    return dedupe_refs(refs)
+
+
 def catalog_refs_from_refs(refs: Sequence[str]) -> list[str]:
     return dedupe_refs([ref for ref in refs if is_catalog_ref(ref)])
 

@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from catalog_tools import (
+    CatalogLookupItem,
     ParsedCatalogConstraint,
     ParsedCatalogItems,
     _availability_qualifies,
@@ -11,6 +12,7 @@ from catalog_tools import (
     _parsed_response,
     _property_label_candidates,
     _property_matches_constraint,
+    _split_support_note_constraints,
 )
 
 
@@ -147,3 +149,60 @@ def test_parsed_property_constraints_do_not_fallback_to_product_name() -> None:
 
     assert matched == []
     assert missing == ["screw type wood screw"]
+
+
+def test_support_note_constraints_split_base_and_extra_claim() -> None:
+    constraints = [
+        ParsedCatalogConstraint(
+            text="storage type parts case",
+            label="storage type",
+            value="parts case",
+        ),
+        ParsedCatalogConstraint(
+            text="stackable system only",
+            label="stackable",
+            value="system only",
+        ),
+    ]
+
+    base, extra, extra_text = _split_support_note_constraints(
+        CatalogLookupItem(
+            item_id="support-note",
+            description=(
+                "the Tool Box and Bag from Festool in the Festool Stackable SYS "
+                "3JJ-9LM Tool Box and Bag line that has storage type parts case "
+                "and has stackable system only"
+            ),
+        ),
+        constraints,
+    )
+
+    assert [constraint.text for constraint in base] == ["storage type parts case"]
+    assert [constraint.text for constraint in extra] == ["stackable system only"]
+    assert extra_text == "stackable system only"
+
+
+def test_support_note_constraints_keep_extra_capability_as_text() -> None:
+    constraints = [
+        ParsedCatalogConstraint(
+            text="machine type drill press",
+            label="machine type",
+            value="drill press",
+        )
+    ]
+
+    base, extra, extra_text = _split_support_note_constraints(
+        CatalogLookupItem(
+            item_id="support-note",
+            description=(
+                "the Workshop Drill Grinder and Sander from Makita in the "
+                "Makita Workshop DHS line that has machine type drill press "
+                "and supports voice control"
+            ),
+        ),
+        constraints,
+    )
+
+    assert [constraint.text for constraint in base] == ["machine type drill press"]
+    assert extra == []
+    assert extra_text == "voice control"

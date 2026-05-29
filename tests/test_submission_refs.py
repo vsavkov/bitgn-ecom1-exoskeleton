@@ -30,6 +30,7 @@ from submission_refs import (
     sql_record_path,
     sql_rows,
     submission_refs,
+    support_note_refs_from_catalog_result,
 )
 
 
@@ -250,6 +251,25 @@ def test_catalog_refs_from_helper_can_be_empty_when_only_store_ref_returned() ->
     assert availability_count_refs_from_catalog_result(
         {"store_ref": "/proc/stores/store_graz_lend.json"}
     ) == ["/proc/stores/store_graz_lend.json"]
+
+
+def test_support_note_refs_from_catalog_result_reads_checked_base_refs() -> None:
+    assert support_note_refs_from_catalog_result(
+        {
+            "items": [
+                {
+                    "support_note_extra_claim": {
+                        "refs_to_submit": [
+                            "/proc/catalog/STO-2R84BSHQ.json",
+                            "/proc/catalog/STO-2R84BSHQ.json",
+                        ]
+                    }
+                },
+                {"support_note_extra_claim": None},
+            ]
+        }
+    ) == ["/proc/catalog/STO-2R84BSHQ.json"]
+    assert support_note_refs_from_catalog_result({"items": []}) == []
 
 
 def test_candidate_record_ids_handles_padding() -> None:

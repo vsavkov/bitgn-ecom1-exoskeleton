@@ -19,6 +19,7 @@ from agent import (
     _format_tree_entry,
     _function_call_output,
     _apply_availability_count_catalog_refs,
+    _apply_support_note_catalog_refs,
     _iter_tree_paths,
     _is_command_path,
     _is_truncated,
@@ -248,6 +249,31 @@ def test_apply_availability_count_catalog_refs_replaces_catalog_refs_only() -> N
         ["/proc/stores/store_wrong.json"],
     )
     assert unchanged.grounding_row_refs == cmd.grounding_row_refs
+
+
+def test_apply_support_note_catalog_refs_replaces_catalog_refs_only() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["checked support note"],
+        task_type="catalog_lookup",
+        message="<NO> Checked SKU: STO-2R84BSHQ",
+        grounding_doc_refs=[],
+        grounding_row_refs=[
+            "/proc/catalog/STO-12JLHT7D.json",
+            "/proc/stores/store_vienna_praterstern.json",
+        ],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_support_note_catalog_refs(
+        cmd,
+        ["/proc/catalog/STO-2R84BSHQ.json"],
+    )
+
+    assert updated.grounding_row_refs == [
+        "/proc/stores/store_vienna_praterstern.json",
+        "/proc/catalog/STO-2R84BSHQ.json",
+    ]
 
 
 def test_parse_tool_call() -> None:
