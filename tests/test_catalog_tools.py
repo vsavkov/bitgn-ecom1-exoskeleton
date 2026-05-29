@@ -10,9 +10,11 @@ from catalog_tools import (
     _norm_words,
     _number_from_text,
     _parsed_response,
+    _product_family_lookup_terms,
     _property_label_candidates,
     _property_matches_constraint,
     _split_support_note_constraints,
+    _variant_tail_text,
 )
 
 
@@ -149,6 +151,107 @@ def test_parsed_property_constraints_do_not_fallback_to_product_name() -> None:
 
     assert matched == []
     assert missing == ["screw type wood screw"]
+
+
+def test_structured_constraints_can_match_variant_name_tail() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="color family Yellow",
+                label="color family",
+                value="Yellow",
+            ),
+            ParsedCatalogConstraint(text="size XL", label="size", value="XL"),
+        ],
+        [],
+        "Uvex Bionic x-fit Y59-F8N Work Jacket Yellow XL thermal",
+        product_family_name="Uvex Bionic x-fit Y59-F8N Work Jacket",
+    )
+
+    assert matched == ["color family Yellow", "size XL"]
+    assert missing == []
+
+
+def test_variant_tail_matching_does_not_use_family_words() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="screw type wood screw",
+                label="screw type",
+                value="wood screw",
+            )
+        ],
+        [],
+        "Heco Zinc Plated TopFix Wood and Drywall Screw",
+        product_family_name="Heco Zinc Plated TopFix Wood and Drywall Screw",
+    )
+
+    assert matched == []
+    assert missing == ["screw type wood screw"]
+
+
+def test_variant_tail_matching_handles_apparel_display_values() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="garment type t-shirt",
+                label="garment type",
+                value="t-shirt",
+            ),
+            ParsedCatalogConstraint(
+                text="color family Black",
+                label="color family",
+                value="Black",
+            ),
+            ParsedCatalogConstraint(text="size L", label="size", value="L"),
+        ],
+        [],
+        "Dickies Fleece Redhawk MRB-WYE Work Top t-shirt Black L",
+        product_family_name="Dickies Fleece Redhawk MRB-WYE Work Top",
+    )
+
+    assert matched == ["garment type t-shirt", "color family Black", "size L"]
+    assert missing == []
+
+
+def test_variant_tail_matching_handles_storage_display_values() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="storage type shelving unit",
+                label="storage type",
+                value="shelving unit",
+            ),
+            ParsedCatalogConstraint(
+                text="color family Blue",
+                label="color family",
+                value="Blue",
+            ),
+        ],
+        [],
+        "Raaco Compact 3YH-7PQ Tool Box and Bag shelving unit 40l Blue",
+        product_family_name="Raaco Compact 3YH-7PQ Tool Box and Bag",
+    )
+
+    assert matched == ["storage type shelving unit", "color family Blue"]
+    assert missing == []
+
+
+def test_variant_tail_requires_family_prefix() -> None:
+    assert (
+        _variant_tail_text(
+            "Unexpected Prefix Uvex Bionic x-fit Y59-F8N Work Jacket Yellow XL",
+            "Uvex Bionic x-fit Y59-F8N Work Jacket",
+        )
+        == ""
+    )
+
+
+def test_product_family_lookup_terms_strip_trailing_line() -> None:
+    assert _product_family_lookup_terms("Uvex Bionic x-fit Y59-F8N Work Jacket line") == [
+        "Uvex Bionic x-fit Y59-F8N Work Jacket line",
+        "Uvex Bionic x-fit Y59-F8N Work Jacket",
+    ]
 
 
 def test_support_note_constraints_split_base_and_extra_claim() -> None:

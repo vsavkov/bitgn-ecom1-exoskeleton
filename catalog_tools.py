@@ -275,6 +275,7 @@ _STRUCTURED_PROPERTY_LABEL_WORDS = {
     "product",
     "protection",
     "screw",
+    "size",
     "source",
     "storage",
     "thread",
@@ -342,6 +343,57 @@ def _constraint_matches_product_name(constraint: str, product_name: str) -> bool
     if not constraint_words:
         return False
     return all(word in product_words for word in constraint_words)
+
+
+def _word_phrase_in_text(phrase: str, text: str) -> bool:
+    phrase_words = _norm_words(phrase).split()
+    text_words = _norm_words(text).split()
+    if not phrase_words or len(phrase_words) > len(text_words):
+        return False
+
+    phrase_len = len(phrase_words)
+    return any(
+        text_words[index : index + phrase_len] == phrase_words
+        for index in range(len(text_words) - phrase_len + 1)
+    )
+
+
+def _variant_tail_text(product_name: str, product_family_name: str) -> str:
+    product_words = _norm_words(product_name).split()
+    family_words = _norm_words(product_family_name).split()
+    if not product_words or not family_words:
+        return ""
+    if product_words[: len(family_words)] != family_words:
+        return ""
+    return " ".join(product_words[len(family_words) :])
+
+
+def _constraint_matches_variant_tail(
+    constraint: str | ParsedCatalogConstraint,
+    product_name: str,
+    product_family_name: str,
+) -> bool:
+    if isinstance(constraint, ParsedCatalogConstraint):
+        candidates = [constraint.value]
+    else:
+        candidates = [
+            word
+            for word in _norm_words(constraint).split()
+            if word not in _GENERIC_CONSTRAINT_WORDS
+        ]
+
+    tail = _variant_tail_text(product_name, product_family_name)
+    if not tail:
+        return False
+
+    # Business rule: variant labels such as color, size, storage type, or
+    # garment type are sometimes absent from product_variant_properties but
+    # present in the display-name suffix after the canonical family prefix.
+    # Matching only that suffix avoids treating family text as variant evidence.
+    return any(
+        bool(_norm_words(candidate)) and _word_phrase_in_text(candidate, tail)
+        for candidate in candidates
+    )
 
 
 def _constraint_text_and_label(
@@ -482,6 +534,8 @@ def _candidate_constraint_matches(
     constraints: Sequence[str | ParsedCatalogConstraint],
     properties: list[dict[str, str]],
     product_name: str,
+    *,
+    product_family_name: str = "",
 ) -> tuple[list[str], list[str]]:
     matched: list[str] = []
     missing: list[str] = []
@@ -497,12 +551,23 @@ def _candidate_constraint_matches(
             ):
                 found = True
                 break
+        requires_structured = _requires_structured_property_match(
+            constraint_text,
+            constraint_label,
+        )
         if (
             not found
-            and not _requires_structured_property_match(
-                constraint_text,
-                constraint_label,
+            and requires_structured
+            and _constraint_matches_variant_tail(
+                constraint,
+                product_name,
+                product_family_name,
             )
+        ):
+            found = True
+        if (
+            not found
+            and not requires_structured
             and _constraint_matches_product_name(constraint_text, product_name)
         ):
             found = True
@@ -513,13 +578,25 @@ def _candidate_constraint_matches(
     return matched, missing
 
 
+def _product_family_lookup_terms(product_family: str) -> list[str]:
+    terms = [product_family.strip()]
+    without_line = re.sub(r"\s+line\s*$", "", product_family.strip(), flags=re.IGNORECASE)
+    if without_line:
+        terms.append(without_line)
+    return list(dict.fromkeys(term for term in terms if term))
+
+
 def _fetch_catalog_candidates(
     vm: EcomRuntimeClientSync,
     parsed: ParsedCatalogItem,
 ) -> list[dict[str, str]]:
     brand = parsed.brand
     kind = parsed.product_kind
-    family = parsed.product_family
+    family_terms = _product_family_lookup_terms(parsed.product_family)
+    exact_family_clause = " or ".join(
+        f"lower(pf.product_family_name) = lower({_sql_quote(term)})"
+        for term in family_terms
+    )
     rows = _sql_rows(
         vm,
         "select pv.product_sku, pv.record_path, pv.product_name, pv.brand, "
@@ -529,12 +606,17 @@ def _fetch_catalog_candidates(
         "join product_families pf on pf.product_family_id = pv.product_family_id "
         f"where lower(pv.brand) = lower({_sql_quote(brand)}) "
         f"and lower(pk.product_kind_name) = lower({_sql_quote(kind)}) "
-        f"and lower(pf.product_family_name) = lower({_sql_quote(family)}) "
+        f"and ({exact_family_clause}) "
         "order by pv.product_sku limit 60;",
     )
     if rows:
         return rows
 
+    like_family_clause = " or ".join(
+        "lower(pf.product_family_name) like '%' || "
+        f"lower({_sql_quote(term)}) || '%'"
+        for term in family_terms
+    )
     return _sql_rows(
         vm,
         "select pv.product_sku, pv.record_path, pv.product_name, pv.brand, "
@@ -544,7 +626,7 @@ def _fetch_catalog_candidates(
         "join product_families pf on pf.product_family_id = pv.product_family_id "
         f"where lower(pv.brand) = lower({_sql_quote(brand)}) "
         f"and lower(pk.product_kind_name) = lower({_sql_quote(kind)}) "
-        f"and lower(pf.product_family_name) like '%' || lower({_sql_quote(family)}) || '%' "
+        f"and ({like_family_clause}) "
         "order by pv.product_sku limit 60;",
     )
 
@@ -660,6 +742,7 @@ def resolve_catalog_items(
                 constraints,
                 props,
                 candidate.get("product_name") or "",
+                product_family_name=candidate.get("product_family_name") or "",
             )
             available_today = availability_by_sku.get(sku, 0) if cmd.store_id else None
             qualifies = (
@@ -689,12 +772,14 @@ def resolve_catalog_items(
                     support_base_constraints,
                     props,
                     candidate.get("product_name") or "",
+                    product_family_name=candidate.get("product_family_name") or "",
                 )
                 if not base_missing:
                     extra_matched, extra_missing = _candidate_constraint_matches(
                         support_extra_constraints,
                         props,
                         candidate.get("product_name") or "",
+                        product_family_name=candidate.get("product_family_name") or "",
                     )
                     if not support_extra_constraints:
                         extra_missing = [support_extra_text]
