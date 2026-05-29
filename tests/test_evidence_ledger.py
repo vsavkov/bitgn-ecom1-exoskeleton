@@ -177,6 +177,47 @@ def test_apply_to_completion_uses_accumulated_archive_fraud_total() -> None:
     ]
 
 
+def test_apply_to_completion_autocites_loaded_docs_for_matching_task_type() -> None:
+    cmd = _completion(
+        task_type="discount",
+        row_refs=["/proc/baskets/basket_001.json"],
+    )
+
+    ledger = EvidenceLedger()
+    ledger.register_loaded_docs(
+        [
+            "/docs/security.md",
+            "/docs/discounts.md",
+            "/docs/checkout.md",
+            "/docs/powertools-agentic-os-origin-story.md",
+        ]
+    )
+
+    updated = ledger.apply_to_completion(cmd)
+
+    # security + discounts match the "discount" task_type; checkout does not
+    # match for a discount task; the origin story never matches anything.
+    assert "/docs/security.md" in updated.grounding_doc_refs
+    assert "/docs/discounts.md" in updated.grounding_doc_refs
+    assert "/docs/checkout.md" not in updated.grounding_doc_refs
+    assert (
+        "/docs/powertools-agentic-os-origin-story.md"
+        not in updated.grounding_doc_refs
+    )
+
+
+def test_register_loaded_docs_dedupes_across_calls() -> None:
+    ledger = EvidenceLedger()
+    ledger.register_loaded_docs(["/docs/security.md", "/docs/checkout.md"])
+    ledger.register_loaded_docs(["/docs/security.md", "/docs/discounts.md"])
+
+    assert ledger.loaded_doc_refs == [
+        "/docs/security.md",
+        "/docs/checkout.md",
+        "/docs/discounts.md",
+    ]
+
+
 def test_apply_to_completion_is_noop_for_unrelated_buckets() -> None:
     cmd = _completion(
         task_type="catalog_lookup",

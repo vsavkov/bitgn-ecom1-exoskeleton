@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from doc_autocite import relevant_doc_refs_for_task_type
 from submission_refs import dedupe_refs
 
 if TYPE_CHECKING:
@@ -19,6 +20,7 @@ class EvidenceLedger:
     manager_verified_refs: list[str] = field(default_factory=list)
     fraud_refs: list[str] = field(default_factory=list)
     fraud_total_message: str = ""
+    loaded_doc_refs: list[str] = field(default_factory=list)
 
     def merge_availability_count(self, refs: list[str]) -> None:
         if refs:
@@ -50,6 +52,10 @@ class EvidenceLedger:
         if total_message:
             self.fraud_total_message = total_message
 
+    def register_loaded_docs(self, paths: list[str]) -> None:
+        if paths:
+            self.loaded_doc_refs = dedupe_refs([*self.loaded_doc_refs, *paths])
+
     def apply_to_completion(
         self,
         cmd: "ReportTaskCompletion",
@@ -57,6 +63,7 @@ class EvidenceLedger:
         from agent import (
             _apply_archive_fraud_result,
             _apply_availability_count_catalog_refs,
+            _apply_loaded_doc_refs,
             _apply_support_note_catalog_refs,
             _apply_verified_manager_refs,
         )
@@ -68,5 +75,9 @@ class EvidenceLedger:
             cmd,
             total_message=self.fraud_total_message,
             refs_to_submit=self.fraud_refs,
+        )
+        cmd = _apply_loaded_doc_refs(
+            cmd,
+            relevant_doc_refs_for_task_type(self.loaded_doc_refs, cmd.task_type),
         )
         return cmd

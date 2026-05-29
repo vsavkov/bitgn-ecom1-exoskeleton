@@ -859,6 +859,21 @@ def _apply_archive_fraud_result(
     return cmd.model_copy(update=updates)
 
 
+def _apply_loaded_doc_refs(
+    cmd: ReportTaskCompletion,
+    matched_refs: list[str],
+) -> ReportTaskCompletion:
+    # Policy/incident docs the trial auto-read get auto-cited when the final
+    # task_type maps to one of their documented intents. The model often
+    # decides based on these docs without remembering to mirror the path
+    # into grounding_doc_refs.
+    if not matched_refs:
+        return cmd
+
+    doc_refs = dedupe_refs([*cmd.grounding_doc_refs, *matched_refs])
+    return cmd.model_copy(update={"grounding_doc_refs": doc_refs})
+
+
 @traceable(
     run_type="chain",
     name="ECOM Agent",
@@ -953,6 +968,10 @@ def run_agent(
         classification = classification_future.result()
     finally:
         classifier_pool.shutdown(wait=False)
+
+    # Track every policy/incident doc the must loop pulled in so doc_autocite
+    # can mirror the relevant ones into grounding_doc_refs at completion time.
+    ledger.register_loaded_docs(sorted(tree_read_paths))
 
     def _finalize_preflight(cmd: ReportTaskCompletion) -> dict:
         dispatch(vm, cmd, task_text=task_text)
@@ -1086,6 +1105,9 @@ def run_agent(
                 continue
 
             if isinstance(cmd, ReportTaskCompletion):
+                # Refresh doc autocite bucket in case the model read more docs
+                # during the main loop beyond what the must startup pulled in.
+                ledger.register_loaded_docs(sorted(tree_read_paths))
                 cmd = ledger.apply_to_completion(cmd)
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
