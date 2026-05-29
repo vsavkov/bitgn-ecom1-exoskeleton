@@ -798,17 +798,32 @@ def _apply_availability_count_catalog_refs(
     canonical_refs: list[str],
 ) -> ReportTaskCompletion:
     canonical_catalog_refs = catalog_refs_from_refs(canonical_refs)
-    if cmd.task_type != "availability_count" or not canonical_catalog_refs:
+    canonical_non_catalog_refs = [
+        ref for ref in canonical_refs if ref and not is_catalog_ref(ref)
+    ]
+    canonical_store_refs = [
+        ref for ref in canonical_non_catalog_refs if ref.startswith("/proc/stores/")
+    ]
+    if cmd.task_type != "availability_count" or (
+        not canonical_catalog_refs and not canonical_non_catalog_refs
+    ):
         return cmd
 
     # Availability-count graders expect the final refs to describe the products
-    # that actually qualify. The catalogue helper already computes that set, so
-    # keep non-catalog operational refs and replace model-invented catalog refs.
-    row_refs = dedupe_refs(
-        [
-            *(ref for ref in cmd.grounding_row_refs if not is_catalog_ref(ref)),
-            *canonical_catalog_refs,
+    # that actually qualify. The catalogue helper already computes that set and
+    # the store evidence, so keep non-catalog operational refs and replace only
+    # model-invented catalog refs.
+    existing_non_catalog_refs = [
+        ref for ref in cmd.grounding_row_refs if not is_catalog_ref(ref)
+    ]
+    if canonical_store_refs:
+        existing_non_catalog_refs = [
+            ref
+            for ref in existing_non_catalog_refs
+            if not ref.startswith("/proc/stores/")
         ]
+    row_refs = dedupe_refs(
+        [*existing_non_catalog_refs, *canonical_non_catalog_refs, *canonical_catalog_refs]
     )
     return cmd.model_copy(update={"grounding_row_refs": row_refs})
 

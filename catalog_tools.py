@@ -237,6 +237,7 @@ _GENERIC_CONSTRAINT_WORDS = {
     "fastener",
     "finish",
     "fitting",
+    "ip",
     "kit",
     "length",
     "luminous",
@@ -267,6 +268,7 @@ _STRUCTURED_PROPERTY_LABEL_WORDS = {
     "drive",
     "family",
     "finish",
+    "ip",
     "length",
     "luminous",
     "material",
@@ -274,6 +276,7 @@ _STRUCTURED_PROPERTY_LABEL_WORDS = {
     "power",
     "product",
     "protection",
+    "rating",
     "screw",
     "size",
     "source",
@@ -712,13 +715,16 @@ def _availability_qualifies(
 def _refs_to_submit_for_availability_count(
     exact_matches: list[dict[str, Any]],
     *,
-    predicate: Literal["at_least", "below"],
+    predicate: Literal["at_least", "below"],  # noqa: ARG001 - kept for call-site clarity
 ) -> list[str]:
     refs: list[str] = []
     for match in exact_matches:
         if match.get("availability_qualifies") is not True:
             continue
-        if predicate == "below" or (match.get("available_today_quantity") or 0) > 0:
+        # Count tasks can qualify zero-stock products for "fewer than N", but
+        # AGENTS.MD says availability answers should not cite unavailable
+        # products. Keep zero-stock products in qualifying_item_count only.
+        if (match.get("available_today_quantity") or 0) > 0:
             refs.append(match["record_path"])
     return refs
 

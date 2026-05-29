@@ -236,6 +236,38 @@ def test_structured_constraints_match_compact_metric_dimensions() -> None:
     assert missing == []
 
 
+def test_structured_constraints_match_ip_rating_variant_tail() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="device type socket outlet",
+                label="device type",
+                value="socket outlet",
+            ),
+            ParsedCatalogConstraint(
+                text="color family Green",
+                label="color family",
+                value="Green",
+            ),
+            ParsedCatalogConstraint(
+                text="ip rating IP44",
+                label="ip rating",
+                value="IP44",
+            ),
+        ],
+        [],
+        "Kopp Professional KOP 1ME-LSV Wiring Device socket outlet Green IP44",
+        product_family_name="Kopp Professional KOP 1ME-LSV Wiring Device",
+    )
+
+    assert matched == [
+        "device type socket outlet",
+        "color family Green",
+        "ip rating IP44",
+    ]
+    assert missing == []
+
+
 def test_variant_tail_matching_does_not_use_family_words() -> None:
     matched, missing = _candidate_constraint_matches(
         [
@@ -318,7 +350,7 @@ def test_product_family_lookup_terms_strip_trailing_line() -> None:
     ]
 
 
-def test_availability_count_refs_include_zero_stock_for_below_predicate() -> None:
+def test_availability_count_refs_exclude_zero_stock_for_below_predicate() -> None:
     matches = [
         {
             "record_path": "/proc/catalog/a.json",
@@ -328,14 +360,16 @@ def test_availability_count_refs_include_zero_stock_for_below_predicate() -> Non
         {
             "record_path": "/proc/catalog/b.json",
             "available_today_quantity": 4,
-            "availability_qualifies": False,
+            "availability_qualifies": True,
         },
     ]
 
     assert _refs_to_submit_for_availability_count(matches, predicate="below") == [
-        "/proc/catalog/a.json"
+        "/proc/catalog/b.json"
     ]
-    assert _refs_to_submit_for_availability_count(matches, predicate="at_least") == []
+    assert _refs_to_submit_for_availability_count(matches, predicate="at_least") == [
+        "/proc/catalog/b.json"
+    ]
 
 
 def test_support_note_constraints_split_base_and_extra_claim() -> None:

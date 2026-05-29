@@ -357,11 +357,36 @@ def test_apply_availability_count_catalog_refs_replaces_catalog_refs_only() -> N
         "/proc/catalog/Brand/RIGHT.json",
     ]
 
-    unchanged = _apply_availability_count_catalog_refs(
+    store_only_update = _apply_availability_count_catalog_refs(
         cmd,
         ["/proc/stores/store_wrong.json"],
     )
-    assert unchanged.grounding_row_refs == cmd.grounding_row_refs
+    assert store_only_update.grounding_row_refs == ["/proc/stores/store_wrong.json"]
+
+
+def test_apply_availability_count_catalog_refs_adds_missing_store_ref() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["counted qualifying products"],
+        task_type="availability_count",
+        message="1 products",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/proc/catalog/Brand/WRONG.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_availability_count_catalog_refs(
+        cmd,
+        [
+            "/proc/stores/store_vienna_praterstern.json",
+            "/proc/catalog/Brand/RIGHT.json",
+        ],
+    )
+
+    assert updated.grounding_row_refs == [
+        "/proc/stores/store_vienna_praterstern.json",
+        "/proc/catalog/Brand/RIGHT.json",
+    ]
 
 
 def test_apply_support_note_catalog_refs_replaces_catalog_refs_only() -> None:
