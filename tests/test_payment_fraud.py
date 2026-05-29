@@ -17,16 +17,34 @@ class ExecResult:
     exit_code: int = 0
 
 
+SCHEMA_OK_PROBE_STDOUT = "name\npayment_transactions\nstores\n"
+SCHEMA_MISSING_PROBE_STDOUT = "name\n"
+
+
 class FakeVM:
-    def __init__(self, *, sql_rows: str = "", exit_code: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        sql_rows: str = "",
+        exit_code: int = 0,
+        schema_probe_stdout: str = SCHEMA_OK_PROBE_STDOUT,
+        schema_probe_exit: int = 0,
+    ) -> None:
         self.sql_rows = sql_rows
         self.exit_code = exit_code
+        self.schema_probe_stdout = schema_probe_stdout
+        self.schema_probe_exit = schema_probe_exit
         self.queries: list[str] = []
 
     def exec(self, request) -> ExecResult:
         if request.path != "/bin/sql":
             raise AssertionError(f"unexpected exec path: {request.path}")
         self.queries.append(request.stdin)
+        if "from sqlite_schema" in request.stdin:
+            return ExecResult(
+                stdout=self.schema_probe_stdout,
+                exit_code=self.schema_probe_exit,
+            )
         return ExecResult(stdout=self.sql_rows, exit_code=self.exit_code)
 
 
@@ -118,13 +136,35 @@ def test_analyze_payment_fraud_history_returns_refs_and_total() -> None:
 
 
 def test_analyze_payment_fraud_history_returns_empty_on_empty_sql() -> None:
-    vm = FakeVM(sql_rows="")
+    # Schema is present but the table is empty: no warning, no fraud, no
+    # spurious total_message (otherwise it would overwrite the archive total
+    # inside the shared EvidenceLedger.fraud bucket).
+    vm = FakeVM(sql_rows="payment_id\n")
     result = analyze_payment_fraud_history(vm, ReqAnalyzePaymentFraudHistory())
 
     assert result["fraud_payment_count"] == 0
     assert result["total_cents"] == 0
-    assert result["total_message"] == "EUR 0.00"
+    assert result["total_message"] == ""
     assert result["refs_to_submit"] == []
+    assert "warning" not in result
+
+
+def test_analyze_payment_fraud_history_warns_when_schema_missing() -> None:
+    vm = FakeVM(
+        sql_rows="",
+        schema_probe_stdout=SCHEMA_MISSING_PROBE_STDOUT,
+    )
+    result = analyze_payment_fraud_history(vm, ReqAnalyzePaymentFraudHistory())
+
+    assert result["fraud_payment_count"] == 0
+    assert result["total_message"] == ""
+    assert "warning" in result
+    assert "missing required tables" in result["warning"]
+    # Heavy fraud SQL must NOT run when the probe already says the schema
+    # cannot satisfy the query.
+    assert all(
+        "from payment_transactions" not in query for query in vm.queries
+    )
 
 
 def test_analyze_payment_fraud_history_falls_back_to_proc_path_when_record_path_missing() -> None:
@@ -151,14 +191,14 @@ def test_analyze_payment_fraud_history_falls_back_to_proc_path_when_record_path_
 
 
 def test_analyze_payment_fraud_history_returns_warning_on_sql_failure() -> None:
-    # The trial snapshot can rename payment_transactions or drop the join key;
-    # the helper must degrade to an empty result with a warning instead of
-    # raising, so the agent can fall back without stalling the whole trial.
+    # Probe succeeds, but the heavy fraud SQL exits non-zero. The helper must
+    # degrade to an empty result with an empty total_message so the agent can
+    # fall back without stalling the trial.
     vm = FakeVM(sql_rows="", exit_code=1)
     result = analyze_payment_fraud_history(vm, ReqAnalyzePaymentFraudHistory())
 
     assert result["fraud_payment_count"] == 0
     assert result["refs_to_submit"] == []
-    assert result["total_message"] == "EUR 0.00"
+    assert result["total_message"] == ""
     assert "warning" in result
     assert "fall back" in result["warning"].lower()

@@ -62,6 +62,12 @@ PAYMENT_FRAUD_SQL = (
     "order by p.payment_created_at, p.payment_id;"
 )
 
+REQUIRED_FRAUD_TABLES = ("payment_transactions", "stores")
+SCHEMA_PROBE_SQL = (
+    "select name from sqlite_schema where type = 'table' "
+    "and name in ('payment_transactions','stores') order by name;"
+)
+
 
 def _parse_timestamp(value: str) -> datetime:
     normalized = value.strip()
@@ -76,13 +82,46 @@ class PaymentFraudFetchResult:
     warning: str = ""
 
 
+def _probe_schema(vm: RuntimeVM) -> str:
+    # A trial-specific snapshot can rename payment_transactions or drop the
+    # stores join. Probe sqlite_schema first so the heavy fraud query never
+    # runs in a snapshot where it cannot succeed (and risks long-running
+    # full-table scans before the runtime kills the trial).
+    try:
+        result = vm.exec(ExecRequest(path="/bin/sql", stdin=SCHEMA_PROBE_SQL))
+    except ConnectError as exc:
+        return f"sqlite_schema probe failed: {exc.message}"
+    if getattr(result, "exit_code", 0):
+        return (
+            "sqlite_schema probe exit "
+            f"{result.exit_code}: {(result.stderr or '').strip()}"
+        )
+
+    stdout = (result.stdout or "").strip()
+    found: set[str] = set()
+    try:
+        reader = csv.DictReader(io.StringIO(stdout))
+        for row in reader:
+            name = (row.get("name") or "").strip()
+            if name:
+                found.add(name)
+    except csv.Error as exc:
+        return f"sqlite_schema parse error: {exc}"
+
+    missing = [name for name in REQUIRED_FRAUD_TABLES if name not in found]
+    if missing:
+        return f"sqlite_schema is missing required tables: {', '.join(missing)}"
+    return ""
+
+
 def _fetch_payment_rows(vm: RuntimeVM) -> PaymentFraudFetchResult:
+    schema_warning = _probe_schema(vm)
+    if schema_warning:
+        return PaymentFraudFetchResult(rows=[], warning=schema_warning)
+
     try:
         result = vm.exec(ExecRequest(path="/bin/sql", stdin=PAYMENT_FRAUD_SQL))
     except ConnectError as exc:
-        # Trial-specific runtimes occasionally re-parameterise the schema or
-        # rename tables/columns. Surface a soft warning so the model can fall
-        # back to manual SQL instead of failing the whole trial.
         return PaymentFraudFetchResult(rows=[], warning=f"SQL failed: {exc.message}")
 
     if getattr(result, "exit_code", 0):
@@ -154,7 +193,10 @@ def analyze_payment_fraud_history(
 
     payload: dict[str, Any] = {
         "total_cents": total_cents,
-        "total_message": format_eur(total_cents),
+        # Only claim a total_message when we actually have rows. Otherwise the
+        # shared EvidenceLedger.fraud_total_message bucket would overwrite a
+        # neighbouring archive-fraud total with a spurious "EUR 0.00".
+        "total_message": format_eur(total_cents) if payment_fraud_rows else "",
         "fraud_payment_count": len(payment_fraud_rows),
         "fraud_payment_ids": [row.row_id for row in payment_fraud_rows],
         "refs_to_submit": refs,
