@@ -13,6 +13,7 @@ from catalog_tools import (
     _product_family_lookup_terms,
     _property_label_candidates,
     _property_matches_constraint,
+    _refs_to_submit_for_availability_count,
     _split_support_note_constraints,
     _variant_tail_text,
 )
@@ -70,9 +71,18 @@ def test_parsed_response_accepts_structured_output() -> None:
 
 def test_catalog_text_normalization_and_numbers() -> None:
     assert _norm_words("Disc-Diameter: 180 mm") == "disc diameter 180 mm"
+    assert _norm_words("2500ml 38cm 36V 3XL 10W-40") == (
+        "2500 ml 38 cm 36 v 3 xl 10 w 40"
+    )
     assert _property_label_candidates("disc_diameter_mm") == [
         "disc diameter mm",
         "disc diameter",
+        "diameter",
+    ]
+    assert _property_label_candidates("rated_voltage_v") == [
+        "rated voltage v",
+        "rated voltage",
+        "voltage",
     ]
     assert _property_label_candidates("apparel_size") == ["apparel size", "size"]
     assert _property_label_candidates("paint_color") == [
@@ -102,6 +112,12 @@ def test_catalog_constraint_matching() -> None:
         key="apparel_size",
         text_value="3XL",
         number_value="",
+    )
+    assert _property_matches_constraint(
+        "voltage 400 V",
+        key="rated_voltage_v",
+        text_value="",
+        number_value="400",
     )
     assert not _property_matches_constraint(
         "color family red",
@@ -169,6 +185,54 @@ def test_structured_constraints_can_match_variant_name_tail() -> None:
     )
 
     assert matched == ["color family Yellow", "size XL"]
+    assert missing == []
+
+
+def test_structured_constraints_match_compact_unit_variant_tail() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="tool type hammer",
+                label="tool type",
+                value="hammer",
+            ),
+            ParsedCatalogConstraint(
+                text="length 250 mm",
+                label="length",
+                value="250 mm",
+            ),
+        ],
+        [],
+        "Fiskars PowerGear FSK 1CW-AXR Hammer Measuring and Cutting Tool hammer 250mm",
+        product_family_name=(
+            "Fiskars PowerGear FSK 1CW-AXR Hammer Measuring and Cutting Tool"
+        ),
+    )
+
+    assert matched == ["tool type hammer", "length 250 mm"]
+    assert missing == []
+
+
+def test_structured_constraints_match_compact_metric_dimensions() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="power source petrol",
+                label="power source",
+                value="petrol",
+            ),
+            ParsedCatalogConstraint(
+                text="cutting width 38 cm",
+                label="cutting width",
+                value="38 cm",
+            ),
+        ],
+        [],
+        "Wolf-Garten Silent WG 2IA-DMB Lawn Mower petrol 38cm",
+        product_family_name="Wolf-Garten Silent WG 2IA-DMB Lawn Mower",
+    )
+
+    assert matched == ["power source petrol", "cutting width 38 cm"]
     assert missing == []
 
 
@@ -252,6 +316,26 @@ def test_product_family_lookup_terms_strip_trailing_line() -> None:
         "Uvex Bionic x-fit Y59-F8N Work Jacket line",
         "Uvex Bionic x-fit Y59-F8N Work Jacket",
     ]
+
+
+def test_availability_count_refs_include_zero_stock_for_below_predicate() -> None:
+    matches = [
+        {
+            "record_path": "/proc/catalog/a.json",
+            "available_today_quantity": 0,
+            "availability_qualifies": True,
+        },
+        {
+            "record_path": "/proc/catalog/b.json",
+            "available_today_quantity": 4,
+            "availability_qualifies": False,
+        },
+    ]
+
+    assert _refs_to_submit_for_availability_count(matches, predicate="below") == [
+        "/proc/catalog/a.json"
+    ]
+    assert _refs_to_submit_for_availability_count(matches, predicate="at_least") == []
 
 
 def test_support_note_constraints_split_base_and_extra_claim() -> None:

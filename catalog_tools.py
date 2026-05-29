@@ -296,6 +296,7 @@ _EXTRA_CLAIM_BOUNDARY_RE = re.compile(
 
 def _norm_words(value: str) -> str:
     value = value.lower().replace("-", " ")
+    value = re.sub(r"(?<=\d)(?=[a-z])|(?<=[a-z])(?=\d)", " ", value)
     value = re.sub(r"[^a-z0-9]+", " ", value)
     return " ".join(value.split())
 
@@ -309,12 +310,19 @@ def _property_label_candidates(key: str) -> list[str]:
         parts = parts[:-1]
     if len(parts) > 1 and parts[-1] in {
         "count",
+        "diameter",
         "family",
+        "length",
         "platform",
+        "power",
         "profile",
         "size",
         "source",
         "type",
+        "voltage",
+        "volume",
+        "wattage",
+        "width",
     }:
         labels.append(parts[-1])
     if "color" in parts:
@@ -701,6 +709,20 @@ def _availability_qualifies(
     return available_today >= threshold
 
 
+def _refs_to_submit_for_availability_count(
+    exact_matches: list[dict[str, Any]],
+    *,
+    predicate: Literal["at_least", "below"],
+) -> list[str]:
+    refs: list[str] = []
+    for match in exact_matches:
+        if match.get("availability_qualifies") is not True:
+            continue
+        if predicate == "below" or (match.get("available_today_quantity") or 0) > 0:
+            refs.append(match["record_path"])
+    return refs
+
+
 def resolve_catalog_items(
     vm: EcomRuntimeClientSync,
     cmd: ReqResolveCatalogItems,
@@ -825,7 +847,13 @@ def resolve_catalog_items(
             if match.get("availability_qualifies") is True
             and (match.get("available_today_quantity") or 0) > 0
         ]
-        refs_to_submit_for_availability_count = available_qualifying_refs
+        qualifies_for_availability_count = any(
+            match.get("availability_qualifies") is True for match in exact_matches
+        )
+        refs_to_submit_for_availability_count = _refs_to_submit_for_availability_count(
+            exact_matches,
+            predicate=cmd.availability_predicate,
+        )
         support_note_refs_to_submit = [
             match["record_path"] for match in support_note_base_matches
         ]
@@ -853,6 +881,7 @@ def resolve_catalog_items(
                 "matched_refs": matched_refs,
                 "qualifying_refs": qualifying_refs,
                 "available_qualifying_refs": available_qualifying_refs,
+                "qualifies_for_availability_count": qualifies_for_availability_count,
                 "refs_to_submit_for_availability_count": (
                     refs_to_submit_for_availability_count
                 ),
@@ -880,12 +909,16 @@ def resolve_catalog_items(
         for item in resolved_items
         for ref in item.get("refs_to_submit_for_availability_count", [])
     ]
+    qualifying_item_count = sum(
+        1 for item in resolved_items if item.get("qualifies_for_availability_count")
+    )
 
     return {
         "status": "ok",
         "availability_predicate": cmd.availability_predicate,
         "store": store,
         "store_ref": (store or {}).get("record_path"),
+        "qualifying_item_count": qualifying_item_count,
         "refs_to_submit_for_availability_count": refs_to_submit_for_availability_count,
         "items": resolved_items,
     }
