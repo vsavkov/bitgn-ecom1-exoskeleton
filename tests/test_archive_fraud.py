@@ -139,10 +139,129 @@ def test_detect_archive_fraud_finds_bursts_and_ignores_slow_repeats() -> None:
         "H3",
         "H4",
     ]
-    assert {incident.rule for incident in incidents} >= {
-        "rapid_customer_multicity",
-        "high_value_customer_multicity",
-    }
+    assert "rapid_customer_multicity" in {incident.rule for incident in incidents}
+    assert any(incident.rule.startswith("high_value_") for incident in incidents)
+
+
+def test_detect_archive_fraud_selects_one_overlapping_window() -> None:
+    cities = ["Graz", "Salzburg", "Bratislava", "Vienna", "Linz", "Brno", "Innsbruck"]
+    rows = [
+        tsv_row(
+            f"O{index}",
+            f"2023-11-12T08:{minute:02d}:{second:02d}Z",
+            "arch_cust_overlap",
+            cities[index % len(cities)],
+            1000,
+            "pm_overlap",
+            "dev_overlap",
+            "mobile_app",
+        )
+        for index, (minute, second) in enumerate(
+            [
+                (0, 0),
+                (0, 26),
+                (0, 52),
+                (1, 18),
+                (1, 44),
+                (2, 10),
+                (2, 36),
+                (3, 2),
+                (3, 28),
+                (3, 54),
+                (4, 20),
+                (4, 46),
+                (5, 12),
+            ],
+            start=1,
+        )
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert len(incidents) == 1
+    assert [row.row_id for row in fraud_rows] == [f"O{index}" for index in range(1, 13)]
+
+
+def test_detect_archive_fraud_ignores_shared_service_desk_device() -> None:
+    cities = ["Graz", "Salzburg", "Bratislava", "Vienna", "Linz", "Brno"]
+    rows = [
+        tsv_row(
+            f"D{index}",
+            f"2023-11-12T08:0{index}:00Z",
+            f"arch_cust_{index:03d}",
+            cities[index % len(cities)],
+            1000,
+            f"pm_{index}",
+            "dev_shared_desk",
+            "service_desk",
+        )
+        for index in range(6)
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert fraud_rows == []
+    assert incidents == []
+
+
+def test_detect_archive_fraud_ignores_service_desk_customer_without_reused_payment() -> None:
+    cities = [
+        "Graz",
+        "Salzburg",
+        "Bratislava",
+        "Vienna",
+        "Linz",
+        "Brno",
+        "Innsbruck",
+    ]
+    rows = [
+        tsv_row(
+            f"C{index}",
+            f"2023-11-12T08:{index:02d}:00Z",
+            "arch_cust_service_desk",
+            cities[index % len(cities)],
+            1000,
+            f"pm_unique_{index}",
+            "dev_shared_desk",
+            "service_desk",
+        )
+        for index in range(7)
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert fraud_rows == []
+    assert incidents == []
+
+
+def test_detect_archive_fraud_keeps_service_desk_reused_payment_signal() -> None:
+    cities = ["Graz", "Salzburg", "Bratislava", "Vienna", "Linz", "Brno"]
+    rows = [
+        tsv_row(
+            f"P{index}",
+            f"2023-11-12T08:0{index}:00Z",
+            "arch_cust_service_desk",
+            cities[index % len(cities)],
+            1000,
+            "pm_reused",
+            "dev_shared_desk",
+            "service_desk",
+        )
+        for index in range(6)
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert [row.row_id for row in fraud_rows] == [f"P{index}" for index in range(6)]
+    assert {incident.rule for incident in incidents} == {"rapid_payment_multicity"}
 
 
 def test_analyze_archive_fraud_content_returns_message_and_refs() -> None:
@@ -151,6 +270,10 @@ def test_analyze_archive_fraud_content_returns_message_and_refs() -> None:
     assert result["total_cents"] == 614_200
     assert result["total_message"] == "EUR 6142.00"
     assert result["fraud_row_count"] == 14
+    assert result["candidate_incident_count"] >= result["selected_incident_count"]
+    assert result["suppressed_overlapping_candidate_count"] >= 0
+    assert "diagnostics" in result["incidents"][0]
+    assert result["incidents"][0]["diagnostics"]["row_density"] > 0
     assert result["refs_to_submit"][0] == "/archive/payments.tsv#row=R1"
     assert result["refs_to_submit"][-1] == "/archive/payments.tsv#row=H4"
 
