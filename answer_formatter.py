@@ -31,8 +31,9 @@ else:
 class FormattedAnswer(BaseModel):
     missed_elements: str = Field(
         description=(
-            "Concise diagnostic note describing formatting requirements missing "
-            "from the original message. Use an empty string if nothing was missing."
+            "Concise diagnostic note describing message-format requirements missing "
+            "from the original message. Do not report missing citations, records, or "
+            "grounding references here. Use an empty string if nothing was missing."
         )
     )
     formatted_message: str = Field(
@@ -79,7 +80,6 @@ def format_completion_message(
         "current_message": current_message,
         "outcome": outcome,
         "completed_steps_laconic": list(completed_steps_laconic),
-        "grounding_refs": list(grounding_refs),
     }
 
     try:
