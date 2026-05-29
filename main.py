@@ -1,16 +1,21 @@
+import json
 import os
 import textwrap
+from datetime import datetime
+from pathlib import Path
 
 from bitgn.harness_connect import HarnessServiceClientSync
 from bitgn.harness_pb2 import (
     EndTrialRequest,
     EvalPolicy,
     GetBenchmarkRequest,
+    RunState,
     StartRunRequest,
     StartTrialRequest,
     StatusRequest,
     SubmitRunRequest,
     TRIAL_STATE_DONE,
+    TrialState,
 )
 from connectrpc.errors import ConnectError
 from langsmith import Client as LangSmithClient
@@ -41,6 +46,8 @@ def _env_flag(name: str) -> bool:
 
 
 AGENT_DEBUG = _env_flag("AGENT_DEBUG")
+PROJECT_ROOT = Path(__file__).resolve().parent
+RUNS_DIR = PROJECT_ROOT / "runs"
 
 
 def _color(text: str, color: str) -> str:
@@ -59,8 +66,80 @@ def _flush_langsmith() -> None:
         print(f"{CLI_RED}LangSmith flush failed: {exc}{CLI_CLR}")
 
 
+def _enum_name(enum_type, value: int) -> str:
+    try:
+        return enum_type.Name(value)
+    except ValueError:
+        return str(value)
+
+
+def _run_artifact_path(started_at: datetime) -> Path:
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    base = RUNS_DIR / f"run_{started_at:%Y%m%d_%H%M%S}.json"
+    if not base.exists():
+        return base
+
+    for index in range(2, 100):
+        candidate = RUNS_DIR / f"run_{started_at:%Y%m%d_%H%M%S}_{index:02d}.json"
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"could not choose a free run artifact path for {base}")
+
+
+def _write_run_artifact(result, started_at: datetime, trial_outputs: dict[str, dict]) -> Path:
+    finished_at = datetime.now().astimezone()
+    test_cases = []
+
+    for trial in result.trials:
+        score_detail = list(trial.score_detail)
+        agent_output = trial_outputs.get(trial.trial_id) or {}
+        langsmith_trace_id = (
+            agent_output.get("langsmith_trace_id") or agent_output.get("langsmith_run_id")
+        )
+        grader_comment = ""
+        if trial.score != 1:
+            grader_comment = "\n".join(score_detail).strip() or trial.error
+
+        test_cases.append(
+            {
+                "task_id": trial.task_id,
+                "trial_id": trial.trial_id,
+                "trace_id": langsmith_trace_id,
+                "langsmith_trace_id": langsmith_trace_id,
+                "langsmith_run_id": agent_output.get("langsmith_run_id"),
+                "score": trial.score if trial.score_available else None,
+                "score_available": bool(trial.score_available),
+                "state": _enum_name(TrialState, trial.state),
+                "score_detail": score_detail,
+                "grader_comment": grader_comment,
+                "error": trial.error,
+            }
+        )
+
+    payload = {
+        "schema_version": 1,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "benchmark_id": BENCH_ID,
+        "model_id": MODEL_ID,
+        "langsmith_project": os.getenv("LANGSMITH_PROJECT") or "",
+        "bitgn_run_id": result.run_id,
+        "run_state": _enum_name(RunState, result.state),
+        "score": result.score if result.score_available else None,
+        "score_available": bool(result.score_available),
+        "test_cases": test_cases,
+    }
+
+    path = _run_artifact_path(started_at)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    return path
+
+
 def main() -> None:
+    started_at = datetime.now().astimezone()
     task_filter = os.sys.argv[1:]
+    full_run = not task_filter
+    trial_outputs: dict[str, dict] = {}
 
     try:
         client = HarnessServiceClientSync(BITGN_URL)
@@ -91,8 +170,9 @@ def main() -> None:
                 print(f"{'=' * 30} Starting task: {t.task_id} {'=' * 30}")
                 print(f"{_color(t.instruction, CLI_BLUE)}\n{'-' * 80}")
                 try:
-                    run_agent(MODEL_ID, t.harness_url, t.instruction)
+                    trial_outputs[t.trial_id] = run_agent(MODEL_ID, t.harness_url, t.instruction)
                 except Exception as exc:
+                    trial_outputs[t.trial_id] = {"error": str(exc)}
                     print(_color(str(exc), CLI_RED))
 
                 client.end_trial(EndTrialRequest(trial_id=t.trial_id))
@@ -100,6 +180,12 @@ def main() -> None:
             _flush_langsmith()
             print(f"\n{_color('>>>> Submitting run... <<<<', CLI_GREEN)}")
             result = client.submit_run(SubmitRunRequest(run_id=run.run_id, force=True))
+            if full_run:
+                try:
+                    artifact_path = _write_run_artifact(result, started_at, trial_outputs)
+                    print(_color(f"Run artifact: {artifact_path}", CLI_BLUE))
+                except Exception as exc:
+                    print(f"{CLI_RED}Failed to write run artifact: {exc}{CLI_CLR}")
 
             if result.score_available:
                 print(f"FINAL SCORE: {result.score:0.2f}")

@@ -25,6 +25,7 @@ from connectrpc.errors import ConnectError
 from google.protobuf.json_format import MessageToDict
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from langsmith import traceable
+from langsmith.run_helpers import get_current_run_tree
 from langsmith.wrappers import wrap_openai
 from openai import OpenAI, pydantic_function_tool
 from pydantic import BaseModel, Field, ValidationError
@@ -594,13 +595,21 @@ def _print_completion(cmd: ReportTaskCompletion) -> None:
     process_outputs=_trace_agent_outputs,
 )
 def run_agent(model: str, harness_url: str, task_text: str) -> dict:
+    run_tree = get_current_run_tree()
+    langsmith_run_id = str(run_tree.id) if run_tree and run_tree.id else None
+    langsmith_trace_id = str(run_tree.trace_id) if run_tree and run_tree.trace_id else langsmith_run_id
+
     client = wrap_openai(OpenAI())
     vm = EcomRuntimeClientSync(harness_url)
     debug = _env_flag("AGENT_DEBUG")
     context = []
     tree_help_paths: set[str] = set()
     tree_read_paths: set[str] = set()
-    final_result: dict = {"completed": False}
+    final_result: dict = {
+        "completed": False,
+        "langsmith_run_id": langsmith_run_id,
+        "langsmith_trace_id": langsmith_trace_id,
+    }
 
     must = [
         ReqTree(level=2, root="/"),
@@ -690,6 +699,8 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
             if isinstance(cmd, ReportTaskCompletion):
                 final_result = {
                     "completed": True,
+                    "langsmith_run_id": langsmith_run_id,
+                    "langsmith_trace_id": langsmith_trace_id,
                     "outcome": cmd.outcome,
                     "message": cmd.message,
                     "grounding_refs": cmd.grounding_refs,
