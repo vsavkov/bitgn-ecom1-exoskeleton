@@ -9,11 +9,14 @@ from submission_refs import (
     candidate_record_ids,
     canonical_proc_record_ref,
     dedupe_refs,
+    employee_id_from_ref,
     explicit_target_refs_from_task,
     is_document_ref,
+    manager_store_refs_from_task,
     normalize_runtime_path,
     normalize_submission_refs,
     parse_runtime_identity,
+    replace_customer_facing_employee_refs,
     split_ref_fragment,
     sql_quote,
     sql_record_path,
@@ -241,6 +244,78 @@ def test_explicit_target_patterns_do_not_match_embedded_words() -> None:
     assert spec.pattern.findall("xBasket_057 basket_058 basket-059") == ["058", "059"]
 
 
+def test_employee_id_from_ref_accepts_canonical_and_extensionless_paths() -> None:
+    assert employee_id_from_ref("/proc/employees/emp_001.json") == "emp_001"
+    assert employee_id_from_ref("proc/employees/emp_002") == "emp_002"
+    assert employee_id_from_ref("/proc/baskets/basket_001.json") is None
+
+
+def test_replace_customer_facing_employee_refs_uses_store_record() -> None:
+    vm = FakeVM(
+        sql_outputs={
+            "e.employee_id = 'emp_001'": csv_rows(
+                "store_record_path",
+                "/proc/stores/store_vienna_praterstern.json",
+            )
+        }
+    )
+
+    assert replace_customer_facing_employee_refs(
+        vm,
+        [
+            "/proc/employees/emp_001.json",
+            "/proc/baskets/basket_004.json",
+        ],
+        user_id="cust_043",
+        roles={"customer"},
+    ) == [
+        "/proc/stores/store_vienna_praterstern.json",
+        "/proc/baskets/basket_004.json",
+    ]
+
+
+def test_replace_customer_facing_employee_refs_keeps_employee_identity_refs() -> None:
+    vm = FakeVM()
+
+    assert replace_customer_facing_employee_refs(
+        vm,
+        ["/proc/employees/emp_034.json"],
+        user_id="guest",
+        roles={"guest"},
+    ) == []
+    assert replace_customer_facing_employee_refs(
+        vm,
+        ["/proc/employees/emp_034.json"],
+        user_id="emp_034",
+        roles={"employee", "discount_manager"},
+    ) == ["/proc/employees/emp_034.json"]
+
+
+def test_manager_store_refs_from_task_requires_manager_verification_intent() -> None:
+    vm = FakeVM(
+        sql_outputs={
+            "from stores order by length(store_name) desc": csv_rows(
+                "store_name,record_path",
+                "PowerTool Vienna Praterstern,/proc/stores/store_vienna_praterstern.json",
+                "PowerTool Innsbruck Wilten,/proc/stores/store_innsbruck_wilten.json",
+            )
+        }
+    )
+
+    assert manager_store_refs_from_task(
+        vm,
+        "Please verify Philipp Lehmann is manager at PowerTool Vienna Praterstern.",
+    ) == ["/proc/stores/store_vienna_praterstern.json"]
+    assert manager_store_refs_from_task(
+        vm,
+        "Please check if Greta Engel really manages PowerTool Innsbruck Wilten.",
+    ) == ["/proc/stores/store_innsbruck_wilten.json"]
+    assert manager_store_refs_from_task(
+        vm,
+        "For basket basket_053 at PowerTool Innsbruck Wilten, manager approved it.",
+    ) == []
+
+
 def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:
     vm = FakeVM(existing_paths={"/proc/baskets/basket_001.json"})
 
@@ -285,3 +360,49 @@ def test_submission_refs_auto_adds_safe_target_record_from_task_text() -> None:
         vm,
         task_text="Can you discount basket_057?",
     ) == ["/docs/security.md", "/proc/baskets/basket_057.json"]
+
+
+def test_submission_refs_replaces_customer_facing_employee_ref_and_adds_store() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust_043\nroles: customer\n",
+        sql_outputs={
+            "basket_id = 'basket_004'": csv_rows(
+                "record_path,customer_id",
+                "/proc/baskets/basket_004.json,cust_043",
+            ),
+            "e.employee_id = 'emp_001'": csv_rows(
+                "store_record_path",
+                "/proc/stores/store_vienna_praterstern.json",
+            ),
+            "from stores order by length(store_name) desc": csv_rows(
+                "store_name,record_path",
+                "PowerTool Vienna Praterstern,/proc/stores/store_vienna_praterstern.json",
+            ),
+        },
+        existing_paths={
+            "/proc/baskets/basket_004.json",
+            "/proc/stores/store_vienna_praterstern.json",
+        },
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="discount",
+            grounding_doc_refs=["/docs/security.md", "/docs/discounts.md"],
+            grounding_row_refs=[
+                "/proc/employees/emp_001.json",
+                "/proc/baskets/basket_004.json",
+            ],
+        ),
+        vm,
+        task_text=(
+            "Before applying this, verify that Philipp Lehmann is actually a "
+            "manager at PowerTool Vienna Praterstern. They approved a discount "
+            "for my basket basket_004."
+        ),
+    ) == [
+        "/docs/security.md",
+        "/docs/discounts.md",
+        "/proc/stores/store_vienna_praterstern.json",
+        "/proc/baskets/basket_004.json",
+    ]

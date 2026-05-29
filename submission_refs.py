@@ -37,6 +37,11 @@ class ExplicitRecordSpec(NamedTuple):
 
 
 PRODUCT_SKU_RE = re.compile(r"^[A-Z]{3}-[A-Z0-9]+$")
+EMPLOYEE_ID_RE = re.compile(r"^emp_\d+$")
+MANAGER_STORE_VERIFICATION_RE = re.compile(
+    r"\b(?:check|confirm|verify)\b[\s\S]{0,160}\b(?:manager|store\s+manager|manages?)\b",
+    re.IGNORECASE,
+)
 PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
     "baskets": ("shopping_baskets", "basket_id", re.compile(r"^basket_\d+$")),
     "customers": ("customer_accounts", "customer_id", re.compile(r"^cust_\d+$")),
@@ -330,6 +335,9 @@ def explicit_record_path_if_allowed(
 def explicit_target_refs_from_task(
     vm: RuntimeVM,
     task_text: str,
+    *,
+    user_id: str | None = None,
+    roles: set[str] | None = None,
 ) -> list[str]:
     candidates: list[tuple[ExplicitRecordSpec, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -345,7 +353,11 @@ def explicit_target_refs_from_task(
     if not candidates:
         return []
 
-    user_id, roles = runtime_identity(vm)
+    if roles is None:
+        roles = set()
+    if user_id is None and not roles:
+        user_id, roles = runtime_identity(vm)
+
     refs: list[str] = []
     for spec, record_id in candidates:
         path = explicit_record_path_if_allowed(
@@ -357,6 +369,92 @@ def explicit_target_refs_from_task(
         )
         if path:
             refs.append(path)
+    return dedupe_refs(refs)
+
+
+def is_customer_or_guest_context(user_id: str | None, roles: set[str]) -> bool:
+    if user_id and user_id.startswith("cust_"):
+        return True
+    if user_id and user_id.startswith("guest"):
+        return True
+    return bool(roles) and roles <= {"guest"}
+
+
+def employee_id_from_ref(ref: str) -> str | None:
+    path, _fragment = split_ref_fragment(ref)
+    normalized = normalize_runtime_path(path)
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) != 3 or parts[:2] != ["proc", "employees"]:
+        return None
+
+    employee_id = parts[2].removesuffix(".json")
+    return employee_id if EMPLOYEE_ID_RE.match(employee_id) else None
+
+
+def store_ref_for_employee(vm: RuntimeVM, employee_id: str) -> str | None:
+    rows = sql_rows(
+        vm,
+        "select s.record_path as store_record_path "
+        "from employee_accounts e "
+        "join stores s on s.store_id = e.store_id "
+        f"where e.employee_id = {sql_quote(employee_id)} "
+        "limit 1;",
+    )
+    if not rows:
+        return None
+
+    path = rows[0].get("store_record_path") or ""
+    return path if path.startswith("/") else None
+
+
+def replace_customer_facing_employee_refs(
+    vm: RuntimeVM,
+    refs: list[str],
+    *,
+    user_id: str | None,
+    roles: set[str],
+) -> list[str]:
+    if not is_customer_or_guest_context(user_id, roles):
+        return refs
+
+    replaced_refs: list[str] = []
+    for ref in refs:
+        employee_id = employee_id_from_ref(ref)
+        if employee_id is None:
+            replaced_refs.append(ref)
+            continue
+
+        # Employee profiles include private operational contact data. Customer
+        # and guest answers may use them internally, but final grounding should
+        # cite the associated store record instead when that relationship exists.
+        store_ref = store_ref_for_employee(vm, employee_id)
+        if store_ref:
+            replaced_refs.append(store_ref)
+
+    return dedupe_refs(replaced_refs)
+
+
+def searchable_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def manager_store_refs_from_task(vm: RuntimeVM, task_text: str) -> list[str]:
+    if not MANAGER_STORE_VERIFICATION_RE.search(task_text):
+        return []
+
+    normalized_task = f" {searchable_text(task_text)} "
+    refs: list[str] = []
+    rows = sql_rows(
+        vm,
+        "select store_name, record_path from stores order by length(store_name) desc;",
+    )
+    for row in rows:
+        store_name = row.get("store_name") or ""
+        store_ref = row.get("record_path") or ""
+        if not store_ref.startswith("/"):
+            continue
+        if f" {searchable_text(store_name)} " in normalized_task:
+            refs.append(store_ref)
     return dedupe_refs(refs)
 
 
@@ -376,11 +474,34 @@ def submission_refs(
     if cmd.task_type == "count" or cmd.protected_record_denial:
         refs = doc_refs
     else:
+        user_id: str | None = None
+        roles: set[str] = set()
+        if vm is not None:
+            user_id, roles = runtime_identity(vm)
+
         # The final answer is graded on refs separately from the text. When the
         # user names an exact basket/payment/return/customer id, preserve that
         # target evidence even if the model forgets to echo it in grounding refs.
         if vm is not None and task_text:
-            row_refs = dedupe_refs([*row_refs, *explicit_target_refs_from_task(vm, task_text)])
+            row_refs = dedupe_refs(
+                [
+                    *row_refs,
+                    *explicit_target_refs_from_task(
+                        vm,
+                        task_text,
+                        user_id=user_id,
+                        roles=roles,
+                    ),
+                    *manager_store_refs_from_task(vm, task_text),
+                ]
+            )
+        if vm is not None:
+            row_refs = replace_customer_facing_employee_refs(
+                vm,
+                row_refs,
+                user_id=user_id,
+                roles=roles,
+            )
         refs = dedupe_refs([*doc_refs, *row_refs])
 
     if vm is None:
