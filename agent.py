@@ -57,6 +57,7 @@ from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field, ValidationError
 from submission_refs import (
     availability_count_refs_from_catalog_result,
+    catalog_refs_from_refs,
     dedupe_refs,
     is_catalog_ref,
     submission_refs as _submission_refs,
@@ -678,7 +679,8 @@ def _apply_availability_count_catalog_refs(
     cmd: ReportTaskCompletion,
     canonical_refs: list[str],
 ) -> ReportTaskCompletion:
-    if cmd.task_type != "availability_count" or not canonical_refs:
+    canonical_catalog_refs = catalog_refs_from_refs(canonical_refs)
+    if cmd.task_type != "availability_count" or not canonical_catalog_refs:
         return cmd
 
     # Availability-count graders expect the final refs to describe the products
@@ -687,7 +689,7 @@ def _apply_availability_count_catalog_refs(
     row_refs = dedupe_refs(
         [
             *(ref for ref in cmd.grounding_row_refs if not is_catalog_ref(ref)),
-            *canonical_refs,
+            *canonical_catalog_refs,
         ]
     )
     return cmd.model_copy(update={"grounding_row_refs": row_refs})

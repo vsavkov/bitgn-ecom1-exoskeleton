@@ -243,6 +243,12 @@ def test_apply_availability_count_catalog_refs_replaces_catalog_refs_only() -> N
         "/proc/catalog/Brand/RIGHT.json",
     ]
 
+    unchanged = _apply_availability_count_catalog_refs(
+        cmd,
+        ["/proc/stores/store_wrong.json"],
+    )
+    assert unchanged.grounding_row_refs == cmd.grounding_row_refs
+
 
 def test_parse_tool_call() -> None:
     parsed = _parse_tool_call(

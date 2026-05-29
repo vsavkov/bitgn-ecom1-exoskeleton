@@ -1,5 +1,8 @@
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
+from bitgn.vm.ecom.ecom_pb2 import NodeKind
 from connectrpc.code import Code
 from connectrpc.errors import ConnectError
 
@@ -8,6 +11,7 @@ from submission_refs import (
     availability_count_refs_from_catalog_result,
     can_auto_cite_customer_scoped_record,
     candidate_record_ids,
+    canonical_case_file_ref,
     canonical_proc_record_ref,
     dedupe_refs,
     employee_id_from_ref,
@@ -15,6 +19,7 @@ from submission_refs import (
     is_catalog_ref,
     is_cross_customer_protected_record_denial,
     is_document_ref,
+    linked_payment_refs_for_returns,
     manager_store_refs_from_task,
     normalize_runtime_path,
     normalize_submission_refs,
@@ -51,10 +56,12 @@ class FakeVM:
         *,
         id_stdout: str = "user: cust_060\nroles: customer\n",
         sql_outputs: dict[str, ExecResult] | None = None,
+        list_outputs: dict[str, Sequence[str]] | None = None,
         existing_paths: set[str] | None = None,
     ) -> None:
         self.id_stdout = id_stdout
         self.sql_outputs = sql_outputs or {}
+        self.list_outputs = list_outputs or {}
         self.existing_paths = existing_paths or set()
 
     def exec(self, request) -> ExecResult:
@@ -72,6 +79,17 @@ class FakeVM:
         if request.path in self.existing_paths:
             return object()
         raise ConnectError(Code.NOT_FOUND, f"{request.path} not found")
+
+    def list(self, request) -> object:
+        names = self.list_outputs.get(request.path)
+        if names is None:
+            raise ConnectError(Code.NOT_FOUND, f"{request.path} not found")
+        return SimpleNamespace(
+            entries=[
+                SimpleNamespace(name=name, kind=NodeKind.NODE_KIND_FILE)
+                for name in names
+            ]
+        )
 
 
 def csv_rows(*rows: str) -> ExecResult:
@@ -195,6 +213,22 @@ def test_normalize_submission_refs_preserves_docs_archive_rows_and_canonical_rec
     ]
 
 
+def test_canonical_case_file_ref_repairs_upload_filename_case() -> None:
+    vm = FakeVM(
+        list_outputs={"/uploads": ["receipt_ocr_V71YxpVz.txt"]},
+        existing_paths={"/uploads/receipt_ocr_V71YxpVz.txt"},
+    )
+
+    assert (
+        canonical_case_file_ref(vm, "/uploads/receipt_OCR_V71YxpVz.txt")
+        == "/uploads/receipt_ocr_V71YxpVz.txt"
+    )
+    assert normalize_submission_refs(
+        vm,
+        ["/uploads/receipt_OCR_V71YxpVz.txt"],
+    ) == ["/uploads/receipt_ocr_V71YxpVz.txt"]
+
+
 def test_availability_count_refs_from_catalog_result_uses_helper_canonical_refs() -> None:
     assert availability_count_refs_from_catalog_result(
         {
@@ -210,6 +244,12 @@ def test_availability_count_refs_from_catalog_result_uses_helper_canonical_refs(
         "/proc/catalog/Brand/FST-1.json",
     ]
     assert availability_count_refs_from_catalog_result("not-json") == []
+
+
+def test_catalog_refs_from_helper_can_be_empty_when_only_store_ref_returned() -> None:
+    assert availability_count_refs_from_catalog_result(
+        {"store_ref": "/proc/stores/store_graz_lend.json"}
+    ) == ["/proc/stores/store_graz_lend.json"]
 
 
 def test_candidate_record_ids_handles_padding() -> None:
@@ -314,6 +354,22 @@ def test_replace_customer_facing_employee_refs_keeps_employee_identity_refs() ->
         user_id="emp_034",
         roles={"employee", "discount_manager"},
     ) == ["/proc/employees/emp_034.json"]
+
+
+def test_linked_payment_refs_for_returns_adds_refund_evidence() -> None:
+    vm = FakeVM(
+        sql_outputs={
+            "from return_requests r": csv_rows(
+                "payment_record_path",
+                "/proc/payments/pay_023.json",
+            )
+        }
+    )
+
+    assert linked_payment_refs_for_returns(
+        vm,
+        ["/proc/returns/ret_012.json"],
+    ) == ["/proc/payments/pay_023.json"]
 
 
 def test_manager_store_refs_from_task_requires_manager_verification_intent() -> None:

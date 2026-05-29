@@ -4,7 +4,7 @@ import re
 from collections.abc import Sequence
 from typing import Any, NamedTuple, Protocol
 
-from bitgn.vm.ecom.ecom_pb2 import ExecRequest, StatRequest
+from bitgn.vm.ecom.ecom_pb2 import ExecRequest, ListRequest, NodeKind, StatRequest
 from connectrpc.errors import ConnectError
 
 
@@ -24,6 +24,8 @@ class CompletionLike(Protocol):
 
 class RuntimeVM(Protocol):
     def exec(self, request: ExecRequest) -> Any: ...
+
+    def list(self, request: ListRequest) -> Any: ...
 
     def stat(self, request: StatRequest) -> Any: ...
 
@@ -148,6 +150,42 @@ def try_stat(vm: RuntimeVM, path: str) -> bool:
         return False
 
 
+def canonical_case_file_ref(vm: RuntimeVM, path: str) -> str | None:
+    normalized = normalize_runtime_path(path)
+    parent, sep, filename = normalized.rpartition("/")
+    if not sep or not parent:
+        parent = "/"
+    if not filename:
+        return normalized if try_stat(vm, normalized) else None
+
+    try:
+        result = vm.list(ListRequest(path=parent))
+    except (AttributeError, ConnectError):
+        return normalized if try_stat(vm, normalized) else None
+
+    exact_match: str | None = None
+    case_match: str | None = None
+    for entry in getattr(result, "entries", []) or []:
+        if getattr(entry, "kind", None) not in {
+            NodeKind.NODE_KIND_FILE,
+            NodeKind.NODE_KIND_UNSPECIFIED,
+        }:
+            continue
+        entry_name = getattr(entry, "name", "")
+        if entry_name == filename:
+            exact_match = entry_name
+            break
+        if entry_name.lower() == filename.lower():
+            case_match = entry_name
+
+    matched_name = exact_match or case_match
+    if matched_name:
+        canonical = f"{parent.rstrip('/')}/{matched_name}"
+        return canonical if try_stat(vm, canonical) else None
+
+    return normalized if try_stat(vm, normalized) else None
+
+
 def sql_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -260,8 +298,9 @@ def normalize_submission_refs(
             continue
 
         if not normalized_path.startswith("/proc/"):
-            if try_stat(vm, normalized_path):
-                normalized_refs.append(f"{normalized_path}{fragment}")
+            canonical = canonical_case_file_ref(vm, normalized_path)
+            if canonical:
+                normalized_refs.append(f"{canonical}{fragment}")
             continue
 
         canonical = canonical_proc_record_ref(vm, normalized_path)
@@ -285,6 +324,10 @@ def availability_count_refs_from_catalog_result(result: Any) -> list[str]:
         refs.extend(ref for ref in result_refs if isinstance(ref, str) and ref)
 
     return dedupe_refs(refs)
+
+
+def catalog_refs_from_refs(refs: Sequence[str]) -> list[str]:
+    return dedupe_refs([ref for ref in refs if is_catalog_ref(ref)])
 
 
 def candidate_record_ids(prefix: str, numeric_text: str) -> list[str]:
@@ -428,6 +471,40 @@ def employee_id_from_ref(ref: str) -> str | None:
     return employee_id if EMPLOYEE_ID_RE.match(employee_id) else None
 
 
+def return_id_from_ref(ref: str) -> str | None:
+    path, _fragment = split_ref_fragment(ref)
+    normalized = normalize_runtime_path(path)
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) != 3 or parts[:2] != ["proc", "returns"]:
+        return None
+
+    return_id = parts[2].removesuffix(".json")
+    return return_id if re.match(r"^ret_\d+$", return_id) else None
+
+
+def linked_payment_refs_for_returns(vm: RuntimeVM, refs: list[str]) -> list[str]:
+    return_ids = [return_id for ref in refs if (return_id := return_id_from_ref(ref))]
+    if not return_ids:
+        return []
+
+    return_values = ", ".join(sql_quote(return_id) for return_id in return_ids)
+    rows = sql_rows(
+        vm,
+        "select distinct p.record_path as payment_record_path "
+        "from return_requests r "
+        "join payment_transactions p on p.payment_id = r.payment_id "
+        f"where r.return_id in ({return_values}) "
+        "order by p.record_path;",
+    )
+    return dedupe_refs(
+        [
+            row.get("payment_record_path") or ""
+            for row in rows
+            if (row.get("payment_record_path") or "").startswith("/")
+        ]
+    )
+
+
 def store_ref_for_employee(vm: RuntimeVM, employee_id: str) -> str | None:
     rows = sql_rows(
         vm,
@@ -552,6 +629,8 @@ def submission_refs(
                     *manager_store_refs_from_task(vm, task_text),
                 ]
             )
+        if vm is not None and cmd.task_type == "refund":
+            row_refs = dedupe_refs([*row_refs, *linked_payment_refs_for_returns(vm, row_refs)])
         if vm is not None:
             row_refs = replace_customer_facing_employee_refs(
                 vm,

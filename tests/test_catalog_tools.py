@@ -70,6 +70,12 @@ def test_catalog_text_normalization_and_numbers() -> None:
         "disc diameter mm",
         "disc diameter",
     ]
+    assert _property_label_candidates("apparel_size") == ["apparel size", "size"]
+    assert _property_label_candidates("paint_color") == [
+        "color family",
+        "paint color",
+        "color",
+    ]
     assert _number_from_text("about 12,5 mm") == 12.5
     assert _number_from_text("none") is None
 
@@ -85,6 +91,12 @@ def test_catalog_constraint_matching() -> None:
         "color family black",
         key="color_family",
         text_value="Black",
+        number_value="",
+    )
+    assert _property_matches_constraint(
+        "size 3XL",
+        key="apparel_size",
+        text_value="3XL",
         number_value="",
     )
     assert not _property_matches_constraint(

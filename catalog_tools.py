@@ -299,6 +299,20 @@ def _property_label_candidates(key: str) -> list[str]:
     labels = [label]
     if len(parts) > 1 and parts[-1] in _UNIT_SUFFIXES:
         labels.append(" ".join(parts[:-1]))
+        parts = parts[:-1]
+    if len(parts) > 1 and parts[-1] in {
+        "count",
+        "family",
+        "platform",
+        "profile",
+        "size",
+        "source",
+        "type",
+    }:
+        labels.append(parts[-1])
+    if "color" in parts:
+        labels.append("color family")
+        labels.append("color")
     return sorted(set(labels), key=len, reverse=True)
 
 
