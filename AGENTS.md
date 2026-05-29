@@ -22,8 +22,14 @@
 - Run the full benchmark via Make: `make run`
 - Run selected tasks via Make: `make task TASKS="t01 t04"`
 - Check linting and typing after any code changes: `make check`
+- Run unit tests after any code changes: `make test`
 
-После любых изменений в Python-коде или конфигурации проекта прогоняй `make check`.
+После любых изменений в Python-коде или конфигурации проекта прогоняй `make check test`.
+
+## Tests
+
+- Тестовые файлы размещай в соответствии с исходными файлами: `module.py` покрывается `tests/test_module.py`, скрипты из `scripts/foo.py` покрываются `tests/scripts/test_foo.py`.
+- Pure functions и детерминированные helper-ы покрывай unit-тестами без внешних API, BitGN runtime и LangSmith. Для runtime-адаптеров используй fake/stub объекты.
 
 ## Commits
 

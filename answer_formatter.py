@@ -54,12 +54,14 @@ def _emit(message: str, output_lines: MutableSequence[str] | None) -> None:
 
 def _leading_yes_no_token_message(message: str) -> str | None:
     stripped = message.strip()
-    if re.match(r"^yes\s+", stripped, flags=re.IGNORECASE):
+    if re.match(r"^yes(?:\s+|$)", stripped, flags=re.IGNORECASE):
         return re.sub(
-            r"^yes\s+", "<YES> ", stripped, count=1, flags=re.IGNORECASE
+            r"^yes(?:\s+|$)", "<YES> ", stripped, count=1, flags=re.IGNORECASE
         ).strip()
-    if re.match(r"^no\s+", stripped, flags=re.IGNORECASE):
-        return re.sub(r"^no\s+", "<NO> ", stripped, count=1, flags=re.IGNORECASE).strip()
+    if re.match(r"^no(?:\s+|$)", stripped, flags=re.IGNORECASE):
+        return re.sub(
+            r"^no(?:\s+|$)", "<NO> ", stripped, count=1, flags=re.IGNORECASE
+        ).strip()
     return None
 
 

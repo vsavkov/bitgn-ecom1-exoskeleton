@@ -20,6 +20,7 @@ url = "https://buf.build/gen/python"
 
 [dependency-groups]
 dev = [
+    "pytest>=9.0.3",
     "ruff>=0.15.15",
     "ty>=0.0.40",
 ]
@@ -29,6 +30,13 @@ exclude = ["agent_original.py"]
 
 [tool.ty.src]
 exclude = ["agent_original.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+filterwarnings = [
+    "ignore:langsmith\\.wrappers\\._openai_agents is deprecated.*:DeprecationWarning",
+]
 
 [tool.uv]
 # AICODE-NOTE: `harness_core/scripts/sdk-python.sh` rewrites the Buf SDK pins

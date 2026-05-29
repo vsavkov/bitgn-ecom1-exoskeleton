@@ -1,11 +1,17 @@
-import csv
-import io
 import json
-import re
 import shlex
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Annotated, Any, List, Literal, ParamSpec, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    List,
+    Literal,
+    ParamSpec,
+    TypeVar,
+    cast,
+)
 
 import openai
 from annotated_types import Ge, Le
@@ -49,6 +55,7 @@ from openai.types.responses import (
 )
 from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field, ValidationError
+from submission_refs import submission_refs as _submission_refs
 
 if TYPE_CHECKING:
     P = ParamSpec("P")
@@ -563,7 +570,7 @@ def _format_result_with_tree_followups(
     process_inputs=_trace_dispatch_inputs,
     process_outputs=_trace_dispatch_outputs,
 )
-def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
+def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
     if isinstance(cmd, ReqTree):
         return vm.tree(TreeRequest(root=cmd.root, level=cmd.level))
     if isinstance(cmd, ReqFind):
@@ -609,7 +616,7 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
             AnswerRequest(
                 message=cmd.message,
                 outcome=OUTCOME_BY_NAME[cmd.outcome],
-                refs=_submission_refs(cmd, vm),
+                refs=_submission_refs(cmd, vm, task_text=task_text),
             )
         )
     raise ValueError(f"Unknown command: {cmd}")
@@ -645,185 +652,6 @@ def _output_text(resp) -> str:
             if getattr(content, "type", None) == "output_text":
                 chunks.append(content.text)
     return "\n".join(chunks)
-
-
-def _dedupe_refs(refs: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for ref in refs:
-        ref = ref.strip()
-        if not ref or ref in seen:
-            continue
-        seen.add(ref)
-        result.append(ref)
-    return result
-
-
-def _is_document_ref(ref: str) -> bool:
-    return ref.endswith(".md")
-
-
-def _try_stat(vm: EcomRuntimeClientSync, path: str) -> bool:
-    try:
-        vm.stat(StatRequest(path=path))
-        return True
-    except ConnectError:
-        return False
-
-
-def _sql_quote(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def _sql_rows(vm: EcomRuntimeClientSync, query: str) -> list[dict[str, str]]:
-    try:
-        result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
-    except ConnectError:
-        return []
-
-    if getattr(result, "exit_code", 0):
-        return []
-
-    stdout = (result.stdout or "").strip()
-    if not stdout:
-        return []
-
-    try:
-        return [dict(row) for row in csv.DictReader(io.StringIO(stdout))]
-    except csv.Error:
-        return []
-
-
-def _sql_record_path(
-    vm: EcomRuntimeClientSync,
-    *,
-    table: str,
-    key_column: str,
-    value: str,
-) -> str | None:
-    rows = _sql_rows(
-        vm,
-        f"select record_path from {table} "
-        f"where {key_column} = {_sql_quote(value)} limit 1;",
-    )
-    if not rows:
-        return None
-    path = rows[0].get("record_path") or ""
-    return path if path.startswith("/") else None
-
-
-_PRODUCT_SKU_RE = re.compile(r"^[A-Z]{3}-[A-Z0-9]+$")
-_PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
-    "baskets": ("shopping_baskets", "basket_id", re.compile(r"^basket_\d+$")),
-    "customers": ("customer_accounts", "customer_id", re.compile(r"^cust_\d+$")),
-    "employees": ("employee_accounts", "employee_id", re.compile(r"^emp_\d+$")),
-    "payments": ("payment_transactions", "payment_id", re.compile(r"^pay_\d+$")),
-    "returns": ("return_requests", "return_id", re.compile(r"^ret_\d+$")),
-    "stores": ("stores", "store_id", re.compile(r"^store_[a-z0-9_]+$")),
-}
-
-
-def _split_ref_fragment(ref: str) -> tuple[str, str]:
-    if "#" not in ref:
-        return ref, ""
-    path, fragment = ref.split("#", 1)
-    return path, f"#{fragment}"
-
-
-def _canonical_proc_record_ref(vm: EcomRuntimeClientSync, path: str) -> str | None:
-    normalized = _normalize_runtime_path(path)
-    if _try_stat(vm, normalized):
-        return normalized
-
-    if not normalized.endswith(".json") and _try_stat(vm, f"{normalized}.json"):
-        return f"{normalized}.json"
-
-    parts = [part for part in normalized.split("/") if part]
-    if len(parts) < 3 or parts[0] != "proc":
-        return None
-
-    name = parts[-1]
-    if name.endswith(".json"):
-        name = name.removesuffix(".json")
-
-    if parts[1] == "catalog" or _PRODUCT_SKU_RE.match(name):
-        path_from_sql = _sql_record_path(
-            vm,
-            table="product_variants",
-            key_column="product_sku",
-            value=name,
-        )
-        if path_from_sql and _try_stat(vm, path_from_sql):
-            return path_from_sql
-        return None
-
-    table_spec = _PROC_RECORD_TABLES.get(parts[1])
-    if table_spec is None:
-        return None
-
-    table, key_column, pattern = table_spec
-    if not pattern.match(name):
-        return None
-
-    path_from_sql = _sql_record_path(
-        vm,
-        table=table,
-        key_column=key_column,
-        value=name,
-    )
-    if path_from_sql and _try_stat(vm, path_from_sql):
-        return path_from_sql
-    return None
-
-
-def _normalize_submission_refs(
-    vm: EcomRuntimeClientSync,
-    refs: list[str],
-) -> list[str]:
-    normalized_refs: list[str] = []
-    for ref in refs:
-        path, fragment = _split_ref_fragment(ref)
-        normalized_path = _normalize_runtime_path(path)
-
-        if normalized_path.startswith("/archive/") and fragment:
-            normalized_refs.append(f"{normalized_path}{fragment}")
-            continue
-
-        if _is_document_ref(normalized_path):
-            normalized_refs.append(normalized_path)
-            continue
-
-        if not normalized_path.startswith("/proc/"):
-            if _try_stat(vm, normalized_path):
-                normalized_refs.append(f"{normalized_path}{fragment}")
-            continue
-
-        canonical = _canonical_proc_record_ref(vm, normalized_path)
-        if canonical:
-            normalized_refs.append(f"{canonical}{fragment}")
-
-    return _dedupe_refs(normalized_refs)
-
-
-def _submission_refs(
-    cmd: ReportTaskCompletion,
-    vm: EcomRuntimeClientSync | None = None,
-) -> list[str]:
-    all_refs = [
-        *cmd.grounding_doc_refs,
-        *cmd.grounding_row_refs,
-    ]
-    doc_refs = _dedupe_refs([ref for ref in all_refs if _is_document_ref(ref)])
-    row_refs = _dedupe_refs([ref for ref in all_refs if not _is_document_ref(ref)])
-
-    if cmd.task_type == "count" or cmd.protected_record_denial:
-        refs = doc_refs
-    else:
-        refs = _dedupe_refs([*doc_refs, *row_refs])
-
-    if vm is None:
-        return refs
-    return _normalize_submission_refs(vm, refs)
 
 
 def _format_completion(cmd: ReportTaskCompletion, refs: list[str] | None = None) -> str:
@@ -947,7 +775,7 @@ def run_agent(
                 continue
 
             if isinstance(cmd, ReportTaskCompletion):
-                completion_refs = _submission_refs(cmd, vm)
+                completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,
                     task_text=task_text,
@@ -961,7 +789,7 @@ def run_agent(
                 cmd = cmd.model_copy(update={"message": formatted_message})
 
             try:
-                result = dispatch(vm, cmd)
+                result = dispatch(vm, cmd, task_text=task_text)
                 _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
                 txt = _format_result_with_tree_followups(
                     vm, cmd, result, tree_help_paths, tree_read_paths, debug
@@ -976,7 +804,7 @@ def run_agent(
             context.append(_function_call_output(tool_call, txt))
 
             if isinstance(cmd, ReportTaskCompletion):
-                completion_refs = _submission_refs(cmd, vm)
+                completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 final_result = {
                     "completed": True,
                     "langsmith_run_id": langsmith_run_id,
@@ -1008,8 +836,8 @@ def run_agent(
             outcome="OUTCOME_ERR_INTERNAL",
         )
         try:
-            fallback_refs = _submission_refs(fallback_cmd, vm)
-            dispatch(vm, fallback_cmd)
+            fallback_refs = _submission_refs(fallback_cmd, vm, task_text=task_text)
+            dispatch(vm, fallback_cmd, task_text=task_text)
             final_result = {
                 "completed": True,
                 "fallback": "step_budget_exhausted",
