@@ -33,6 +33,12 @@ def test_checkout_request_without_explicit_basket_detects_ambiguous_wording() ->
         "I am ready to buy what's in my basket; please check it out."
     )
     assert not checkout_request_without_explicit_basket("check out basket_001.")
+    assert not checkout_request_without_explicit_basket(
+        "Please use the newest open basket on my account and check it out."
+    )
+    assert not checkout_request_without_explicit_basket(
+        "Check out the most recent basket on my account."
+    )
     assert not checkout_request_without_explicit_basket("do you sell this basket?")
 
 
@@ -85,3 +91,22 @@ def test_ambiguous_checkout_preflight_ignores_single_or_explicit_basket() -> Non
 
     assert ambiguous_checkout_preflight(vm, "check out my basket.") is None
     assert ambiguous_checkout_preflight(vm, "check out basket_145.") is None
+
+
+def test_ambiguous_checkout_preflight_ignores_deterministic_selector() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust_072\nroles: customer\n",
+        basket_rows=(
+            "basket_id,record_path,basket_created_at\n"
+            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
+            "basket_053,/proc/baskets/basket_053.json,2021-07-23T07:46:43Z\n"
+        ),
+    )
+
+    assert (
+        ambiguous_checkout_preflight(
+            vm,
+            "Please use the newest open basket on my account and check it out.",
+        )
+        is None
+    )

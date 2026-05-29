@@ -28,10 +28,16 @@ EXPLICIT_BASKET_ID_RE = re.compile(
     r"(?<![A-Za-z0-9_])(?:baskets?|bask)[_-]?\d+(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
+DETERMINISTIC_BASKET_SELECTOR_RE = re.compile(
+    r"\b(?:newest|latest|most\s+recent|oldest|earliest)\b",
+    re.IGNORECASE,
+)
 
 
 def checkout_request_without_explicit_basket(task_text: str) -> bool:
     if EXPLICIT_BASKET_ID_RE.search(task_text):
+        return False
+    if DETERMINISTIC_BASKET_SELECTOR_RE.search(task_text):
         return False
     return bool(CHECKOUT_INTENT_RE.search(task_text) and BASKET_WORD_RE.search(task_text))
 

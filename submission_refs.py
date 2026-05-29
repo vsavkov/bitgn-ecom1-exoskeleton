@@ -60,6 +60,12 @@ CUSTOMER_SCOPED_REF_RE = re.compile(
     re.IGNORECASE,
 )
 CATALOG_REF_RE = re.compile(r"^/proc/catalog(?:/|$)", re.IGNORECASE)
+SQL_TRUST_TASK_RE = re.compile(
+    r"\btrust\s+sql\b|\bsql\b[\s\S]{0,80}\bstale\b|\bstale\b[\s\S]{0,80}\bsql\b|"
+    r"\bjson\b[\s\S]{0,80}\bstale\b",
+    re.IGNORECASE,
+)
+SQL_README_RE = re.compile(r"^sql-readme-[A-Za-z0-9_.-]+\.md$", re.IGNORECASE)
 PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
     "baskets": ("shopping_baskets", "basket_id", re.compile(r"^basket_\d+$")),
     "customers": ("customer_accounts", "customer_id", re.compile(r"^cust_\d+$")),
@@ -594,6 +600,29 @@ def manager_store_refs_from_task(vm: RuntimeVM, task_text: str) -> list[str]:
     return dedupe_refs(refs)
 
 
+def sql_readme_refs_from_task(vm: RuntimeVM, task_text: str) -> list[str]:
+    if not SQL_TRUST_TASK_RE.search(task_text):
+        return []
+
+    try:
+        result = vm.list(ListRequest(path="/bin"))
+    except (AttributeError, ConnectError):
+        return []
+
+    refs: list[str] = []
+    for entry in getattr(result, "entries", []) or []:
+        if getattr(entry, "kind", None) not in {
+            NodeKind.NODE_KIND_FILE,
+            NodeKind.NODE_KIND_UNSPECIFIED,
+        }:
+            continue
+        name = getattr(entry, "name", "")
+        if SQL_README_RE.match(name):
+            refs.append(f"/bin/{name}")
+
+    return dedupe_refs(sorted(refs))
+
+
 def is_cross_customer_protected_record_denial(
     cmd: CompletionLike,
     row_refs: Sequence[str],
@@ -628,6 +657,8 @@ def submission_refs(
     )
 
     if cmd.task_type == "count" or protected_record_denial:
+        if vm is not None and cmd.task_type == "count" and task_text:
+            doc_refs = dedupe_refs([*doc_refs, *sql_readme_refs_from_task(vm, task_text)])
         refs = doc_refs
     else:
         user_id: str | None = None

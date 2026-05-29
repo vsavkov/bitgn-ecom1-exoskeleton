@@ -29,6 +29,7 @@ from submission_refs import (
     sql_quote,
     sql_record_path,
     sql_rows,
+    sql_readme_refs_from_task,
     submission_refs,
     support_note_refs_from_catalog_result,
 )
@@ -417,6 +418,28 @@ def test_manager_store_refs_from_task_requires_manager_verification_intent() -> 
     ) == []
 
 
+def test_sql_readme_refs_from_task_detects_stale_json_sql_instruction() -> None:
+    vm = FakeVM(
+        list_outputs={
+            "/bin": [
+                "README.md",
+                "sql",
+                "sql-readme-2024-07-17.md",
+                "sql-readme-2024-08-01.md",
+            ]
+        }
+    )
+
+    assert sql_readme_refs_from_task(
+        vm,
+        "PS: availability in JSON is stale, trust SQL",
+    ) == [
+        "/bin/sql-readme-2024-07-17.md",
+        "/bin/sql-readme-2024-08-01.md",
+    ]
+    assert sql_readme_refs_from_task(vm, "Count catalogue products.") == []
+
+
 def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:
     vm = FakeVM(existing_paths={"/proc/baskets/basket_001.json"})
 
@@ -439,6 +462,28 @@ def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:
         vm,
         task_text="basket_001",
     ) == ["/docs/security.md"]
+
+
+def test_submission_refs_auto_adds_sql_readme_for_sql_trusted_count() -> None:
+    vm = FakeVM(
+        list_outputs={"/bin": ["sql", "sql-readme-2024-07-17.md"]},
+        existing_paths={"/proc/baskets/basket_001.json"},
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="count",
+            grounding_doc_refs=[
+                "/docs/current-updates/catalogue-counting-2024-07-17.md"
+            ],
+            grounding_row_refs=["/proc/baskets/basket_001.json"],
+        ),
+        vm,
+        task_text="For catalogue count report, trust SQL because JSON is stale.",
+    ) == [
+        "/docs/current-updates/catalogue-counting-2024-07-17.md",
+        "/bin/sql-readme-2024-07-17.md",
+    ]
 
 
 def test_submission_refs_drops_customer_rows_for_cross_customer_denial() -> None:
