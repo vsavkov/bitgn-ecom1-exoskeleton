@@ -34,6 +34,7 @@ from bitgn.vm.ecom.ecom_pb2 import (
 )
 from catalog_tools import ReqResolveCatalogItems, resolve_catalog_items
 from checkout_preflight import ambiguous_checkout_preflight, selected_basket_preflight
+from security_preflight import security_preflight
 from config import (
     CLI_BLUE,
     CLI_CLR,
@@ -921,6 +922,40 @@ def run_agent(
 
     classification = classify_task(formatter_client, task_text)
 
+    def _finalize_preflight(cmd: ReportTaskCompletion) -> dict:
+        dispatch(vm, cmd, task_text=task_text)
+        completion_refs = _submission_refs(cmd, vm, task_text=task_text)
+        result_payload = {
+            "completed": True,
+            "langsmith_run_id": langsmith_run_id,
+            "langsmith_trace_id": langsmith_trace_id,
+            "formatter_output": formatter_output_lines,
+            "completion_output": _format_completion(cmd, completion_refs),
+            "outcome": cmd.outcome,
+            "task_type": cmd.task_type,
+            "protected_record_denial": cmd.protected_record_denial,
+            "message": cmd.message,
+            "grounding_refs": completion_refs,
+            "completed_steps_laconic": cmd.completed_steps_laconic,
+        }
+        if print_completion:
+            _print_completion(cmd, completion_refs)
+        return result_payload
+
+    denial = security_preflight(vm, classification)
+    if denial is not None:
+        denial_task_type = "discount" if denial.reason == "customer_discount_claimed_manager_approval" else "other"
+        cmd = ReportTaskCompletion(
+            completed_steps_laconic=denial.completed_steps_laconic,
+            task_type=denial_task_type,
+            message=denial.message,
+            grounding_doc_refs=denial.doc_refs,
+            grounding_row_refs=denial.row_refs,
+            protected_record_denial=denial.protected_record_denial,
+            outcome="OUTCOME_DENIED_SECURITY",
+        )
+        return _finalize_preflight(cmd)
+
     ambiguous_checkout = ambiguous_checkout_preflight(vm, classification)
     if ambiguous_checkout is not None:
         basket_list = ", ".join(ambiguous_checkout.basket_ids)
@@ -937,24 +972,7 @@ def run_agent(
             grounding_row_refs=ambiguous_checkout.basket_refs,
             outcome="OUTCOME_NONE_CLARIFICATION",
         )
-        dispatch(vm, cmd, task_text=task_text)
-        completion_refs = _submission_refs(cmd, vm, task_text=task_text)
-        final_result = {
-            "completed": True,
-            "langsmith_run_id": langsmith_run_id,
-            "langsmith_trace_id": langsmith_trace_id,
-            "formatter_output": formatter_output_lines,
-            "completion_output": _format_completion(cmd, completion_refs),
-            "outcome": cmd.outcome,
-            "task_type": cmd.task_type,
-            "protected_record_denial": cmd.protected_record_denial,
-            "message": cmd.message,
-            "grounding_refs": completion_refs,
-            "completed_steps_laconic": cmd.completed_steps_laconic,
-        }
-        if print_completion:
-            _print_completion(cmd, completion_refs)
-        return final_result
+        return _finalize_preflight(cmd)
 
     selected_basket = selected_basket_preflight(vm, classification)
     if selected_basket is not None:
