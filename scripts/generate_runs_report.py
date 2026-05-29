@@ -21,6 +21,7 @@ DEFAULT_OUTPUT = PROJECT_ROOT / "runs.html"
 @dataclass(frozen=True)
 class TestCase:
     task_id: str
+    task_text: str
     score: float | None
     trace_id: str | None
     comment: str
@@ -93,6 +94,7 @@ def _load_run(path: Path) -> RunRecord:
         trace_id = raw_case.get("trace_id") or raw_case.get("langsmith_trace_id")
         cases[task_id] = TestCase(
             task_id=task_id,
+            task_text=str(raw_case.get("task_text") or raw_case.get("instruction") or ""),
             score=score,
             trace_id=str(trace_id) if trace_id else None,
             comment=comment,
@@ -163,6 +165,8 @@ def _run_label(record: RunRecord) -> str:
 def _cell_title(task_id: str, record: RunRecord, case: TestCase | None) -> str:
     lines = [f"{task_id} / {record.path.name}"]
     if case:
+        if case.task_text:
+            lines.append(case.task_text)
         lines.append(f"score: {_format_score(case.score)}")
         if case.trace_id:
             lines.append(f"trace: {case.trace_id}")

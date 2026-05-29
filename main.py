@@ -145,6 +145,7 @@ def _write_run_artifact(result, started_at: datetime, trial_outputs: dict[str, d
         test_cases.append(
             {
                 "task_id": trial.task_id,
+                "task_text": agent_output.get("instruction") or "",
                 "trial_id": trial.trial_id,
                 "trace_id": langsmith_trace_id,
                 "langsmith_trace_id": langsmith_trace_id,
@@ -159,7 +160,7 @@ def _write_run_artifact(result, started_at: datetime, trial_outputs: dict[str, d
         )
 
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "started_at": started_at.isoformat(),
         "finished_at": finished_at.isoformat(),
         "benchmark_id": BENCH_ID,
