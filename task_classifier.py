@@ -66,6 +66,22 @@ class TaskClassification(BaseModel):
             "frustrated language."
         ),
     )
+    claimed_manager_name: str = Field(
+        default="",
+        description=(
+            "Human display name of the manager, store lead, or employee whose "
+            "approval the task claims, e.g. 'Tobias Hartmann'. Empty string "
+            "when no specific person is named. Do not invent names."
+        ),
+    )
+    claimed_store_name: str = Field(
+        default="",
+        description=(
+            "Full store or branch name the task associates the claimed manager "
+            "with, e.g. 'PowerTool Graz Jakomini'. Empty string when no store "
+            "is named. Do not invent names."
+        ),
+    )
 
 
 TASK_CLASSIFIER_PROMPT = render_prompt("task_classifier.j2")

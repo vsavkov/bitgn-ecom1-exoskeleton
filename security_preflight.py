@@ -3,6 +3,7 @@ from typing import Literal
 
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
 
+from manager_verification import ReqVerifyStoreManager, verify_store_manager
 from submission_refs import (
     RuntimeVM,
     parse_runtime_identity,
@@ -78,6 +79,28 @@ def customer_discount_security_preflight(
         ref = _customer_basket_ref(vm, classification.explicit_basket_id, user_id)
         if ref:
             row_refs.append(ref)
+
+    # When the customer names the manager and their store, resolve the store
+    # record so the denial cites the source of the claimed authority instead
+    # of leaking the employee profile to a customer identity. The helper
+    # already returns only the store_ref for customer/guest contexts.
+    if classification.claimed_manager_name and classification.claimed_store_name:
+        try:
+            manager_result = verify_store_manager(
+                vm,
+                ReqVerifyStoreManager(
+                    employee_name=classification.claimed_manager_name,
+                    store_name=classification.claimed_store_name,
+                ),
+            )
+        except Exception:
+            manager_result = None
+        if isinstance(manager_result, dict):
+            refs_to_submit = manager_result.get("refs_to_submit")
+            if isinstance(refs_to_submit, list):
+                for ref in refs_to_submit:
+                    if isinstance(ref, str) and ref.startswith("/") and ref not in row_refs:
+                        row_refs.append(ref)
 
     return SecurityDenial(
         reason="customer_discount_claimed_manager_approval",

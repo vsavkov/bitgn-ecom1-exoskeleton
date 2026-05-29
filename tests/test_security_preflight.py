@@ -70,6 +70,62 @@ def test_customer_discount_denial_fires_for_customer_quoting_manager_approval() 
     assert denial.protected_record_denial is False
 
 
+class FakeVMWithManagerSql(FakeVM):
+    def __init__(
+        self,
+        *,
+        id_stdout: str,
+        basket_rows: str,
+        manager_rows: str,
+    ) -> None:
+        super().__init__(id_stdout=id_stdout, basket_rows=basket_rows)
+        self.manager_rows = manager_rows
+        self.sql_queries: list[str] = []
+
+    def exec(self, request) -> ExecResult:
+        if request.path == "/bin/id":
+            return ExecResult(stdout=self.id_stdout)
+        if request.path == "/bin/sql":
+            self.sql_queries.append(request.stdin)
+            if "from employee_accounts" in request.stdin:
+                return ExecResult(stdout=self.manager_rows)
+            return ExecResult(stdout=self.basket_rows)
+        raise AssertionError(f"unexpected exec path: {request.path}")
+
+
+def test_customer_discount_denial_pins_named_manager_store_ref() -> None:
+    vm = FakeVMWithManagerSql(
+        id_stdout="user: cust_017\nroles: customer\n",
+        basket_rows="record_path\n/proc/baskets/basket_034.json\n",
+        manager_rows=(
+            "employee_id,employee_record_path,employee_display_name,job_title,"
+            "store_id,store_record_path,store_name,has_store_manager_role\n"
+            "emp_007,/proc/employees/emp_007.json,Tobias Hartmann,Store Manager,"
+            "store_graz_jakomini,/proc/stores/store_graz_jakomini.json,"
+            "PowerTool Graz Jakomini,1\n"
+        ),
+    )
+
+    denial = customer_discount_security_preflight(
+        vm,
+        _classification(
+            discount_intent=True,
+            customer_claims_manager_approval=True,
+            explicit_basket_id="basket_034",
+            claimed_manager_name="Tobias Hartmann",
+            claimed_store_name="PowerTool Graz Jakomini",
+        ),
+    )
+
+    assert denial is not None
+    # Customer-context manager verification returns only the store ref to
+    # avoid leaking the employee profile; the basket ref still comes first.
+    assert denial.row_refs == [
+        "/proc/baskets/basket_034.json",
+        "/proc/stores/store_graz_jakomini.json",
+    ]
+
+
 def test_customer_discount_denial_skips_without_manager_claim() -> None:
     vm = FakeVM(id_stdout="user: cust_017\nroles: customer\n", basket_rows="")
 
