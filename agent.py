@@ -33,7 +33,7 @@ from bitgn.vm.ecom.ecom_pb2 import (
     WriteRequest,
 )
 from catalog_tools import ReqResolveCatalogItems, resolve_catalog_items
-from checkout_preflight import ambiguous_checkout_preflight
+from checkout_preflight import ambiguous_checkout_preflight, selected_basket_preflight
 from config import (
     CLI_BLUE,
     CLI_CLR,
@@ -67,6 +67,7 @@ from submission_refs import (
     submission_refs as _submission_refs,
     support_note_refs_from_catalog_result,
 )
+from task_classifier import classify_task
 
 if TYPE_CHECKING:
     P = ParamSpec("P")
@@ -710,6 +711,29 @@ def _append_synthetic_tool_pair(
     context.append(_function_call_output_for_call_id(call_id, output))
 
 
+def _synthetic_named_call(name: str, arguments: dict, call_id: str) -> dict:
+    return {
+        "type": "function_call",
+        "id": f"fc_{call_id}",
+        "call_id": call_id,
+        "name": name,
+        "arguments": json.dumps(arguments, ensure_ascii=False),
+        "status": "completed",
+    }
+
+
+def _append_synthetic_named_pair(
+    context: list[Any],
+    *,
+    name: str,
+    arguments: dict,
+    output: str,
+    call_id: str,
+) -> None:
+    context.append(_synthetic_named_call(name, arguments, call_id))
+    context.append(_function_call_output_for_call_id(call_id, output))
+
+
 def _parse_tool_call(tool_call) -> BaseModel:
     name = tool_call.name
     model = TOOL_MODELS.get(name)
@@ -895,7 +919,9 @@ def run_agent(
                 if debug:
                     print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 
-    ambiguous_checkout = ambiguous_checkout_preflight(vm, task_text)
+    classification = classify_task(formatter_client, task_text)
+
+    ambiguous_checkout = ambiguous_checkout_preflight(vm, classification)
     if ambiguous_checkout is not None:
         basket_list = ", ".join(ambiguous_checkout.basket_ids)
         cmd = ReportTaskCompletion(
@@ -929,6 +955,31 @@ def run_agent(
         if print_completion:
             _print_completion(cmd, completion_refs)
         return final_result
+
+    selected_basket = selected_basket_preflight(vm, classification)
+    if selected_basket is not None:
+        synthetic_call_index += 1
+        # Surface a deterministic basket resolution so the model treats the
+        # selector ("newest"/"oldest") as already decided and proceeds with
+        # ordinary checkout policy instead of asking for clarification.
+        _append_synthetic_named_pair(
+            context,
+            name="resolve_basket_selector",
+            arguments={"selector": selected_basket.selector},
+            output=json.dumps(
+                {
+                    "selector": selected_basket.selector,
+                    "selected_basket_id": selected_basket.basket_id,
+                    "selected_basket_ref": selected_basket.basket_ref,
+                    "note": (
+                        "Deterministic selector resolved. Use this basket for "
+                        "the checkout decision; cite its record path in row refs."
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+            call_id=f"call_auto_{synthetic_call_index}",
+        )
 
     context.append({"role": "user", "content": task_text})
 

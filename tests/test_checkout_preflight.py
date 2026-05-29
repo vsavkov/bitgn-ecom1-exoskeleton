@@ -4,7 +4,9 @@ from checkout_preflight import (
     active_customer_baskets,
     ambiguous_checkout_preflight,
     checkout_request_without_explicit_basket,
+    selected_basket_preflight,
 )
+from task_classifier import BasketSelector, TaskClassification
 
 
 @dataclass
@@ -27,19 +29,31 @@ class FakeVM:
         raise AssertionError(f"unexpected exec path: {request.path}")
 
 
-def test_checkout_request_without_explicit_basket_detects_ambiguous_wording() -> None:
-    assert checkout_request_without_explicit_basket("check out my basket.")
-    assert checkout_request_without_explicit_basket(
-        "I am ready to buy what's in my basket; please check it out."
+def _checkout(
+    *,
+    explicit_basket_id: str = "",
+    basket_selector: BasketSelector = "none",
+    checkout_intent: bool = True,
+) -> TaskClassification:
+    return TaskClassification(
+        explicit_basket_id=explicit_basket_id,
+        checkout_intent=checkout_intent,
+        basket_selector=basket_selector,
     )
-    assert not checkout_request_without_explicit_basket("check out basket_001.")
+
+
+def test_checkout_request_without_explicit_basket_uses_classification() -> None:
+    assert checkout_request_without_explicit_basket(_checkout())
+    assert not checkout_request_without_explicit_basket(_checkout(checkout_intent=False))
     assert not checkout_request_without_explicit_basket(
-        "Please use the newest open basket on my account and check it out."
+        _checkout(explicit_basket_id="basket_001")
     )
     assert not checkout_request_without_explicit_basket(
-        "Check out the most recent basket on my account."
+        _checkout(basket_selector="newest")
     )
-    assert not checkout_request_without_explicit_basket("do you sell this basket?")
+    assert not checkout_request_without_explicit_basket(
+        _checkout(basket_selector="oldest")
+    )
 
 
 def test_active_customer_baskets_reads_customer_active_baskets() -> None:
@@ -70,7 +84,7 @@ def test_ambiguous_checkout_preflight_returns_candidates_for_multiple_baskets() 
         ),
     )
 
-    result = ambiguous_checkout_preflight(vm, "check out my basket.")
+    result = ambiguous_checkout_preflight(vm, _checkout())
 
     assert result is not None
     assert result.basket_ids == ["basket_145", "basket_053"]
@@ -89,8 +103,11 @@ def test_ambiguous_checkout_preflight_ignores_single_or_explicit_basket() -> Non
         ),
     )
 
-    assert ambiguous_checkout_preflight(vm, "check out my basket.") is None
-    assert ambiguous_checkout_preflight(vm, "check out basket_145.") is None
+    assert ambiguous_checkout_preflight(vm, _checkout()) is None
+    assert (
+        ambiguous_checkout_preflight(vm, _checkout(explicit_basket_id="basket_145"))
+        is None
+    )
 
 
 def test_ambiguous_checkout_preflight_ignores_deterministic_selector() -> None:
@@ -104,9 +121,73 @@ def test_ambiguous_checkout_preflight_ignores_deterministic_selector() -> None:
     )
 
     assert (
-        ambiguous_checkout_preflight(
-            vm,
-            "Please use the newest open basket on my account and check it out.",
+        ambiguous_checkout_preflight(vm, _checkout(basket_selector="newest")) is None
+    )
+
+
+def test_selected_basket_preflight_returns_newest_for_newest_selector() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust_072\nroles: customer\n",
+        basket_rows=(
+            "basket_id,record_path,basket_created_at\n"
+            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
+            "basket_053,/proc/baskets/basket_053.json,2021-07-23T07:46:43Z\n"
+        ),
+    )
+
+    result = selected_basket_preflight(vm, _checkout(basket_selector="newest"))
+
+    assert result is not None
+    assert result.selector == "newest"
+    assert result.basket_id == "basket_145"
+    assert result.basket_ref == "/proc/baskets/basket_145.json"
+
+
+def test_selected_basket_preflight_returns_oldest_for_oldest_selector() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust_072\nroles: customer\n",
+        basket_rows=(
+            "basket_id,record_path,basket_created_at\n"
+            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
+            "basket_053,/proc/baskets/basket_053.json,2021-07-23T07:46:43Z\n"
+        ),
+    )
+
+    result = selected_basket_preflight(vm, _checkout(basket_selector="oldest"))
+
+    assert result is not None
+    assert result.selector == "oldest"
+    assert result.basket_id == "basket_053"
+    assert result.basket_ref == "/proc/baskets/basket_053.json"
+
+
+def test_selected_basket_preflight_skips_without_selector_or_intent() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust_072\nroles: customer\n",
+        basket_rows=(
+            "basket_id,record_path,basket_created_at\n"
+            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
+        ),
+    )
+
+    assert selected_basket_preflight(vm, _checkout()) is None
+    assert (
+        selected_basket_preflight(vm, _checkout(checkout_intent=False)) is None
+    )
+    assert (
+        selected_basket_preflight(
+            vm, _checkout(explicit_basket_id="basket_145", basket_selector="newest")
         )
         is None
+    )
+
+
+def test_selected_basket_preflight_skips_for_guest_identity() -> None:
+    vm = FakeVM(
+        id_stdout="user: guest_xyz\nroles: guest\n",
+        basket_rows="",
+    )
+
+    assert (
+        selected_basket_preflight(vm, _checkout(basket_selector="newest")) is None
     )

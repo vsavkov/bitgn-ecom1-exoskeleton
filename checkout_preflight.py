@@ -1,12 +1,12 @@
 import csv
 import io
-import re
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
 
 from submission_refs import parse_runtime_identity, sql_quote
+from task_classifier import TaskClassification
 
 
 class RuntimeVM(Protocol):
@@ -19,27 +19,27 @@ class AmbiguousCheckout:
     basket_refs: list[str]
 
 
-CHECKOUT_INTENT_RE = re.compile(
-    r"\b(?:check\s*out|checkout|buy|finish(?:\s+my)?\s+order|complete(?:\s+my)?\s+order)\b",
-    re.IGNORECASE,
-)
-BASKET_WORD_RE = re.compile(r"\bbaskets?\b", re.IGNORECASE)
-EXPLICIT_BASKET_ID_RE = re.compile(
-    r"(?<![A-Za-z0-9_])(?:baskets?|bask)[_-]?\d+(?![A-Za-z0-9_])",
-    re.IGNORECASE,
-)
-DETERMINISTIC_BASKET_SELECTOR_RE = re.compile(
-    r"\b(?:newest|latest|most\s+recent|oldest|earliest)\b",
-    re.IGNORECASE,
-)
+BasketSelectorKind = Literal["newest", "oldest"]
 
 
-def checkout_request_without_explicit_basket(task_text: str) -> bool:
-    if EXPLICIT_BASKET_ID_RE.search(task_text):
+@dataclass(frozen=True)
+class SelectedBasket:
+    selector: BasketSelectorKind
+    basket_id: str
+    basket_ref: str
+
+
+def checkout_request_without_explicit_basket(
+    classification: TaskClassification,
+) -> bool:
+    if not classification.checkout_intent:
         return False
-    if DETERMINISTIC_BASKET_SELECTOR_RE.search(task_text):
+    if classification.explicit_basket_id:
         return False
-    return bool(CHECKOUT_INTENT_RE.search(task_text) and BASKET_WORD_RE.search(task_text))
+    # A deterministic selector ("newest"/"oldest") is unambiguous so it must not
+    # go through the clarification preflight; selected_basket_preflight handles
+    # those cases by injecting the resolved basket into context instead.
+    return classification.basket_selector == "none"
 
 
 def active_customer_baskets(vm: RuntimeVM, customer_id: str) -> list[dict[str, str]]:
@@ -66,9 +66,9 @@ def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
 
 def ambiguous_checkout_preflight(
     vm: RuntimeVM,
-    task_text: str,
+    classification: TaskClassification,
 ) -> AmbiguousCheckout | None:
-    if not checkout_request_without_explicit_basket(task_text):
+    if not checkout_request_without_explicit_basket(classification):
         return None
 
     try:
@@ -96,3 +96,45 @@ def ambiguous_checkout_preflight(
     if len(basket_refs) <= 1:
         return None
     return AmbiguousCheckout(basket_ids=basket_ids, basket_refs=basket_refs)
+
+
+def selected_basket_preflight(
+    vm: RuntimeVM,
+    classification: TaskClassification,
+) -> SelectedBasket | None:
+    if not classification.checkout_intent:
+        return None
+    if classification.explicit_basket_id:
+        return None
+    if classification.basket_selector not in {"newest", "oldest"}:
+        return None
+
+    try:
+        identity = vm.exec(ExecRequest(path="/bin/id"))
+    except Exception:
+        return None
+
+    user_id, _roles = parse_runtime_identity(getattr(identity, "stdout", "") or "")
+    if not user_id or not user_id.startswith("cust_"):
+        return None
+
+    baskets = active_customer_baskets(vm, user_id)
+    if not baskets:
+        return None
+
+    # active_customer_baskets is ordered by basket_created_at DESC, so the
+    # first row is the newest active basket and the last row is the oldest.
+    chosen = baskets[0] if classification.basket_selector == "newest" else baskets[-1]
+    basket_id = chosen.get("basket_id") or ""
+    basket_ref = chosen.get("record_path") or ""
+    if not basket_id or not basket_ref.startswith("/"):
+        return None
+
+    selector: BasketSelectorKind = (
+        "newest" if classification.basket_selector == "newest" else "oldest"
+    )
+    return SelectedBasket(
+        selector=selector,
+        basket_id=basket_id,
+        basket_ref=basket_ref,
+    )

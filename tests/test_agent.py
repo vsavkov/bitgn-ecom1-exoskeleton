@@ -24,6 +24,7 @@ from agent import (
     _function_call_output_for_call_id,
     _apply_availability_count_catalog_refs,
     _apply_support_note_catalog_refs,
+    _append_synthetic_named_pair,
     _append_synthetic_tool_pair,
     _iter_tree_paths,
     _is_command_path,
@@ -36,6 +37,7 @@ from agent import (
     _remember_seen_tool_use,
     _render_command,
     _synthetic_function_call,
+    _synthetic_named_call,
     _trace_agent_inputs,
     _trace_agent_outputs,
     _trace_cmd,
@@ -268,6 +270,35 @@ def test_function_call_and_output_text_helpers() -> None:
         "output": "done",
     }
     assert _output_text(response) == "hello"
+
+
+def test_synthetic_named_call_does_not_require_registered_model() -> None:
+    context: list = []
+    call = _synthetic_named_call(
+        "resolve_basket_selector",
+        {"selector": "newest"},
+        "call_auto_99",
+    )
+
+    assert call["name"] == "resolve_basket_selector"
+    assert call["call_id"] == "call_auto_99"
+    assert call["id"] == "fc_call_auto_99"
+    assert json.loads(call["arguments"]) == {"selector": "newest"}
+
+    _append_synthetic_named_pair(
+        context,
+        name="resolve_basket_selector",
+        arguments={"selector": "oldest"},
+        output='{"selected_basket_id": "basket_1"}',
+        call_id="call_auto_100",
+    )
+
+    assert context[0]["name"] == "resolve_basket_selector"
+    assert context[1] == {
+        "type": "function_call_output",
+        "call_id": "call_auto_100",
+        "output": '{"selected_basket_id": "basket_1"}',
+    }
 
 
 def test_synthetic_tool_pair_helpers() -> None:
