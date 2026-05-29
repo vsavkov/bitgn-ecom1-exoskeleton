@@ -1,8 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-import pytest
-
 from fraud_rules import detect_fraud_rows
 from payment_fraud import (
     LIVE_PAYMENT_CHANNEL,
@@ -152,7 +150,15 @@ def test_analyze_payment_fraud_history_falls_back_to_proc_path_when_record_path_
     ]
 
 
-def test_analyze_payment_fraud_history_raises_on_sql_failure() -> None:
+def test_analyze_payment_fraud_history_returns_warning_on_sql_failure() -> None:
+    # The trial snapshot can rename payment_transactions or drop the join key;
+    # the helper must degrade to an empty result with a warning instead of
+    # raising, so the agent can fall back without stalling the whole trial.
     vm = FakeVM(sql_rows="", exit_code=1)
-    with pytest.raises(RuntimeError):
-        analyze_payment_fraud_history(vm, ReqAnalyzePaymentFraudHistory())
+    result = analyze_payment_fraud_history(vm, ReqAnalyzePaymentFraudHistory())
+
+    assert result["fraud_payment_count"] == 0
+    assert result["refs_to_submit"] == []
+    assert result["total_message"] == "EUR 0.00"
+    assert "warning" in result
+    assert "fall back" in result["warning"].lower()

@@ -70,28 +70,40 @@ def _parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(normalized)
 
 
-def _fetch_payment_rows(vm: RuntimeVM) -> list[PaymentTransactionRow]:
+@dataclass(frozen=True)
+class PaymentFraudFetchResult:
+    rows: list[PaymentTransactionRow]
+    warning: str = ""
+
+
+def _fetch_payment_rows(vm: RuntimeVM) -> PaymentFraudFetchResult:
     try:
         result = vm.exec(ExecRequest(path="/bin/sql", stdin=PAYMENT_FRAUD_SQL))
     except ConnectError as exc:
-        raise RuntimeError(f"payment fraud SQL failed: {exc.message}") from exc
+        # Trial-specific runtimes occasionally re-parameterise the schema or
+        # rename tables/columns. Surface a soft warning so the model can fall
+        # back to manual SQL instead of failing the whole trial.
+        return PaymentFraudFetchResult(rows=[], warning=f"SQL failed: {exc.message}")
 
     if getattr(result, "exit_code", 0):
-        raise RuntimeError(
-            "payment fraud SQL exited with "
-            f"{result.exit_code}: {(result.stderr or '').strip()}"
+        return PaymentFraudFetchResult(
+            rows=[],
+            warning=(
+                "SQL exited with "
+                f"{result.exit_code}: {(result.stderr or '').strip()}"
+            ),
         )
 
     stdout = (result.stdout or "").strip()
     if not stdout:
-        return []
+        return PaymentFraudFetchResult(rows=[])
 
     parsed: list[PaymentTransactionRow] = []
-    reader = csv.DictReader(io.StringIO(stdout))
-    for index, raw in enumerate(reader):
-        payment_id = (raw.get("payment_id") or "").strip()
-        record_path = (raw.get("record_path") or "").strip()
-        try:
+    try:
+        reader = csv.DictReader(io.StringIO(stdout))
+        for index, raw in enumerate(reader):
+            payment_id = (raw.get("payment_id") or "").strip()
+            record_path = (raw.get("record_path") or "").strip()
             row = PaymentTransactionRow(
                 index=index,
                 row_id=payment_id,
@@ -107,16 +119,16 @@ def _fetch_payment_rows(vm: RuntimeVM) -> list[PaymentTransactionRow]:
                 archive_channel=LIVE_PAYMENT_CHANNEL,
                 record_path=record_path,
             )
-        except (TypeError, ValueError) as exc:
-            raise RuntimeError(
-                f"invalid payment_transactions row {index + 2}"
-            ) from exc
+            if not row.row_id:
+                continue
+            parsed.append(row)
+    except (TypeError, ValueError, csv.Error) as exc:
+        return PaymentFraudFetchResult(
+            rows=[],
+            warning=f"payment_transactions parse error: {exc}",
+        )
 
-        if not row.row_id:
-            continue
-        parsed.append(row)
-
-    return parsed
+    return PaymentFraudFetchResult(rows=parsed)
 
 
 def _payment_record_ref(row: PaymentTransactionRow) -> str:
@@ -129,7 +141,8 @@ def analyze_payment_fraud_history(
     vm: RuntimeVM,
     cmd: ReqAnalyzePaymentFraudHistory,  # noqa: ARG001  # documented intentionally empty
 ) -> dict[str, Any]:
-    rows = _fetch_payment_rows(vm)
+    fetch = _fetch_payment_rows(vm)
+    rows = fetch.rows
     fraud_rows, incidents, candidates = detect_fraud_rows(
         list(rows)  # type: ignore[arg-type]
     )
@@ -139,7 +152,7 @@ def analyze_payment_fraud_history(
     total_cents = sum(row.amount_cents for row in payment_fraud_rows)
     refs = [_payment_record_ref(row) for row in payment_fraud_rows]
 
-    return {
+    payload: dict[str, Any] = {
         "total_cents": total_cents,
         "total_message": format_eur(total_cents),
         "fraud_payment_count": len(payment_fraud_rows),
@@ -150,6 +163,12 @@ def analyze_payment_fraud_history(
         "suppressed_overlapping_candidate_count": len(candidates) - len(incidents),
         "incidents": incidents_summary(incidents),
     }
+    if fetch.warning:
+        payload["warning"] = (
+            f"{fetch.warning}; the live payment history could not be loaded, "
+            "fall back to manual SQL on the current schema if needed."
+        )
+    return payload
 
 
 __all__ = [

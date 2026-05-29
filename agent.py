@@ -1113,6 +1113,15 @@ def run_agent(
                 txt = str(exc.message)
                 if debug:
                     print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
+            except RuntimeError as exc:
+                # Helpers (catalog_tools, archive_fraud, payment_fraud,
+                # manager_verification) raise RuntimeError for schema or
+                # SQL surprises in a new trial snapshot. Surface the error
+                # back to the model as a normal tool result so it can pick
+                # another approach instead of stalling the trial.
+                txt = f"Tool error: {exc}"
+                if debug:
+                    print(f"{CLI_RED}ERR helper: {exc}{CLI_CLR}")
 
             context.append(_function_call_output(tool_call, txt))
 
