@@ -1113,6 +1113,7 @@ def run_agent(
                 formatted_message = format_completion_message(
                     formatter_client,
                     task_text=task_text,
+                    task_type=cmd.task_type,
                     current_message=cmd.message,
                     outcome=cmd.outcome,
                     completed_steps_laconic=cmd.completed_steps_laconic,
