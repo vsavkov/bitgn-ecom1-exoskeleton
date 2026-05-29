@@ -36,6 +36,7 @@ Useful environment overrides:
 - `MODEL_ID` can be set in `.env`; this checkout currently uses `gpt-5.4-mini`
 - `ANSWER_FORMATTER_MODEL` controls the final answer formatter; default is `gpt-5.4-nano`
 - `ANSWER_FORMATTER_REASONING_EFFORT` controls formatter reasoning; default is `low`
+- `AGENT_MAX_STEPS` caps response/tool iterations per trial; default is `75`
 - `TRIAL_BATCH_SIZE` controls concurrent trials during `make run`; default is `10`
 - `OPENAI_TIMEOUT_SECONDS` caps each OpenAI request; default is `40`
 - `OPENAI_MAX_RETRIES` controls OpenAI SDK retries; default is `1`

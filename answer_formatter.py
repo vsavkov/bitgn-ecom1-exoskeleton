@@ -1,5 +1,5 @@
 import json
-from collections.abc import Callable
+from collections.abc import Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, ParamSpec, Sequence, TypeVar
 
 from openai.types.shared_params import Reasoning
@@ -72,6 +72,7 @@ def format_completion_message(
     completed_steps_laconic: Sequence[str],
     grounding_refs: Sequence[str],
     debug: bool,
+    output_lines: MutableSequence[str] | None = None,
 ) -> str:
     payload = {
         "task_text": task_text,
@@ -112,10 +113,16 @@ def format_completion_message(
             print(f"{CLI_RED}ERR formatter: empty formatted message{CLI_CLR}")
         return current_message
 
+    def emit(message: str) -> None:
+        if output_lines is None:
+            print(message)
+            return
+        output_lines.append(message)
+
     if parsed.missed_elements:
-        print(f"{CLI_YELLOW}FORMAT MISSED{CLI_CLR}: {parsed.missed_elements}")
+        emit(f"{CLI_YELLOW}FORMAT MISSED{CLI_CLR}: {parsed.missed_elements}")
 
     if formatted_message != current_message:
-        print(f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}")
+        emit(f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}")
 
     return formatted_message

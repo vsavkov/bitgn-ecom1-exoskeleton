@@ -29,6 +29,7 @@ from config import (
     CLI_RED,
     CLI_YELLOW,
     env_flag,
+    env_int,
     openai_client_kwargs,
     render_prompt,
 )
@@ -585,15 +586,20 @@ def _output_text(resp) -> str:
     return "\n".join(chunks)
 
 
-def _print_completion(cmd: ReportTaskCompletion) -> None:
+def _format_completion(cmd: ReportTaskCompletion) -> str:
     status = CLI_GREEN if cmd.outcome == "OUTCOME_OK" else CLI_YELLOW
-    print(f"{status}agent {cmd.outcome}{CLI_CLR}. Summary:")
+    lines: list[str] = [f"{status}agent {cmd.outcome}{CLI_CLR}. Summary:"]
     for item in cmd.completed_steps_laconic:
-        print(f"- {item}")
-    print(f"\n{CLI_BLUE}AGENT SUMMARY: {cmd.message}{CLI_CLR}")
+        lines.append(f"- {item}")
+    lines.append(f"\n{CLI_BLUE}AGENT SUMMARY: {cmd.message}{CLI_CLR}")
     if cmd.grounding_refs:
         for ref in cmd.grounding_refs:
-            print(f"- {CLI_BLUE}{ref}{CLI_CLR}")
+            lines.append(f"- {CLI_BLUE}{ref}{CLI_CLR}")
+    return "\n".join(lines)
+
+
+def _print_completion(cmd: ReportTaskCompletion) -> None:
+    print(_format_completion(cmd))
 
 
 @traceable(
@@ -602,7 +608,13 @@ def _print_completion(cmd: ReportTaskCompletion) -> None:
     process_inputs=_trace_agent_inputs,
     process_outputs=_trace_agent_outputs,
 )
-def run_agent(model: str, harness_url: str, task_text: str) -> dict:
+def run_agent(
+    model: str,
+    harness_url: str,
+    task_text: str,
+    *,
+    print_completion: bool = True,
+) -> dict:
     run_tree = get_current_run_tree()
     langsmith_run_id = str(run_tree.id) if run_tree and run_tree.id else None
     langsmith_trace_id = str(run_tree.trace_id) if run_tree and run_tree.trace_id else langsmith_run_id
@@ -611,13 +623,16 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
     formatter_client = OpenAI(**openai_client_kwargs())
     vm = EcomRuntimeClientSync(harness_url)
     debug = env_flag("AGENT_DEBUG")
+    max_steps = env_int("AGENT_MAX_STEPS", 75, minimum=1)
     context: list[Any] = []
     tree_help_paths: set[str] = set()
     tree_read_paths: set[str] = set()
+    formatter_output_lines: list[str] = []
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
         "langsmith_trace_id": langsmith_trace_id,
+        "formatter_output": formatter_output_lines,
     }
 
     must: list[BaseModel] = [
@@ -640,7 +655,7 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
 
     context.append({"role": "user", "content": task_text})
 
-    for i in range(30):
+    for i in range(max_steps):
         step = f"STEP_{i + 1}"
         started = time.time()
         resp = client.responses.create(
@@ -701,6 +716,7 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
                     completed_steps_laconic=cmd.completed_steps_laconic,
                     grounding_refs=cmd.grounding_refs,
                     debug=debug,
+                    output_lines=None if print_completion else formatter_output_lines,
                 )
                 cmd = cmd.model_copy(update={"message": formatted_message})
 
@@ -724,16 +740,50 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
                     "completed": True,
                     "langsmith_run_id": langsmith_run_id,
                     "langsmith_trace_id": langsmith_trace_id,
+                    "formatter_output": formatter_output_lines,
+                    "completion_output": _format_completion(cmd),
                     "outcome": cmd.outcome,
                     "message": cmd.message,
                     "grounding_refs": cmd.grounding_refs,
                     "completed_steps_laconic": cmd.completed_steps_laconic,
                 }
-                _print_completion(cmd)
+                if print_completion:
+                    _print_completion(cmd)
                 completed = True
                 break
 
         if completed:
             break
+
+    if not final_result["completed"]:
+        fallback_cmd = ReportTaskCompletion(
+            completed_steps_laconic=[
+                f"Reached the agent step budget of {max_steps} without a final completion.",
+            ],
+            message=f"Could not complete within the agent step budget of {max_steps}.",
+            grounding_refs=[],
+            outcome="OUTCOME_ERR_INTERNAL",
+        )
+        try:
+            dispatch(vm, fallback_cmd)
+            final_result = {
+                "completed": True,
+                "fallback": "step_budget_exhausted",
+                "langsmith_run_id": langsmith_run_id,
+                "langsmith_trace_id": langsmith_trace_id,
+                "formatter_output": formatter_output_lines,
+                "completion_output": _format_completion(fallback_cmd),
+                "outcome": fallback_cmd.outcome,
+                "message": fallback_cmd.message,
+                "grounding_refs": fallback_cmd.grounding_refs,
+                "completed_steps_laconic": fallback_cmd.completed_steps_laconic,
+            }
+            if print_completion:
+                _print_completion(fallback_cmd)
+        except ConnectError as exc:
+            final_result["fallback"] = "step_budget_exhausted"
+            final_result["error"] = str(exc.message)
+            if debug:
+                print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 
     return final_result

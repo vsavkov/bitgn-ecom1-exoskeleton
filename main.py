@@ -61,6 +61,41 @@ def _print_locked(message: str) -> None:
         print(message)
 
 
+def _chunks[T](items: list[T], size: int):
+    for index in range(0, len(items), size):
+        yield items[index : index + size]
+
+
+def _format_task_report(output: dict) -> str:
+    task_id = output.get("task_id") or "unknown"
+    instruction = output.get("instruction") or ""
+    lines = [
+        f"{'=' * 30} Task: {task_id} {'=' * 30}",
+        _color(instruction, CLI_BLUE),
+        "-" * 80,
+    ]
+
+    formatter_output = output.get("formatter_output") or []
+    lines.extend(formatter_output)
+
+    completion_output = output.get("completion_output")
+    if completion_output:
+        lines.append(completion_output)
+
+    error = output.get("error")
+    if error:
+        lines.append(_color(f"ERROR: {error}", CLI_RED))
+
+    end_trial_error = output.get("end_trial_error")
+    if end_trial_error:
+        lines.append(_color(f"END TRIAL ERROR: {end_trial_error}", CLI_RED))
+
+    if output.get("skipped"):
+        lines.append("Skipped by task filter.")
+
+    return "\n".join(lines)
+
+
 def _flush_langsmith() -> None:
     if not env_flag("LANGSMITH_TRACING"):
         return
@@ -142,7 +177,7 @@ def _write_run_artifact(result, started_at: datetime, trial_outputs: dict[str, d
     return path
 
 
-def _run_trial(trial_id: str, task_filter: set[str]) -> tuple[str, dict]:
+def _run_trial(trial_id: str, task_filter: set[str], debug: bool) -> tuple[str, dict]:
     client = HarnessServiceClientSync(BITGN_URL)
     trial = None
     output: dict = {}
@@ -150,27 +185,38 @@ def _run_trial(trial_id: str, task_filter: set[str]) -> tuple[str, dict]:
 
     try:
         trial = client.start_trial(StartTrialRequest(trial_id=trial_id))
+        output = {"task_id": trial.task_id, "instruction": trial.instruction}
         if task_filter and trial.task_id not in task_filter:
-            output = {"skipped": True, "task_id": trial.task_id}
+            output["skipped"] = True
             return trial.trial_id, output
 
         should_end = True
-        _print_locked(
-            f"{'=' * 30} Starting task: {trial.task_id} {'=' * 30}\n"
-            f"{_color(trial.instruction, CLI_BLUE)}\n{'-' * 80}"
-        )
+        if debug:
+            _print_locked(
+                f"{'=' * 30} Starting task: {trial.task_id} {'=' * 30}\n"
+                f"{_color(trial.instruction, CLI_BLUE)}\n{'-' * 80}"
+            )
 
         try:
-            output = run_agent(MODEL_ID, trial.harness_url, trial.instruction)
+            output.update(
+                run_agent(
+                    MODEL_ID,
+                    trial.harness_url,
+                    trial.instruction,
+                    print_completion=debug,
+                )
+            )
         except Exception as exc:
-            output = {"error": str(exc)}
-            _print_locked(_color(f"{trial.task_id}: {exc}", CLI_RED))
+            output["error"] = str(exc)
+            if debug:
+                _print_locked(_color(f"{trial.task_id}: {exc}", CLI_RED))
 
         return trial.trial_id, output
     except Exception as exc:
         key = trial.trial_id if trial else trial_id
         output = {"error": str(exc)}
-        _print_locked(_color(f"{key}: {exc}", CLI_RED))
+        if debug:
+            _print_locked(_color(f"{key}: {exc}", CLI_RED))
         return key, output
     finally:
         if should_end and trial is not None:
@@ -178,7 +224,10 @@ def _run_trial(trial_id: str, task_filter: set[str]) -> tuple[str, dict]:
                 client.end_trial(EndTrialRequest(trial_id=trial.trial_id))
             except Exception as exc:
                 output["end_trial_error"] = str(exc)
-                _print_locked(_color(f"{trial.task_id}: failed to end trial: {exc}", CLI_RED))
+                if debug:
+                    _print_locked(
+                        _color(f"{trial.task_id}: failed to end trial: {exc}", CLI_RED)
+                    )
 
 
 def main() -> None:
@@ -187,6 +236,7 @@ def main() -> None:
     task_filter_set = set(task_filter)
     full_run = not task_filter
     trial_batch_size = env_int("TRIAL_BATCH_SIZE", DEFAULT_TRIAL_BATCH_SIZE, minimum=1)
+    debug = env_flag("AGENT_DEBUG")
     trial_outputs: dict[str, dict] = {}
 
     try:
@@ -209,20 +259,46 @@ def main() -> None:
         )
 
         try:
-            with ThreadPoolExecutor(max_workers=trial_batch_size) as executor:
-                futures = {
-                    executor.submit(_run_trial, trial_id, task_filter_set): trial_id
-                    for trial_id in run.trial_ids
-                }
-                for future in as_completed(futures):
-                    trial_id = futures[future]
-                    try:
-                        output_trial_id, output = future.result()
-                    except Exception as exc:
-                        output_trial_id = trial_id
-                        output = {"error": str(exc)}
-                        _print_locked(_color(f"{trial_id}: {exc}", CLI_RED))
-                    trial_outputs[output_trial_id] = output
+            benchmark_task_ids = [task.task_id for task in res.tasks]
+            can_filter_before_start = len(benchmark_task_ids) == len(run.trial_ids)
+            trial_plan = [
+                (
+                    trial_id,
+                    benchmark_task_ids[index]
+                    if index < len(benchmark_task_ids)
+                    else trial_id,
+                )
+                for index, trial_id in enumerate(run.trial_ids)
+            ]
+            if task_filter_set and can_filter_before_start:
+                trial_plan = [
+                    (trial_id, task_id)
+                    for trial_id, task_id in trial_plan
+                    if task_id in task_filter_set
+                ]
+
+            for batch in _chunks(trial_plan, trial_batch_size):
+                if not debug:
+                    running = ", ".join(task_id for _, task_id in batch)
+                    _print_locked(_color(f"Running {running}", CLI_BLUE))
+
+                with ThreadPoolExecutor(max_workers=trial_batch_size) as executor:
+                    futures = {
+                        executor.submit(_run_trial, trial_id, task_filter_set, debug): trial_id
+                        for trial_id, _ in batch
+                    }
+                    for future in as_completed(futures):
+                        trial_id = futures[future]
+                        try:
+                            output_trial_id, output = future.result()
+                        except Exception as exc:
+                            output_trial_id = trial_id
+                            output = {"error": str(exc)}
+                            if debug:
+                                _print_locked(_color(f"{trial_id}: {exc}", CLI_RED))
+                        trial_outputs[output_trial_id] = output
+                        if not debug and not output.get("skipped"):
+                            _print_locked(_format_task_report(output))
         finally:
             _flush_langsmith()
             print(f"\n{_color('>>>> Submitting run... <<<<', CLI_GREEN)}")
