@@ -20,6 +20,8 @@ class EvidenceLedger:
     manager_verified_refs: list[str] = field(default_factory=list)
     fraud_refs: list[str] = field(default_factory=list)
     fraud_total_message: str = ""
+    receipt_refs: list[str] = field(default_factory=list)
+    receipt_message: str = ""
     loaded_doc_refs: list[str] = field(default_factory=list)
 
     def merge_availability_count(self, refs: list[str]) -> None:
@@ -52,6 +54,17 @@ class EvidenceLedger:
         if total_message:
             self.fraud_total_message = total_message
 
+    def merge_receipt_price_result(
+        self,
+        *,
+        refs: list[str],
+        formatted_message: str,
+    ) -> None:
+        if refs:
+            self.receipt_refs = dedupe_refs([*self.receipt_refs, *refs])
+        if formatted_message:
+            self.receipt_message = formatted_message
+
     def register_loaded_docs(self, paths: list[str]) -> None:
         if paths:
             self.loaded_doc_refs = dedupe_refs([*self.loaded_doc_refs, *paths])
@@ -64,6 +77,7 @@ class EvidenceLedger:
             _apply_archive_fraud_result,
             _apply_availability_count_catalog_refs,
             _apply_loaded_doc_refs,
+            _apply_receipt_price_result,
             _apply_support_note_catalog_refs,
             _apply_verified_manager_refs,
         )
@@ -75,6 +89,11 @@ class EvidenceLedger:
             cmd,
             total_message=self.fraud_total_message,
             refs_to_submit=self.fraud_refs,
+        )
+        cmd = _apply_receipt_price_result(
+            cmd,
+            formatted_message=self.receipt_message,
+            refs_to_submit=self.receipt_refs,
         )
         cmd = _apply_loaded_doc_refs(
             cmd,

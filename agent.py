@@ -62,6 +62,7 @@ from openai.types.responses import (
 )
 from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field, ValidationError
+from receipt_price import ReqAnalyzeReceiptPriceCheck, analyze_receipt_price_check
 from submission_refs import (
     availability_count_refs_from_catalog_result,
     catalog_refs_from_refs,
@@ -226,6 +227,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "exec": ReqExec,
     "analyze_archive_fraud_export": ReqAnalyzeArchiveFraudExport,
     "analyze_payment_fraud_history": ReqAnalyzePaymentFraudHistory,
+    "analyze_receipt_price_check": ReqAnalyzeReceiptPriceCheck,
     "resolve_catalog_items": ReqResolveCatalogItems,
     "verify_store_manager": ReqVerifyStoreManager,
     "report_completion": ReportTaskCompletion,
@@ -343,6 +345,17 @@ TOOLS: list[FunctionToolParam] = [
             "Pass raw product descriptions plus optional store_id/quantity "
             "thresholds. Returns exact SKU matches, availability, and canonical "
             "refs; unsupported schemas or unparsed descriptions raise an error."
+        ),
+    ),
+    _responses_function_tool(
+        ReqAnalyzeReceiptPriceCheck,
+        name="analyze_receipt_price_check",
+        description=(
+            "Analyze an uploaded receipt OCR text file and compare its ex-VAT "
+            "subtotal with current catalogue prices. Use this for receipt "
+            "price-difference yes/no tasks. Handles common OCR SKU confusions "
+            "such as O vs 0, and returns formatted_message (<YES>/<NO>) plus "
+            "refs_to_submit for the receipt and resolved product records."
         ),
     ),
     _responses_function_tool(
@@ -680,6 +693,8 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
         return analyze_archive_fraud_export(vm, cmd)
     if isinstance(cmd, ReqAnalyzePaymentFraudHistory):
         return analyze_payment_fraud_history(vm, cmd)
+    if isinstance(cmd, ReqAnalyzeReceiptPriceCheck):
+        return analyze_receipt_price_check(vm, cmd)
     if isinstance(cmd, ReqResolveCatalogItems):
         return resolve_catalog_items(vm, cmd)
     if isinstance(cmd, ReqVerifyStoreManager):
@@ -867,6 +882,27 @@ def _apply_archive_fraud_result(
     updates: dict[str, Any] = {}
     if total_message:
         updates["message"] = total_message
+    if refs_to_submit:
+        updates["grounding_row_refs"] = dedupe_refs(
+            [*cmd.grounding_row_refs, *refs_to_submit]
+        )
+    return cmd.model_copy(update=updates)
+
+
+def _apply_receipt_price_result(
+    cmd: ReportTaskCompletion,
+    *,
+    formatted_message: str,
+    refs_to_submit: list[str],
+) -> ReportTaskCompletion:
+    if cmd.task_type != "receipt_price_check" or (
+        not formatted_message and not refs_to_submit
+    ):
+        return cmd
+
+    updates: dict[str, Any] = {}
+    if formatted_message:
+        updates["message"] = formatted_message
     if refs_to_submit:
         updates["grounding_row_refs"] = dedupe_refs(
             [*cmd.grounding_row_refs, *refs_to_submit]
@@ -1182,6 +1218,21 @@ def run_agent(
                         if isinstance(ref, str)
                     ],
                     total_message=total_message if isinstance(total_message, str) else "",
+                )
+            if isinstance(cmd, ReqAnalyzeReceiptPriceCheck) and isinstance(result, dict):
+                formatted_message = result.get("formatted_message")
+                refs_to_submit = result.get("refs_to_submit")
+                ledger.merge_receipt_price_result(
+                    refs=[
+                        ref
+                        for ref in (
+                            refs_to_submit if isinstance(refs_to_submit, list) else []
+                        )
+                        if isinstance(ref, str)
+                    ],
+                    formatted_message=(
+                        formatted_message if isinstance(formatted_message, str) else ""
+                    ),
                 )
             if isinstance(cmd, ReqVerifyStoreManager) and isinstance(result, dict):
                 refs_to_submit = result.get("refs_to_submit")

@@ -177,6 +177,28 @@ def test_apply_to_completion_uses_accumulated_archive_fraud_total() -> None:
     ]
 
 
+def test_apply_to_completion_uses_receipt_price_result() -> None:
+    cmd = _completion(
+        task_type="receipt_price_check",
+        row_refs=["/uploads/receipt_ocr.txt"],
+        message="placeholder",
+    )
+
+    ledger = EvidenceLedger()
+    ledger.merge_receipt_price_result(
+        refs=["/proc/catalog/FST-69283OWE.json"],
+        formatted_message="<YES>",
+    )
+
+    updated = ledger.apply_to_completion(cmd)
+
+    assert updated.message == "<YES>"
+    assert updated.grounding_row_refs == [
+        "/uploads/receipt_ocr.txt",
+        "/proc/catalog/FST-69283OWE.json",
+    ]
+
+
 def test_apply_to_completion_autocites_loaded_docs_for_matching_task_type() -> None:
     cmd = _completion(
         task_type="discount",

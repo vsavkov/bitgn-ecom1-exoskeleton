@@ -12,6 +12,7 @@ from agent import (
     ReqTree,
     _child_runtime_path,
     _apply_archive_fraud_result,
+    _apply_receipt_price_result,
     _apply_verified_manager_refs,
     _format_list_response,
     _format_exec_response,
@@ -464,6 +465,41 @@ def test_apply_archive_fraud_result_sets_message_and_refs() -> None:
         "/archive/payments.tsv#row=existing",
         "/archive/payments.tsv#row=R1",
     ]
+
+
+def test_apply_receipt_price_result_sets_message_and_refs_for_receipt_tasks() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["checked receipt"],
+        task_type="receipt_price_check",
+        message="old",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/uploads/receipt_ocr.txt"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_receipt_price_result(
+        cmd,
+        formatted_message="<YES>",
+        refs_to_submit=[
+            "/uploads/receipt_ocr.txt",
+            "/proc/catalog/FST-69283OWE.json",
+        ],
+    )
+
+    assert updated.message == "<YES>"
+    assert updated.grounding_row_refs == [
+        "/uploads/receipt_ocr.txt",
+        "/proc/catalog/FST-69283OWE.json",
+    ]
+
+    unchanged = _apply_receipt_price_result(
+        cmd.model_copy(update={"task_type": "catalog_lookup"}),
+        formatted_message="<NO>",
+        refs_to_submit=["/proc/catalog/WRONG.json"],
+    )
+    assert unchanged.message == "old"
+    assert unchanged.grounding_row_refs == ["/uploads/receipt_ocr.txt"]
 
 
 def test_parse_tool_call() -> None:
