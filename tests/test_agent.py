@@ -10,6 +10,7 @@ from agent import (
     ReqSearch,
     ReqTree,
     _child_runtime_path,
+    _apply_archive_fraud_result,
     _apply_verified_manager_refs,
     _format_list_response,
     _format_exec_response,
@@ -335,6 +336,33 @@ def test_apply_verified_manager_refs_adds_tool_evidence() -> None:
     assert updated.grounding_row_refs == [
         "/proc/baskets/basket_001.json",
         "/proc/stores/store_vienna_praterstern.json",
+    ]
+
+
+def test_apply_archive_fraud_result_sets_message_and_refs() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["analyzed archive fraud"],
+        task_type="fraud_review",
+        message="old",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/archive/payments.tsv#row=existing"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_archive_fraud_result(
+        cmd,
+        total_message="EUR 12.34",
+        refs_to_submit=[
+            "/archive/payments.tsv#row=R1",
+            "/archive/payments.tsv#row=existing",
+        ],
+    )
+
+    assert updated.message == "EUR 12.34"
+    assert updated.grounding_row_refs == [
+        "/archive/payments.tsv#row=existing",
+        "/archive/payments.tsv#row=R1",
     ]
 
 

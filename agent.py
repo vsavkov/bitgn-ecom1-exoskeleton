@@ -15,6 +15,7 @@ from typing import (
 
 import openai
 from annotated_types import Ge, Le
+from archive_fraud import ReqAnalyzeArchiveFraudExport, analyze_archive_fraud_export
 from answer_formatter import format_completion_message
 from bitgn.vm.ecom.ecom_connect import EcomRuntimeClientSync
 from bitgn.vm.ecom.ecom_pb2 import (
@@ -211,6 +212,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "delete": ReqDelete,
     "stat": ReqStat,
     "exec": ReqExec,
+    "analyze_archive_fraud_export": ReqAnalyzeArchiveFraudExport,
     "resolve_catalog_items": ReqResolveCatalogItems,
     "verify_store_manager": ReqVerifyStoreManager,
     "report_completion": ReportTaskCompletion,
@@ -290,7 +292,19 @@ TOOLS: list[FunctionToolParam] = [
         name="exec",
         description=(
             "Execute an absolute runtime command path. Use /bin/sql with SQL in "
-            "stdin for catalogue and state queries."
+            "stdin for catalogue and state queries. Do not use this to run "
+            "non-runtime interpreters for archive TSV analysis; use the archive "
+            "fraud helper instead."
+        ),
+    ),
+    _responses_function_tool(
+        ReqAnalyzeArchiveFraudExport,
+        name="analyze_archive_fraud_export",
+        description=(
+            "Analyze an archived payment TSV under /archive for fraud incident "
+            "rows. Use this for archive payment fraud-review tasks and total "
+            "fraud amount questions. Returns total_message formatted as EUR "
+            "%d.%02d plus refs_to_submit in the required row-ref format."
         ),
     ),
     _responses_function_tool(
@@ -631,6 +645,8 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
         return vm.stat(StatRequest(path=cmd.path))
     if isinstance(cmd, ReqExec):
         return vm.exec(ExecRequest(path=cmd.path, args=cmd.args, stdin=cmd.stdin))
+    if isinstance(cmd, ReqAnalyzeArchiveFraudExport):
+        return analyze_archive_fraud_export(vm, cmd)
     if isinstance(cmd, ReqResolveCatalogItems):
         return resolve_catalog_items(vm, cmd)
     if isinstance(cmd, ReqVerifyStoreManager):
@@ -740,6 +756,25 @@ def _apply_verified_manager_refs(
     return cmd.model_copy(update={"grounding_row_refs": row_refs})
 
 
+def _apply_archive_fraud_result(
+    cmd: ReportTaskCompletion,
+    *,
+    total_message: str,
+    refs_to_submit: list[str],
+) -> ReportTaskCompletion:
+    if not total_message and not refs_to_submit:
+        return cmd
+
+    updates: dict[str, Any] = {}
+    if total_message:
+        updates["message"] = total_message
+    if refs_to_submit:
+        updates["grounding_row_refs"] = dedupe_refs(
+            [*cmd.grounding_row_refs, *refs_to_submit]
+        )
+    return cmd.model_copy(update=updates)
+
+
 @traceable(
     run_type="chain",
     name="ECOM Agent",
@@ -769,6 +804,8 @@ def run_agent(
     availability_count_catalog_refs: list[str] = []
     support_note_catalog_refs: list[str] = []
     verified_manager_refs: list[str] = []
+    archive_fraud_total_message = ""
+    archive_fraud_refs: list[str] = []
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
@@ -893,6 +930,11 @@ def run_agent(
                     support_note_catalog_refs,
                 )
                 cmd = _apply_verified_manager_refs(cmd, verified_manager_refs)
+                cmd = _apply_archive_fraud_result(
+                    cmd,
+                    total_message=archive_fraud_total_message,
+                    refs_to_submit=archive_fraud_refs,
+                )
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,
@@ -929,6 +971,18 @@ def run_agent(
                 checked_refs = support_note_refs_from_catalog_result(result)
                 if checked_refs:
                     support_note_catalog_refs = checked_refs
+            if isinstance(cmd, ReqAnalyzeArchiveFraudExport) and isinstance(result, dict):
+                total_message = result.get("total_message")
+                if isinstance(total_message, str):
+                    archive_fraud_total_message = total_message
+                refs_to_submit = result.get("refs_to_submit")
+                if isinstance(refs_to_submit, list):
+                    archive_fraud_refs = dedupe_refs(
+                        [
+                            *archive_fraud_refs,
+                            *(ref for ref in refs_to_submit if isinstance(ref, str)),
+                        ]
+                    )
             if isinstance(cmd, ReqVerifyStoreManager) and isinstance(result, dict):
                 refs_to_submit = result.get("refs_to_submit")
                 if isinstance(refs_to_submit, list):
