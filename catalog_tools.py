@@ -2,6 +2,7 @@ import csv
 import io
 import json
 import re
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from bitgn.vm.ecom.ecom_connect import EcomRuntimeClientSync
@@ -256,6 +257,34 @@ _GENERIC_CONSTRAINT_WORDS = {
     "wattage",
     "width",
 }
+_STRUCTURED_PROPERTY_LABEL_WORDS = {
+    "class",
+    "color",
+    "connection",
+    "connector",
+    "contents",
+    "diameter",
+    "drive",
+    "family",
+    "finish",
+    "length",
+    "luminous",
+    "material",
+    "mask",
+    "power",
+    "product",
+    "protection",
+    "screw",
+    "source",
+    "storage",
+    "thread",
+    "type",
+    "viscosity",
+    "voltage",
+    "volume",
+    "wattage",
+    "width",
+}
 
 
 def _norm_words(value: str) -> str:
@@ -295,6 +324,32 @@ def _constraint_matches_product_name(constraint: str, product_name: str) -> bool
     return all(word in product_words for word in constraint_words)
 
 
+def _constraint_text_and_label(
+    constraint: str | ParsedCatalogConstraint,
+) -> tuple[str, str]:
+    if isinstance(constraint, ParsedCatalogConstraint):
+        text = constraint.text or f"{constraint.label} {constraint.value}".strip()
+        return text, constraint.label
+    return constraint, ""
+
+
+def _requires_structured_property_match(constraint: str, label: str = "") -> bool:
+    normalized_label = _norm_words(label)
+    if set(normalized_label.split()) & _STRUCTURED_PROPERTY_LABEL_WORDS:
+        return True
+
+    words = _norm_words(constraint).split()
+    if len(words) < 2:
+        return False
+
+    # Constraints with an explicit property label, e.g. "screw type wood screw",
+    # must be validated against product_variant_properties. Falling back to the
+    # product name would confuse family text ("Wood and Drywall Screw") with the
+    # actual typed variant value ("drywall screw").
+    label_words = set(words[:2])
+    return bool(label_words & _STRUCTURED_PROPERTY_LABEL_WORDS)
+
+
 def _property_matches_constraint(
     constraint: str,
     *,
@@ -329,29 +384,37 @@ def _property_matches_constraint(
 
 
 def _candidate_constraint_matches(
-    constraints: list[str],
+    constraints: Sequence[str | ParsedCatalogConstraint],
     properties: list[dict[str, str]],
     product_name: str,
 ) -> tuple[list[str], list[str]]:
     matched: list[str] = []
     missing: list[str] = []
     for constraint in constraints:
+        constraint_text, constraint_label = _constraint_text_and_label(constraint)
         found = False
         for prop in properties:
             if _property_matches_constraint(
-                constraint,
+                constraint_text,
                 key=prop.get("property_key") or "",
                 text_value=prop.get("property_value_text") or "",
                 number_value=prop.get("property_value_number") or "",
             ):
                 found = True
                 break
-        if not found and _constraint_matches_product_name(constraint, product_name):
+        if (
+            not found
+            and not _requires_structured_property_match(
+                constraint_text,
+                constraint_label,
+            )
+            and _constraint_matches_product_name(constraint_text, product_name)
+        ):
             found = True
         if found:
-            matched.append(constraint)
+            matched.append(constraint_text)
         else:
-            missing.append(constraint)
+            missing.append(constraint_text)
     return matched, missing
 
 
@@ -486,10 +549,7 @@ def resolve_catalog_items(
     for item, parsed, candidates in zip(
         cmd.items, parsed_items, candidate_rows_by_index, strict=True
     ):
-        constraints = [
-            constraint.text or f"{constraint.label} {constraint.value}".strip()
-            for constraint in parsed.constraints
-        ]
+        constraints = parsed.constraints
         exact_matches: list[dict[str, Any]] = []
         closest_candidates: list[dict[str, Any]] = []
         threshold = item.requested_quantity or cmd.availability_threshold

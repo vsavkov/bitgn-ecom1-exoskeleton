@@ -55,7 +55,12 @@ from openai.types.responses import (
 )
 from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field, ValidationError
-from submission_refs import submission_refs as _submission_refs
+from submission_refs import (
+    availability_count_refs_from_catalog_result,
+    dedupe_refs,
+    is_catalog_ref,
+    submission_refs as _submission_refs,
+)
 
 if TYPE_CHECKING:
     P = ParamSpec("P")
@@ -669,6 +674,25 @@ def _print_completion(cmd: ReportTaskCompletion, refs: list[str] | None = None) 
     print(_format_completion(cmd, refs))
 
 
+def _apply_availability_count_catalog_refs(
+    cmd: ReportTaskCompletion,
+    canonical_refs: list[str],
+) -> ReportTaskCompletion:
+    if cmd.task_type != "availability_count" or not canonical_refs:
+        return cmd
+
+    # Availability-count graders expect the final refs to describe the products
+    # that actually qualify. The catalogue helper already computes that set, so
+    # keep non-catalog operational refs and replace model-invented catalog refs.
+    row_refs = dedupe_refs(
+        [
+            *(ref for ref in cmd.grounding_row_refs if not is_catalog_ref(ref)),
+            *canonical_refs,
+        ]
+    )
+    return cmd.model_copy(update={"grounding_row_refs": row_refs})
+
+
 @traceable(
     run_type="chain",
     name="ECOM Agent",
@@ -695,6 +719,7 @@ def run_agent(
     tree_help_paths: set[str] = set()
     tree_read_paths: set[str] = set()
     formatter_output_lines: list[str] = []
+    availability_count_catalog_refs: list[str] = []
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
@@ -775,6 +800,10 @@ def run_agent(
                 continue
 
             if isinstance(cmd, ReportTaskCompletion):
+                cmd = _apply_availability_count_catalog_refs(
+                    cmd,
+                    availability_count_catalog_refs,
+                )
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,
@@ -788,6 +817,7 @@ def run_agent(
                 )
                 cmd = cmd.model_copy(update={"message": formatted_message})
 
+            result: Any | None = None
             try:
                 result = dispatch(vm, cmd, task_text=task_text)
                 _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
@@ -802,6 +832,11 @@ def run_agent(
                     print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 
             context.append(_function_call_output(tool_call, txt))
+
+            if isinstance(cmd, ReqResolveCatalogItems):
+                canonical_refs = availability_count_refs_from_catalog_result(result)
+                if canonical_refs:
+                    availability_count_catalog_refs = canonical_refs
 
             if isinstance(cmd, ReportTaskCompletion):
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)

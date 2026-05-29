@@ -5,12 +5,15 @@ from connectrpc.errors import ConnectError
 
 from submission_refs import (
     EXPLICIT_RECORD_SPECS,
+    availability_count_refs_from_catalog_result,
     can_auto_cite_customer_scoped_record,
     candidate_record_ids,
     canonical_proc_record_ref,
     dedupe_refs,
     employee_id_from_ref,
     explicit_target_refs_from_task,
+    is_catalog_ref,
+    is_cross_customer_protected_record_denial,
     is_document_ref,
     manager_store_refs_from_task,
     normalize_runtime_path,
@@ -29,8 +32,10 @@ from submission_refs import (
 class CompletionStub:
     task_type: str = "other"
     protected_record_denial: bool = False
+    message: str = ""
     grounding_doc_refs: list[str] = field(default_factory=list)
     grounding_row_refs: list[str] = field(default_factory=list)
+    outcome: str = "OUTCOME_OK"
 
 
 @dataclass
@@ -83,6 +88,9 @@ def test_dedupe_refs_strips_blanks_and_keeps_order() -> None:
 def test_document_and_path_helpers() -> None:
     assert is_document_ref("/docs/security.md")
     assert not is_document_ref("/proc/baskets/basket_001.json")
+    assert is_catalog_ref("/proc/catalog/FST-123.json")
+    assert is_catalog_ref("proc/catalog/Brand/FST-123.json#row=1")
+    assert not is_catalog_ref("/proc/stores/store_vienna_praterstern.json")
     assert normalize_runtime_path("/") == "/"
     assert normalize_runtime_path("proc/baskets/basket_001") == "/proc/baskets/basket_001"
     assert split_ref_fragment("/archive/payments.csv#row=7") == (
@@ -185,6 +193,23 @@ def test_normalize_submission_refs_preserves_docs_archive_rows_and_canonical_rec
         "/archive/payments.csv#row=2",
         "/proc/baskets/basket_001.json",
     ]
+
+
+def test_availability_count_refs_from_catalog_result_uses_helper_canonical_refs() -> None:
+    assert availability_count_refs_from_catalog_result(
+        {
+            "store_ref": "/proc/stores/store_vienna_praterstern.json",
+            "refs_to_submit_for_availability_count": [
+                "/proc/catalog/Brand/FST-1.json",
+                "/proc/catalog/Brand/FST-1.json",
+                None,
+            ],
+        }
+    ) == [
+        "/proc/stores/store_vienna_praterstern.json",
+        "/proc/catalog/Brand/FST-1.json",
+    ]
+    assert availability_count_refs_from_catalog_result("not-json") == []
 
 
 def test_candidate_record_ids_handles_padding() -> None:
@@ -331,12 +356,51 @@ def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:
     assert submission_refs(
         CompletionStub(
             protected_record_denial=True,
+            outcome="OUTCOME_DENIED_SECURITY",
             grounding_doc_refs=["/docs/security.md"],
             grounding_row_refs=["/proc/baskets/basket_001.json"],
         ),
         vm,
         task_text="basket_001",
     ) == ["/docs/security.md"]
+
+
+def test_submission_refs_drops_customer_rows_for_cross_customer_denial() -> None:
+    vm = FakeVM(existing_paths={"/proc/baskets/basket_001.json"})
+    cmd = CompletionStub(
+        task_type="checkout",
+        message="I cannot use this basket because it belongs to another customer.",
+        grounding_doc_refs=["/docs/security.md"],
+        grounding_row_refs=["/proc/baskets/basket_001.json"],
+        outcome="OUTCOME_DENIED_SECURITY",
+    )
+
+    assert is_cross_customer_protected_record_denial(
+        cmd,
+        cmd.grounding_row_refs,
+    )
+    assert submission_refs(cmd, vm, task_text="basket_001") == ["/docs/security.md"]
+
+
+def test_submission_refs_keeps_rows_for_non_protected_policy_denial() -> None:
+    vm = FakeVM(existing_paths={"/proc/baskets/basket_001.json"})
+    cmd = CompletionStub(
+        task_type="discount",
+        message="Discount denied because the required manager approval is invalid.",
+        grounding_doc_refs=["/docs/security.md", "/docs/discounts.md"],
+        grounding_row_refs=["/proc/baskets/basket_001.json"],
+        outcome="OUTCOME_DENIED_SECURITY",
+    )
+
+    assert not is_cross_customer_protected_record_denial(
+        cmd,
+        cmd.grounding_row_refs,
+    )
+    assert submission_refs(cmd, vm) == [
+        "/docs/security.md",
+        "/docs/discounts.md",
+        "/proc/baskets/basket_001.json",
+    ]
 
 
 def test_submission_refs_auto_adds_safe_target_record_from_task_text() -> None:

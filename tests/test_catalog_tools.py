@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from catalog_tools import (
+    ParsedCatalogConstraint,
     ParsedCatalogItems,
     _availability_qualifies,
     _candidate_constraint_matches,
@@ -111,3 +112,26 @@ def test_candidate_constraint_matches_and_availability() -> None:
     assert not _availability_qualifies(2, threshold=3, predicate="at_least")
     assert _availability_qualifies(2, threshold=3, predicate="below")
     assert _availability_qualifies(2, threshold=None, predicate="below") is None
+
+
+def test_parsed_property_constraints_do_not_fallback_to_product_name() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="screw type wood screw",
+                label="screw type",
+                value="wood screw",
+            )
+        ],
+        [
+            {
+                "property_key": "screw_type",
+                "property_value_text": "drywall screw",
+                "property_value_number": "",
+            }
+        ],
+        "Heco Zinc Plated TopFix Wood and Drywall Screw",
+    )
+
+    assert matched == []
+    assert missing == ["screw type wood screw"]

@@ -42,6 +42,22 @@ MANAGER_STORE_VERIFICATION_RE = re.compile(
     r"\b(?:check|confirm|verify)\b[\s\S]{0,160}\b(?:manager|store\s+manager|manages?)\b",
     re.IGNORECASE,
 )
+CROSS_CUSTOMER_DENIAL_RE = re.compile(
+    r"\b(?:"
+    r"another customer|other customer|different customer|"
+    r"someone else's|someone else|not your|not yours|"
+    r"does not belong to you|doesn't belong to you|not belong to you|"
+    r"belongs? to (?:another|a different|other) customer|"
+    r"owned by (?:another|a different|other) customer|"
+    r"customer mismatch|cross[-\s]?customer"
+    r")\b",
+    re.IGNORECASE,
+)
+CUSTOMER_SCOPED_REF_RE = re.compile(
+    r"^/proc/(?:baskets|customers|payments|returns)/",
+    re.IGNORECASE,
+)
+CATALOG_REF_RE = re.compile(r"^/proc/catalog(?:/|$)", re.IGNORECASE)
 PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
     "baskets": ("shopping_baskets", "basket_id", re.compile(r"^basket_\d+$")),
     "customers": ("customer_accounts", "customer_id", re.compile(r"^cust_\d+$")),
@@ -111,6 +127,11 @@ def dedupe_refs(refs: list[str]) -> list[str]:
 
 def is_document_ref(ref: str) -> bool:
     return ref.endswith(".md")
+
+
+def is_catalog_ref(ref: str) -> bool:
+    path, _fragment = split_ref_fragment(ref)
+    return bool(CATALOG_REF_RE.match(normalize_runtime_path(path)))
 
 
 def normalize_runtime_path(path: str) -> str:
@@ -248,6 +269,22 @@ def normalize_submission_refs(
             normalized_refs.append(f"{canonical}{fragment}")
 
     return dedupe_refs(normalized_refs)
+
+
+def availability_count_refs_from_catalog_result(result: Any) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+
+    refs: list[str] = []
+    store_ref = result.get("store_ref")
+    if isinstance(store_ref, str) and store_ref:
+        refs.append(store_ref)
+
+    result_refs = result.get("refs_to_submit_for_availability_count")
+    if isinstance(result_refs, list):
+        refs.extend(ref for ref in result_refs if isinstance(ref, str) and ref)
+
+    return dedupe_refs(refs)
 
 
 def candidate_record_ids(prefix: str, numeric_text: str) -> list[str]:
@@ -458,6 +495,21 @@ def manager_store_refs_from_task(vm: RuntimeVM, task_text: str) -> list[str]:
     return dedupe_refs(refs)
 
 
+def is_cross_customer_protected_record_denial(
+    cmd: CompletionLike,
+    row_refs: Sequence[str],
+) -> bool:
+    if getattr(cmd, "outcome", "") != "OUTCOME_DENIED_SECURITY":
+        return False
+
+    normalized_refs = [normalize_runtime_path(split_ref_fragment(ref)[0]) for ref in row_refs]
+    if not any(CUSTOMER_SCOPED_REF_RE.match(ref) for ref in normalized_refs):
+        return False
+
+    message = getattr(cmd, "message", "")
+    return bool(CROSS_CUSTOMER_DENIAL_RE.search(message))
+
+
 def submission_refs(
     cmd: CompletionLike,
     vm: RuntimeVM | None = None,
@@ -471,7 +523,12 @@ def submission_refs(
     doc_refs = dedupe_refs([ref for ref in all_refs if is_document_ref(ref)])
     row_refs = dedupe_refs([ref for ref in all_refs if not is_document_ref(ref)])
 
-    if cmd.task_type == "count" or cmd.protected_record_denial:
+    protected_record_denial = (
+        cmd.protected_record_denial
+        or is_cross_customer_protected_record_denial(cmd, row_refs)
+    )
+
+    if cmd.task_type == "count" or protected_record_denial:
         refs = doc_refs
     else:
         user_id: str | None = None

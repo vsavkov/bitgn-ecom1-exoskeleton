@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from bitgn.vm.ecom.ecom_pb2 import NodeKind
 
 from agent import (
+    ReportTaskCompletion,
     ReqList,
     ReqExec,
     ReqRead,
@@ -17,6 +18,7 @@ from agent import (
     _format_tree_response,
     _format_tree_entry,
     _function_call_output,
+    _apply_availability_count_catalog_refs,
     _iter_tree_paths,
     _is_command_path,
     _is_truncated,
@@ -212,6 +214,34 @@ def test_function_call_and_output_text_helpers() -> None:
         "output": "done",
     }
     assert _output_text(response) == "hello"
+
+
+def test_apply_availability_count_catalog_refs_replaces_catalog_refs_only() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["counted qualifying products"],
+        task_type="availability_count",
+        message="1 products",
+        grounding_doc_refs=["/docs/catalogue.md"],
+        grounding_row_refs=[
+            "/proc/catalog/Brand/WRONG.json",
+            "/proc/stores/store_vienna_praterstern.json",
+        ],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_availability_count_catalog_refs(
+        cmd,
+        [
+            "/proc/stores/store_vienna_praterstern.json",
+            "/proc/catalog/Brand/RIGHT.json",
+        ],
+    )
+
+    assert updated.grounding_row_refs == [
+        "/proc/stores/store_vienna_praterstern.json",
+        "/proc/catalog/Brand/RIGHT.json",
+    ]
 
 
 def test_parse_tool_call() -> None:
