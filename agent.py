@@ -2,6 +2,7 @@ import json
 import shlex
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -886,41 +887,54 @@ def run_agent(
             f"call_auto_{synthetic_call_index}",
         )
 
-    must: list[BaseModel] = [
-        ReqRead(path="/AGENTS.MD"),
-        ReqTree(level=2, root="/", auto_followups=False),
-        ReqTree(level=3, root="/bin"),
-        ReqTree(level=3, root="/docs"),
-        ReqExec(path="/bin/date"),
-        ReqExec(path="/bin/id"),
-    ]
+    # Run the task classifier in a background thread so its helper LLM call
+    # overlaps with the synchronous must startup tools. The future is awaited
+    # only when the security/checkout preflights actually need the result, so
+    # the wall-clock latency from the classifier is hidden behind the gRPC
+    # round-trips that the must loop already pays for.
+    classifier_pool = ThreadPoolExecutor(max_workers=1)
+    try:
+        classification_future = classifier_pool.submit(
+            classify_task, formatter_client, task_text
+        )
 
-    for cmd in must:
-        result = dispatch(vm, cmd)
-        _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
-        formatted = _format_result(cmd, result)
-        if debug:
-            print(f"{CLI_GREEN}AUTO{CLI_CLR}: {formatted}")
-        append_synthetic_tool_result(cmd, formatted)
+        must: list[BaseModel] = [
+            ReqRead(path="/AGENTS.MD"),
+            ReqTree(level=2, root="/", auto_followups=False),
+            ReqTree(level=3, root="/bin"),
+            ReqTree(level=3, root="/docs"),
+            ReqExec(path="/bin/date"),
+            ReqExec(path="/bin/id"),
+        ]
 
-        if not isinstance(cmd, ReqTree):
-            continue
+        for cmd in must:
+            result = dispatch(vm, cmd)
+            _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
+            formatted = _format_result(cmd, result)
+            if debug:
+                print(f"{CLI_GREEN}AUTO{CLI_CLR}: {formatted}")
+            append_synthetic_tool_result(cmd, formatted)
 
-        for followup in _tree_followup_commands(
-            cmd, result, tree_help_paths, tree_read_paths
-        ):
-            try:
-                followup_result = dispatch(vm, followup)
-                _remember_seen_tool_use(followup, tree_help_paths, tree_read_paths)
-                followup_formatted = _format_result(followup, followup_result)
-                if debug:
-                    print(f"{CLI_GREEN}AUTO{CLI_CLR}: {followup_formatted}")
-                append_synthetic_tool_result(followup, followup_formatted)
-            except ConnectError as exc:
-                if debug:
-                    print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
+            if not isinstance(cmd, ReqTree):
+                continue
 
-    classification = classify_task(formatter_client, task_text)
+            for followup in _tree_followup_commands(
+                cmd, result, tree_help_paths, tree_read_paths
+            ):
+                try:
+                    followup_result = dispatch(vm, followup)
+                    _remember_seen_tool_use(followup, tree_help_paths, tree_read_paths)
+                    followup_formatted = _format_result(followup, followup_result)
+                    if debug:
+                        print(f"{CLI_GREEN}AUTO{CLI_CLR}: {followup_formatted}")
+                    append_synthetic_tool_result(followup, followup_formatted)
+                except ConnectError as exc:
+                    if debug:
+                        print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
+
+        classification = classification_future.result()
+    finally:
+        classifier_pool.shutdown(wait=False)
 
     def _finalize_preflight(cmd: ReportTaskCompletion) -> dict:
         dispatch(vm, cmd, task_text=task_text)
