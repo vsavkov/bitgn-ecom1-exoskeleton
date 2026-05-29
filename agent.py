@@ -1,11 +1,11 @@
 import json
-import os
 import shlex
 import time
-from pathlib import Path
 from typing import Annotated, List, Literal
 
+import openai
 from annotated_types import Ge, Le
+from answer_formatter import format_completion_message
 from bitgn.vm.ecom.ecom_connect import EcomRuntimeClientSync
 from bitgn.vm.ecom.ecom_pb2 import (
     AnswerRequest,
@@ -21,13 +21,24 @@ from bitgn.vm.ecom.ecom_pb2 import (
     TreeRequest,
     WriteRequest,
 )
+from config import (
+    CLI_BLUE,
+    CLI_CLR,
+    CLI_GREEN,
+    CLI_RED,
+    CLI_YELLOW,
+    env_flag,
+    openai_client_kwargs,
+    render_prompt,
+)
 from connectrpc.errors import ConnectError
 from google.protobuf.json_format import MessageToDict
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 from langsmith.wrappers import wrap_openai
-from openai import OpenAI, pydantic_function_tool
+from openai import OpenAI
+from openai.types.responses import FunctionToolParam
+from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field, ValidationError
 
 
@@ -103,38 +114,6 @@ class ReqExec(BaseModel):
     stdin: str = ""
 
 
-PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
-
-
-CLI_RED = "\x1B[31m"
-CLI_GREEN = "\x1B[32m"
-CLI_CLR = "\x1B[0m"
-CLI_BLUE = "\x1B[34m"
-CLI_YELLOW = "\x1B[33m"
-
-
-def _env_flag(name: str) -> bool:
-    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
-    raw_value = os.getenv(name)
-    if not raw_value:
-        return default
-
-    try:
-        value = int(raw_value)
-    except ValueError:
-        print(f"{CLI_RED}Ignoring invalid {name}={raw_value!r}; using {default}{CLI_CLR}")
-        return default
-
-    return max(minimum, value)
-
-
-OPENAI_TIMEOUT_SECONDS = _env_int("OPENAI_TIMEOUT_SECONDS", 40, minimum=1)
-OPENAI_MAX_RETRIES = _env_int("OPENAI_MAX_RETRIES", 1, minimum=0)
-
-
 OUTCOME_BY_NAME = {
     "OUTCOME_OK": Outcome.OUTCOME_OK,
     "OUTCOME_DENIED_SECURITY": Outcome.OUTCOME_DENIED_SECURITY,
@@ -159,32 +138,26 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
 TOOL_NAMES_BY_MODEL = {model: name for name, model in TOOL_MODELS.items()}
 
 
-def _render_system_prompt() -> str:
-    env = Environment(
-        loader=FileSystemLoader(PROMPT_DIR),
-        autoescape=False,
-        trim_blocks=True,
-        lstrip_blocks=True,
-        undefined=StrictUndefined,
-    )
-    return env.get_template("system.j2").render().strip()
-
-
-def _responses_function_tool(model: type[BaseModel], *, name: str, description: str) -> dict:
-    tool = pydantic_function_tool(model, name=name, description=description)
+def _responses_function_tool(
+    model: type[BaseModel],
+    *,
+    name: str,
+    description: str,
+) -> FunctionToolParam:
+    tool = openai.pydantic_function_tool(model, name=name, description=description)
     function = tool["function"]
-    return {
-        "type": "function",
-        "name": function["name"],
-        "description": function["description"],
-        "parameters": function["parameters"],
-        "strict": function["strict"],
-    }
+    return FunctionToolParam(
+        type="function",
+        name=function["name"],
+        description=description,
+        parameters=function["parameters"],
+        strict=function["strict"],
+    )
 
 
-system_prompt = _render_system_prompt()
+MAIN_PROMPT = render_prompt("main.j2")
 
-TOOLS = [
+TOOLS: list[FunctionToolParam] = [
     _responses_function_tool(
         ReqTree,
         name="tree",
@@ -617,11 +590,10 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
     langsmith_run_id = str(run_tree.id) if run_tree and run_tree.id else None
     langsmith_trace_id = str(run_tree.trace_id) if run_tree and run_tree.trace_id else langsmith_run_id
 
-    client = wrap_openai(
-        OpenAI(timeout=OPENAI_TIMEOUT_SECONDS, max_retries=OPENAI_MAX_RETRIES)
-    )
+    client = wrap_openai(OpenAI(**openai_client_kwargs()))
+    formatter_client = OpenAI(**openai_client_kwargs())
     vm = EcomRuntimeClientSync(harness_url)
-    debug = _env_flag("AGENT_DEBUG")
+    debug = env_flag("AGENT_DEBUG")
     context = []
     tree_help_paths: set[str] = set()
     tree_read_paths: set[str] = set()
@@ -656,12 +628,12 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
         started = time.time()
         resp = client.responses.create(
             model=model,
-            instructions=system_prompt,
+            instructions=MAIN_PROMPT,
             input=context,
             tools=TOOLS,
             tool_choice="required",
             parallel_tool_calls=True,
-            reasoning={"effort": "high"},
+            reasoning=Reasoning(effort="high"),
             max_output_tokens=16384,
         )
         elapsed_ms = int((time.time() - started) * 1000)
@@ -700,6 +672,18 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
                     print(f"{CLI_RED}ERR{CLI_CLR}: {txt}")
                 context.append(_function_call_output(tool_call, txt))
                 continue
+
+            if isinstance(cmd, ReportTaskCompletion):
+                formatted_message = format_completion_message(
+                    formatter_client,
+                    task_text=task_text,
+                    current_message=cmd.message,
+                    outcome=cmd.outcome,
+                    completed_steps_laconic=cmd.completed_steps_laconic,
+                    grounding_refs=cmd.grounding_refs,
+                    debug=debug,
+                )
+                cmd = cmd.model_copy(update={"message": formatted_message})
 
             try:
                 result = dispatch(vm, cmd)

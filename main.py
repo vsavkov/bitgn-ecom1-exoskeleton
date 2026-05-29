@@ -23,7 +23,16 @@ from connectrpc.errors import ConnectError
 from langsmith import Client as LangSmithClient
 
 from agent import run_agent
-from config import load_dotenv
+from config import (
+    CLI_BLUE,
+    CLI_CLR,
+    CLI_GREEN,
+    CLI_RED,
+    PROJECT_ROOT,
+    env_flag,
+    env_int,
+    load_dotenv,
+)
 
 
 load_dotenv()
@@ -37,18 +46,6 @@ BITGN_API_KEY = os.getenv("BITGN_API_KEY") or ""
 BENCH_ID = os.getenv("BENCH_ID") or os.getenv("BENCHMARK_ID") or "bitgn/ecom1-dev"
 MODEL_ID = os.getenv("MODEL_ID") or "gpt-4.1-2025-04-14"
 
-CLI_RED = "\x1B[31m"
-CLI_GREEN = "\x1B[32m"
-CLI_CLR = "\x1B[0m"
-CLI_BLUE = "\x1B[34m"
-
-
-def _env_flag(name: str) -> bool:
-    return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-AGENT_DEBUG = _env_flag("AGENT_DEBUG")
-PROJECT_ROOT = Path(__file__).resolve().parent
 RUNS_DIR = PROJECT_ROOT / "runs"
 DEFAULT_TRIAL_BATCH_SIZE = 10
 PRINT_LOCK = threading.Lock()
@@ -58,27 +55,13 @@ def _color(text: str, color: str) -> str:
     return f"{color}{text}{CLI_CLR}"
 
 
-def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
-    raw_value = os.getenv(name)
-    if not raw_value:
-        return default
-
-    try:
-        value = int(raw_value)
-    except ValueError:
-        print(f"{CLI_RED}Ignoring invalid {name}={raw_value!r}; using {default}{CLI_CLR}")
-        return default
-
-    return max(minimum, value)
-
-
 def _print_locked(message: str) -> None:
     with PRINT_LOCK:
         print(message)
 
 
 def _flush_langsmith() -> None:
-    if not _env_flag("LANGSMITH_TRACING"):
+    if not env_flag("LANGSMITH_TRACING"):
         return
     if not os.getenv("LANGSMITH_API_KEY"):
         return
@@ -202,7 +185,7 @@ def main() -> None:
     task_filter = os.sys.argv[1:]
     task_filter_set = set(task_filter)
     full_run = not task_filter
-    trial_batch_size = _env_int("TRIAL_BATCH_SIZE", DEFAULT_TRIAL_BATCH_SIZE)
+    trial_batch_size = env_int("TRIAL_BATCH_SIZE", DEFAULT_TRIAL_BATCH_SIZE, minimum=1)
     trial_outputs: dict[str, dict] = {}
 
     try:
