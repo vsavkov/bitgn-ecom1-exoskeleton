@@ -46,6 +46,7 @@ from config import (
     render_prompt,
 )
 from connectrpc.errors import ConnectError
+from evidence_ledger import EvidenceLedger
 from google.protobuf.json_format import MessageToDict
 from langsmith.run_helpers import get_current_run_tree
 from langsmith.wrappers import wrap_openai
@@ -840,11 +841,7 @@ def run_agent(
     tree_help_paths: set[str] = set()
     tree_read_paths: set[str] = set()
     formatter_output_lines: list[str] = []
-    availability_count_catalog_refs: list[str] = []
-    support_note_catalog_refs: list[str] = []
-    verified_manager_refs: list[str] = []
-    archive_fraud_total_message = ""
-    archive_fraud_refs: list[str] = []
+    ledger = EvidenceLedger()
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
@@ -988,20 +985,7 @@ def run_agent(
                 continue
 
             if isinstance(cmd, ReportTaskCompletion):
-                cmd = _apply_availability_count_catalog_refs(
-                    cmd,
-                    availability_count_catalog_refs,
-                )
-                cmd = _apply_support_note_catalog_refs(
-                    cmd,
-                    support_note_catalog_refs,
-                )
-                cmd = _apply_verified_manager_refs(cmd, verified_manager_refs)
-                cmd = _apply_archive_fraud_result(
-                    cmd,
-                    total_message=archive_fraud_total_message,
-                    refs_to_submit=archive_fraud_refs,
-                )
+                cmd = ledger.apply_to_completion(cmd)
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,
@@ -1032,33 +1016,32 @@ def run_agent(
             context.append(_function_call_output(tool_call, txt))
 
             if isinstance(cmd, ReqResolveCatalogItems):
-                canonical_refs = availability_count_refs_from_catalog_result(result)
-                if canonical_refs:
-                    availability_count_catalog_refs = canonical_refs
-                checked_refs = support_note_refs_from_catalog_result(result)
-                if checked_refs:
-                    support_note_catalog_refs = checked_refs
+                ledger.merge_availability_count(
+                    availability_count_refs_from_catalog_result(result)
+                )
+                ledger.merge_support_note(
+                    support_note_refs_from_catalog_result(result)
+                )
             if isinstance(cmd, ReqAnalyzeArchiveFraudExport) and isinstance(result, dict):
                 total_message = result.get("total_message")
-                if isinstance(total_message, str):
-                    archive_fraud_total_message = total_message
                 refs_to_submit = result.get("refs_to_submit")
-                if isinstance(refs_to_submit, list):
-                    archive_fraud_refs = dedupe_refs(
-                        [
-                            *archive_fraud_refs,
-                            *(ref for ref in refs_to_submit if isinstance(ref, str)),
-                        ]
-                    )
+                ledger.merge_archive_fraud(
+                    refs=[
+                        ref
+                        for ref in (refs_to_submit if isinstance(refs_to_submit, list) else [])
+                        if isinstance(ref, str)
+                    ],
+                    total_message=total_message if isinstance(total_message, str) else "",
+                )
             if isinstance(cmd, ReqVerifyStoreManager) and isinstance(result, dict):
                 refs_to_submit = result.get("refs_to_submit")
-                if isinstance(refs_to_submit, list):
-                    verified_manager_refs = dedupe_refs(
-                        [
-                            *verified_manager_refs,
-                            *(ref for ref in refs_to_submit if isinstance(ref, str)),
-                        ]
-                    )
+                ledger.merge_manager_verified(
+                    [
+                        ref
+                        for ref in (refs_to_submit if isinstance(refs_to_submit, list) else [])
+                        if isinstance(ref, str)
+                    ]
+                )
 
             if isinstance(cmd, ReportTaskCompletion):
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
