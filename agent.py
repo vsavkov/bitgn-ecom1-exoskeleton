@@ -117,6 +117,24 @@ def _env_flag(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int, *, minimum: int = 0) -> int:
+    raw_value = os.getenv(name)
+    if not raw_value:
+        return default
+
+    try:
+        value = int(raw_value)
+    except ValueError:
+        print(f"{CLI_RED}Ignoring invalid {name}={raw_value!r}; using {default}{CLI_CLR}")
+        return default
+
+    return max(minimum, value)
+
+
+OPENAI_TIMEOUT_SECONDS = _env_int("OPENAI_TIMEOUT_SECONDS", 40, minimum=1)
+OPENAI_MAX_RETRIES = _env_int("OPENAI_MAX_RETRIES", 1, minimum=0)
+
+
 OUTCOME_BY_NAME = {
     "OUTCOME_OK": Outcome.OUTCOME_OK,
     "OUTCOME_DENIED_SECURITY": Outcome.OUTCOME_DENIED_SECURITY,
@@ -599,7 +617,9 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
     langsmith_run_id = str(run_tree.id) if run_tree and run_tree.id else None
     langsmith_trace_id = str(run_tree.trace_id) if run_tree and run_tree.trace_id else langsmith_run_id
 
-    client = wrap_openai(OpenAI())
+    client = wrap_openai(
+        OpenAI(timeout=OPENAI_TIMEOUT_SECONDS, max_retries=OPENAI_MAX_RETRIES)
+    )
     vm = EcomRuntimeClientSync(harness_url)
     debug = _env_flag("AGENT_DEBUG")
     context = []
