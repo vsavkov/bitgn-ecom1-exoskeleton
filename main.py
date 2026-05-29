@@ -1,5 +1,6 @@
 import json
 import os
+import sys
 import threading
 import textwrap
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -182,7 +183,7 @@ def _run_trial(trial_id: str, task_filter: set[str]) -> tuple[str, dict]:
 
 def main() -> None:
     started_at = datetime.now().astimezone()
-    task_filter = os.sys.argv[1:]
+    task_filter = sys.argv[1:]
     task_filter_set = set(task_filter)
     full_run = not task_filter
     trial_batch_size = env_int("TRIAL_BATCH_SIZE", DEFAULT_TRIAL_BATCH_SIZE, minimum=1)

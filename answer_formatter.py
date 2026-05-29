@@ -1,7 +1,7 @@
 import json
-from typing import Sequence
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, ParamSpec, Sequence, TypeVar
 
-from langsmith import traceable
 from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field
 
@@ -13,6 +13,19 @@ from config import (
     answer_formatter_reasoning_effort,
     render_prompt,
 )
+
+if TYPE_CHECKING:
+    P = ParamSpec("P")
+    R = TypeVar("R")
+
+    def traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[P, R]], Callable[P, R]]:
+        def decorator(func: Callable[P, R]) -> Callable[P, R]:
+            return func
+
+        return decorator
+
+else:
+    from langsmith import traceable
 
 
 class FormattedAnswer(BaseModel):

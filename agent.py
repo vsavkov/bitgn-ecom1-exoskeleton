@@ -1,7 +1,8 @@
 import json
 import shlex
 import time
-from typing import Annotated, List, Literal
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Annotated, Any, List, Literal, ParamSpec, TypeVar, cast
 
 import openai
 from annotated_types import Ge, Le
@@ -33,13 +34,29 @@ from config import (
 )
 from connectrpc.errors import ConnectError
 from google.protobuf.json_format import MessageToDict
-from langsmith import traceable
 from langsmith.run_helpers import get_current_run_tree
 from langsmith.wrappers import wrap_openai
 from openai import OpenAI
-from openai.types.responses import FunctionToolParam
+from openai.types.responses import (
+    FunctionToolParam,
+    ResponseFunctionToolCall,
+    ResponseInputParam,
+)
 from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field, ValidationError
+
+if TYPE_CHECKING:
+    P = ParamSpec("P")
+    R = TypeVar("R")
+
+    def traceable(*args: Any, **kwargs: Any) -> Callable[[Callable[P, R]], Callable[P, R]]:
+        def decorator(func: Callable[P, R]) -> Callable[P, R]:
+            return func
+
+        return decorator
+
+else:
+    from langsmith import traceable
 
 
 class ReportTaskCompletion(BaseModel):
@@ -435,8 +452,8 @@ def _tree_followup_commands(
     seen_help: set[str],
     seen_read: set[str],
 ) -> list[BaseModel]:
-    help_commands = []
-    read_commands = []
+    help_commands: list[BaseModel] = []
+    read_commands: list[BaseModel] = []
 
     for path, entry in _iter_tree_paths(cmd.root, result.root):
         if getattr(entry, "kind", None) != NodeKind.NODE_KIND_FILE:
@@ -594,7 +611,7 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
     formatter_client = OpenAI(**openai_client_kwargs())
     vm = EcomRuntimeClientSync(harness_url)
     debug = env_flag("AGENT_DEBUG")
-    context = []
+    context: list[Any] = []
     tree_help_paths: set[str] = set()
     tree_read_paths: set[str] = set()
     final_result: dict = {
@@ -603,7 +620,7 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
         "langsmith_trace_id": langsmith_trace_id,
     }
 
-    must = [
+    must: list[BaseModel] = [
         ReqTree(level=2, root="/"),
         ReqTree(level=3, root="/bin"),
         ReqTree(level=3, root="/docs"),
@@ -629,7 +646,7 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
         resp = client.responses.create(
             model=model,
             instructions=MAIN_PROMPT,
-            input=context,
+            input=cast(ResponseInputParam, context),
             tools=TOOLS,
             tool_choice="required",
             parallel_tool_calls=True,
@@ -638,7 +655,9 @@ def run_agent(model: str, harness_url: str, task_text: str) -> dict:
         )
         elapsed_ms = int((time.time() - started) * 1000)
         tool_calls = [
-            item for item in resp.output or [] if getattr(item, "type", None) == "function_call"
+            cast(ResponseFunctionToolCall, item)
+            for item in resp.output or []
+            if getattr(item, "type", None) == "function_call"
         ]
 
         if not tool_calls:

@@ -18,6 +18,18 @@ dependencies = [
 [[tool.uv.index]]
 url = "https://buf.build/gen/python"
 
+[dependency-groups]
+dev = [
+    "ruff>=0.15.15",
+    "ty>=0.0.40",
+]
+
+[tool.ruff]
+exclude = ["agent_original.py"]
+
+[tool.ty.src]
+exclude = ["agent_original.py"]
+
 [tool.uv]
 # AICODE-NOTE: `harness_core/scripts/sdk-python.sh` rewrites the Buf SDK pins
 # in this file after `buf push`; keep this project flat so the sample stays

@@ -119,7 +119,11 @@ def _load_runs(runs_dir: Path) -> list[RunRecord]:
 
 
 def _interpolate(start: tuple[int, int, int], end: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
-    return tuple(round(a + (b - a) * ratio) for a, b in zip(start, end))
+    return (
+        round(start[0] + (end[0] - start[0]) * ratio),
+        round(start[1] + (end[1] - start[1]) * ratio),
+        round(start[2] + (end[2] - start[2]) * ratio),
+    )
 
 
 def _score_color(score: float | None) -> tuple[str, str]:

@@ -21,6 +21,9 @@
 - Install or update the local environment: `make sync`
 - Run the full benchmark via Make: `make run`
 - Run selected tasks via Make: `make task TASKS="t01 t04"`
+- Check linting and typing after any code changes: `make check`
+
+После любых изменений в Python-коде или конфигурации проекта прогоняй `make check`.
 
 ## Commits
 

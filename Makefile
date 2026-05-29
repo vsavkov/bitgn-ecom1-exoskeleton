@@ -1,7 +1,7 @@
 # AICODE-NOTE: Keep these wrappers aligned with the README commands so the sample
 # stays trivial to run from a fresh checkout without inventing parallel workflows.
 
-.PHONY: sync run task dump runs-html
+.PHONY: sync run task dump runs-html check
 
 sync:
 	uv sync
@@ -15,3 +15,7 @@ task:
 
 runs-html:
 	uv run python scripts/generate_runs_report.py
+
+check:
+	uv run ruff check .
+	uv run ty check .
