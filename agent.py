@@ -17,6 +17,7 @@ from typing import (
 import openai
 from annotated_types import Ge, Le
 from archive_fraud import ReqAnalyzeArchiveFraudExport, analyze_archive_fraud_export
+from payment_fraud import ReqAnalyzePaymentFraudHistory, analyze_payment_fraud_history
 from answer_formatter import format_completion_message
 from bitgn.vm.ecom.ecom_connect import EcomRuntimeClientSync
 from bitgn.vm.ecom.ecom_pb2 import (
@@ -224,6 +225,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "stat": ReqStat,
     "exec": ReqExec,
     "analyze_archive_fraud_export": ReqAnalyzeArchiveFraudExport,
+    "analyze_payment_fraud_history": ReqAnalyzePaymentFraudHistory,
     "resolve_catalog_items": ReqResolveCatalogItems,
     "verify_store_manager": ReqVerifyStoreManager,
     "report_completion": ReportTaskCompletion,
@@ -317,6 +319,20 @@ TOOLS: list[FunctionToolParam] = [
             "rows. Use this for archive payment fraud-review tasks and total "
             "fraud amount questions. Returns total_message formatted as EUR "
             "%d.%02d plus refs_to_submit in the required row-ref format."
+        ),
+    ),
+    _responses_function_tool(
+        ReqAnalyzePaymentFraudHistory,
+        name="analyze_payment_fraud_history",
+        description=(
+            "Detect fraud incidents inside the live /proc/payments transaction "
+            "history. Use this for any fraud-review task that asks about "
+            "current or archived payment records inside /proc/payments (not "
+            "/archive/*.tsv exports). Returns total_message (EUR %d.%02d), "
+            "fraud_payment_ids, and refs_to_submit (/proc/payments/<id>.json) "
+            "based on velocity rules over customer_id, payment_method "
+            "fingerprint, and device fingerprint across distant store cities. "
+            "Do not run ad-hoc SQL fraud heuristics; rely on this helper."
         ),
     ),
     _responses_function_tool(
@@ -662,6 +678,8 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
         return vm.exec(ExecRequest(path=cmd.path, args=cmd.args, stdin=cmd.stdin))
     if isinstance(cmd, ReqAnalyzeArchiveFraudExport):
         return analyze_archive_fraud_export(vm, cmd)
+    if isinstance(cmd, ReqAnalyzePaymentFraudHistory):
+        return analyze_payment_fraud_history(vm, cmd)
     if isinstance(cmd, ReqResolveCatalogItems):
         return resolve_catalog_items(vm, cmd)
     if isinstance(cmd, ReqVerifyStoreManager):
@@ -1105,10 +1123,12 @@ def run_agent(
                 ledger.merge_support_note(
                     support_note_refs_from_catalog_result(result)
                 )
-            if isinstance(cmd, ReqAnalyzeArchiveFraudExport) and isinstance(result, dict):
+            if isinstance(
+                cmd, (ReqAnalyzeArchiveFraudExport, ReqAnalyzePaymentFraudHistory)
+            ) and isinstance(result, dict):
                 total_message = result.get("total_message")
                 refs_to_submit = result.get("refs_to_submit")
-                ledger.merge_archive_fraud(
+                ledger.merge_fraud_result(
                     refs=[
                         ref
                         for ref in (refs_to_submit if isinstance(refs_to_submit, list) else [])

@@ -86,36 +86,36 @@ def test_support_note_and_manager_merges_dedupe() -> None:
     ]
 
 
-def test_archive_fraud_refs_accumulate_total_overwrites() -> None:
+def test_fraud_refs_accumulate_total_overwrites() -> None:
     ledger = EvidenceLedger()
-    ledger.merge_archive_fraud(
+    ledger.merge_fraud_result(
         refs=["/archive/payments.tsv#row=R1"],
         total_message="EUR 10.00",
     )
-    ledger.merge_archive_fraud(
+    ledger.merge_fraud_result(
         refs=["/archive/payments.tsv#row=R2", "/archive/payments.tsv#row=R1"],
         total_message="EUR 25.00",
     )
 
-    assert ledger.archive_fraud_refs == [
+    assert ledger.fraud_refs == [
         "/archive/payments.tsv#row=R1",
         "/archive/payments.tsv#row=R2",
     ]
-    assert ledger.archive_fraud_total_message == "EUR 25.00"
+    assert ledger.fraud_total_message == "EUR 25.00"
 
 
 def test_empty_calls_do_not_clobber_existing_state() -> None:
     ledger = EvidenceLedger()
     ledger.merge_availability_count(["/proc/catalog/Brand/A.json"])
     ledger.merge_availability_count([])
-    ledger.merge_archive_fraud(
+    ledger.merge_fraud_result(
         refs=["/archive/payments.tsv#row=R1"], total_message="EUR 5.00"
     )
-    ledger.merge_archive_fraud(refs=[], total_message="")
+    ledger.merge_fraud_result(refs=[], total_message="")
 
     assert ledger.availability_count_refs == ["/proc/catalog/Brand/A.json"]
-    assert ledger.archive_fraud_refs == ["/archive/payments.tsv#row=R1"]
-    assert ledger.archive_fraud_total_message == "EUR 5.00"
+    assert ledger.fraud_refs == ["/archive/payments.tsv#row=R1"]
+    assert ledger.fraud_total_message == "EUR 5.00"
 
 
 def test_apply_to_completion_runs_all_postprocessors_in_order() -> None:
@@ -158,11 +158,11 @@ def test_apply_to_completion_uses_accumulated_archive_fraud_total() -> None:
     )
 
     ledger = EvidenceLedger()
-    ledger.merge_archive_fraud(
+    ledger.merge_fraud_result(
         refs=["/archive/payments.tsv#row=R1"],
         total_message="EUR 12.34",
     )
-    ledger.merge_archive_fraud(
+    ledger.merge_fraud_result(
         refs=["/archive/payments.tsv#row=R2"],
         total_message="EUR 50.00",
     )

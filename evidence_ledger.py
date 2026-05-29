@@ -17,8 +17,8 @@ class EvidenceLedger:
     availability_count_refs: list[str] = field(default_factory=list)
     support_note_refs: list[str] = field(default_factory=list)
     manager_verified_refs: list[str] = field(default_factory=list)
-    archive_fraud_refs: list[str] = field(default_factory=list)
-    archive_fraud_total_message: str = ""
+    fraud_refs: list[str] = field(default_factory=list)
+    fraud_total_message: str = ""
 
     def merge_availability_count(self, refs: list[str]) -> None:
         if refs:
@@ -36,16 +36,19 @@ class EvidenceLedger:
                 [*self.manager_verified_refs, *refs]
             )
 
-    def merge_archive_fraud(
+    def merge_fraud_result(
         self,
         *,
         refs: list[str],
         total_message: str,
     ) -> None:
+        # Both analyze_archive_fraud_export and analyze_payment_fraud_history
+        # return the same {refs_to_submit, total_message} shape and a single
+        # trial only ever asks one of them, so a shared bucket is enough.
         if refs:
-            self.archive_fraud_refs = dedupe_refs([*self.archive_fraud_refs, *refs])
+            self.fraud_refs = dedupe_refs([*self.fraud_refs, *refs])
         if total_message:
-            self.archive_fraud_total_message = total_message
+            self.fraud_total_message = total_message
 
     def apply_to_completion(
         self,
@@ -63,7 +66,7 @@ class EvidenceLedger:
         cmd = _apply_verified_manager_refs(cmd, self.manager_verified_refs)
         cmd = _apply_archive_fraud_result(
             cmd,
-            total_message=self.archive_fraud_total_message,
-            refs_to_submit=self.archive_fraud_refs,
+            total_message=self.fraud_total_message,
+            refs_to_submit=self.fraud_refs,
         )
         return cmd
