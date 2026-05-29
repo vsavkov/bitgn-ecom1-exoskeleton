@@ -9,3 +9,6 @@ Result:
 * The `report_completion.message` field is the exact final answer shown to the user and graded by the benchmark.
 * If the task asks for an exact output format, `message` must contain only that exact format and no extra prose, explanation, markdown, or yes/no marker.
 * Use `<YES>` or `<NO>` only for yes/no questions when the task does not request another exact output format.
+* In `report_completion`, set `task_type` and split references into `grounding_doc_refs` for policy/update/addenda documents and `grounding_row_refs` for concrete records or uploads. Do not list exploratory paths or ruled-out candidates unless the task explicitly asks to compare or cite them.
+* For aggregate catalogue/reporting count tasks, use `task_type=count`, cite the reporting/update documents, and do not enumerate every counted product record.
+* For security denials, use `task_type=security`, cite the security policy, and do not cite records the current identity is not allowed to access.

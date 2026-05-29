@@ -60,8 +60,34 @@ else:
     from langsmith import traceable
 
 
+TaskType = Literal[
+    "count",
+    "availability_count",
+    "availability_lookup",
+    "catalog_lookup",
+    "receipt_price_check",
+    "checkout",
+    "discount",
+    "payment_recovery",
+    "refund",
+    "fraud_review",
+    "security",
+    "other",
+]
+
+
 class ReportTaskCompletion(BaseModel):
     completed_steps_laconic: List[str]
+    task_type: TaskType = Field(
+        default="other",
+        description=(
+            "Classify the task. Use count for aggregate catalogue/reporting "
+            "count answers where individual rows are not the answer. Use "
+            "availability_count for inventory-threshold counts over products "
+            "or stores. Use security for identity, authorization, prompt "
+            "override, or cross-customer denials."
+        ),
+    )
     message: str = Field(
         description=(
             "Exact final user-visible answer. If the task asks for an exact "
@@ -70,7 +96,24 @@ class ReportTaskCompletion(BaseModel):
             "format was requested."
         )
     )
-    grounding_refs: List[str] = Field(default_factory=list)
+    grounding_doc_refs: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Authoritative document paths used for the final answer or "
+            "decision, such as policy docs, dated updates, addenda, and "
+            "incident workarounds."
+        ),
+    )
+    grounding_row_refs: List[str] = Field(
+        default_factory=list,
+        description=(
+            "Concrete runtime record or upload paths used in the final answer "
+            "or action. Do not include exploratory candidates that were ruled "
+            "out unless the task explicitly asks to compare or cite them. For "
+            "availability_count, include only rows that match the final reported "
+            "condition, plus explicitly required store/product/upload records."
+        ),
+    )
     outcome: Literal[
         "OUTCOME_OK",
         "OUTCOME_DENIED_SECURITY",
@@ -236,7 +279,8 @@ TOOLS: list[FunctionToolParam] = [
         description=(
             "Submit the final task answer to the ECOM runtime. The message is "
             "the exact final answer that will be graded; keep explanations in "
-            "completed_steps_laconic and references in grounding_refs."
+            "completed_steps_laconic and split references between "
+            "grounding_doc_refs and grounding_row_refs."
         ),
     ),
 ]
@@ -548,7 +592,7 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
             AnswerRequest(
                 message=cmd.message,
                 outcome=OUTCOME_BY_NAME[cmd.outcome],
-                refs=cmd.grounding_refs,
+                refs=_submission_refs(cmd),
             )
         )
     raise ValueError(f"Unknown command: {cmd}")
@@ -586,15 +630,43 @@ def _output_text(resp) -> str:
     return "\n".join(chunks)
 
 
+def _dedupe_refs(refs: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for ref in refs:
+        ref = ref.strip()
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        result.append(ref)
+    return result
+
+
+def _is_document_ref(ref: str) -> bool:
+    return ref.endswith(".md")
+
+
+def _submission_refs(cmd: ReportTaskCompletion) -> list[str]:
+    all_refs = [
+        *cmd.grounding_doc_refs,
+        *cmd.grounding_row_refs,
+    ]
+    doc_refs = _dedupe_refs([ref for ref in all_refs if _is_document_ref(ref)])
+    row_refs = _dedupe_refs([ref for ref in all_refs if not _is_document_ref(ref)])
+
+    if cmd.task_type == "count" or cmd.outcome == "OUTCOME_DENIED_SECURITY":
+        return doc_refs
+    return _dedupe_refs([*doc_refs, *row_refs])
+
+
 def _format_completion(cmd: ReportTaskCompletion) -> str:
     status = CLI_GREEN if cmd.outcome == "OUTCOME_OK" else CLI_YELLOW
     lines: list[str] = [f"{status}agent {cmd.outcome}{CLI_CLR}. Summary:"]
     for item in cmd.completed_steps_laconic:
         lines.append(f"- {item}")
     lines.append(f"\n{CLI_BLUE}AGENT SUMMARY: {cmd.message}{CLI_CLR}")
-    if cmd.grounding_refs:
-        for ref in cmd.grounding_refs:
-            lines.append(f"- {CLI_BLUE}{ref}{CLI_CLR}")
+    for ref in _submission_refs(cmd):
+        lines.append(f"- {CLI_BLUE}{ref}{CLI_CLR}")
     return "\n".join(lines)
 
 
@@ -714,7 +786,7 @@ def run_agent(
                     current_message=cmd.message,
                     outcome=cmd.outcome,
                     completed_steps_laconic=cmd.completed_steps_laconic,
-                    grounding_refs=cmd.grounding_refs,
+                    grounding_refs=_submission_refs(cmd),
                     debug=debug,
                     output_lines=None if print_completion else formatter_output_lines,
                 )
@@ -743,8 +815,9 @@ def run_agent(
                     "formatter_output": formatter_output_lines,
                     "completion_output": _format_completion(cmd),
                     "outcome": cmd.outcome,
+                    "task_type": cmd.task_type,
                     "message": cmd.message,
-                    "grounding_refs": cmd.grounding_refs,
+                    "grounding_refs": _submission_refs(cmd),
                     "completed_steps_laconic": cmd.completed_steps_laconic,
                 }
                 if print_completion:
@@ -761,7 +834,6 @@ def run_agent(
                 f"Reached the agent step budget of {max_steps} without a final completion.",
             ],
             message=f"Could not complete within the agent step budget of {max_steps}.",
-            grounding_refs=[],
             outcome="OUTCOME_ERR_INTERNAL",
         )
         try:
@@ -774,8 +846,9 @@ def run_agent(
                 "formatter_output": formatter_output_lines,
                 "completion_output": _format_completion(fallback_cmd),
                 "outcome": fallback_cmd.outcome,
+                "task_type": fallback_cmd.task_type,
                 "message": fallback_cmd.message,
-                "grounding_refs": fallback_cmd.grounding_refs,
+                "grounding_refs": _submission_refs(fallback_cmd),
                 "completed_steps_laconic": fallback_cmd.completed_steps_laconic,
             }
             if print_completion:

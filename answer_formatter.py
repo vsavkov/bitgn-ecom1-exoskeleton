@@ -1,4 +1,5 @@
 import json
+import re
 from collections.abc import Callable, MutableSequence
 from typing import TYPE_CHECKING, Any, ParamSpec, Sequence, TypeVar
 
@@ -44,6 +45,24 @@ class FormattedAnswer(BaseModel):
 ANSWER_FORMATTER_PROMPT = render_prompt("answer_formatter.j2")
 
 
+def _emit(message: str, output_lines: MutableSequence[str] | None) -> None:
+    if output_lines is None:
+        print(message)
+        return
+    output_lines.append(message)
+
+
+def _leading_yes_no_token_message(message: str) -> str | None:
+    stripped = message.strip()
+    if re.match(r"^yes\s+", stripped, flags=re.IGNORECASE):
+        return re.sub(
+            r"^yes\s+", "<YES> ", stripped, count=1, flags=re.IGNORECASE
+        ).strip()
+    if re.match(r"^no\s+", stripped, flags=re.IGNORECASE):
+        return re.sub(r"^no\s+", "<NO> ", stripped, count=1, flags=re.IGNORECASE).strip()
+    return None
+
+
 def _parsed_response(resp) -> FormattedAnswer | None:
     output_parsed = getattr(resp, "output_parsed", None)
     if isinstance(output_parsed, FormattedAnswer):
@@ -75,6 +94,15 @@ def format_completion_message(
     debug: bool,
     output_lines: MutableSequence[str] | None = None,
 ) -> str:
+    formatted_message = _leading_yes_no_token_message(current_message)
+    if formatted_message is not None:
+        if formatted_message != current_message:
+            _emit(
+                f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}",
+                output_lines,
+            )
+        return formatted_message
+
     payload = {
         "task_text": task_text,
         "current_message": current_message,
@@ -113,16 +141,13 @@ def format_completion_message(
             print(f"{CLI_RED}ERR formatter: empty formatted message{CLI_CLR}")
         return current_message
 
-    def emit(message: str) -> None:
-        if output_lines is None:
-            print(message)
-            return
-        output_lines.append(message)
-
     if parsed.missed_elements:
-        emit(f"{CLI_YELLOW}FORMAT MISSED{CLI_CLR}: {parsed.missed_elements}")
+        _emit(f"{CLI_YELLOW}FORMAT MISSED{CLI_CLR}: {parsed.missed_elements}", output_lines)
 
     if formatted_message != current_message:
-        emit(f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}")
+        _emit(
+            f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}",
+            output_lines,
+        )
 
     return formatted_message
