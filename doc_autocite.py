@@ -36,7 +36,7 @@ DOC_INTENT_PATTERNS: tuple[tuple[str, frozenset[str]], ...] = (
         ),
     ),
     ("discount", frozenset({"discount"})),
-    ("checkout", frozenset({"checkout"})),
+    ("checkout", frozenset({"checkout", "discount"})),
     ("3ds", frozenset({"payment_recovery"})),
     ("payments", frozenset({"payment_recovery", "refund", "fraud_review"})),
     ("returns", frozenset({"refund"})),

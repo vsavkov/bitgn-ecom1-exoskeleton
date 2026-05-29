@@ -4,6 +4,9 @@ from catalog_tools import (
     CatalogLookupItem,
     ParsedCatalogConstraint,
     ParsedCatalogItems,
+    ReqResolveCityAvailability,
+    _extract_city_availability_request,
+    _format_count_message,
     _availability_qualifies,
     _candidate_constraint_matches,
     _constraint_matches_product_name,
@@ -11,11 +14,13 @@ from catalog_tools import (
     _number_from_text,
     _parsed_response,
     _product_family_lookup_terms,
+    _property_rows_from_json,
     _property_label_candidates,
     _property_matches_constraint,
     _refs_to_submit_for_availability_count,
     _split_support_note_constraints,
     _variant_tail_text,
+    resolve_city_availability,
 )
 
 
@@ -74,6 +79,7 @@ def test_catalog_text_normalization_and_numbers() -> None:
     assert _norm_words("2500ml 38cm 36V 3XL 10W-40") == (
         "2500 ml 38 cm 36 v 3 xl 10 w 40"
     )
+    assert _norm_words("2 pcs 3pc pieces") == "2 pc 3 pc pc"
     assert _property_label_candidates("disc_diameter_mm") == [
         "disc diameter mm",
         "disc diameter",
@@ -92,6 +98,22 @@ def test_catalog_text_normalization_and_numbers() -> None:
     ]
     assert _number_from_text("about 12,5 mm") == 12.5
     assert _number_from_text("none") is None
+
+
+def test_property_rows_from_json_adds_variant_properties() -> None:
+    assert _property_rows_from_json('{"rated_voltage_v": 400, "pack_count": "2pc"}') == [
+        {
+            "property_key": "rated_voltage_v",
+            "property_value_text": "",
+            "property_value_number": "400",
+        },
+        {
+            "property_key": "pack_count",
+            "property_value_text": "2pc",
+            "property_value_number": "",
+        },
+    ]
+    assert _property_rows_from_json("not json") == []
 
 
 def test_catalog_constraint_matching() -> None:
@@ -144,6 +166,29 @@ def test_candidate_constraint_matches_and_availability() -> None:
     assert not _availability_qualifies(2, threshold=3, predicate="at_least")
     assert _availability_qualifies(2, threshold=3, predicate="below")
     assert _availability_qualifies(2, threshold=None, predicate="below") is None
+
+
+def test_candidate_constraints_use_variant_json_properties_and_unit_aliases() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="cleaning type microfiber cloth",
+                label="cleaning type",
+                value="microfiber cloth",
+            ),
+            ParsedCatalogConstraint(
+                text="pack count 2 pcs",
+                label="pack count",
+                value="2 pcs",
+            ),
+        ],
+        _property_rows_from_json('{"cleaning_type": "microfiber cloth"}'),
+        "Leifheit Fresh Profi Cloth Mop and Wipe microfiber cloth 2pc multi surface",
+        product_family_name="Leifheit Fresh Profi Cloth Mop and Wipe",
+    )
+
+    assert matched == ["cleaning type microfiber cloth", "pack count 2 pcs"]
+    assert missing == []
 
 
 def test_parsed_property_constraints_do_not_fallback_to_product_name() -> None:
@@ -427,3 +472,111 @@ def test_support_note_constraints_keep_extra_capability_as_text() -> None:
     assert [constraint.text for constraint in base] == ["machine type drill press"]
     assert extra == []
     assert extra_text == "voice control"
+
+
+def test_extract_city_availability_request_and_format() -> None:
+    cmd = _extract_city_availability_request(
+        (
+            "I can visit any PowerTool branch in Vienna today. Across every "
+            "Vienna branch, including branches with 0 availability, how many "
+            "units of product (the Wood and Drywall Screw from Heco in the "
+            "Heco Zinc Plated TopFix GTU-YPJ Wood and Drywall Screw line that "
+            "has screw type drywall screw) are available today? Answer exactly "
+            "as \"count: %d\" and cite every city store record plus the product record."
+        )
+    )
+
+    assert cmd is not None
+    assert cmd.city == "Vienna"
+    assert cmd.product_description.startswith("the Wood and Drywall Screw")
+    assert _format_count_message(cmd.answer_format, 4) == "count: 4"
+
+
+class CityAvailabilityExecResult:
+    def __init__(self, stdout: str = "", exit_code: int = 0, stderr: str = "") -> None:
+        self.stdout = stdout
+        self.exit_code = exit_code
+        self.stderr = stderr
+
+
+class CityAvailabilityFakeVM:
+    def exec(self, request) -> CityAvailabilityExecResult:
+        query = request.stdin
+        if "sqlite_schema" in query:
+            return CityAvailabilityExecResult(
+                "name\n"
+                "product_families\n"
+                "product_kinds\n"
+                "product_variant_properties\n"
+                "product_variants\n"
+                "store_inventory\n"
+                "stores\n"
+            )
+        if "from product_variants pv" in query:
+            return CityAvailabilityExecResult(
+                "product_sku,record_path,product_name,brand,variant_properties,"
+                "product_kind_name,product_family_name,family_properties\n"
+                "FST-1KPF96UD,/proc/catalog/FST-1KPF96UD.json,"
+                "Heco Zinc Plated TopFix GTU-YPJ Wood and Drywall Screw drywall screw,"
+                "Heco,{},Wood and Drywall Screw,"
+                "Heco Zinc Plated TopFix GTU-YPJ Wood and Drywall Screw,{}\n"
+            )
+        if "from product_variant_properties" in query:
+            return CityAvailabilityExecResult(
+                "product_sku,property_key,property_value_text,property_value_number\n"
+                "FST-1KPF96UD,screw_type,drywall screw,\n"
+            )
+        if "from stores s" in query:
+            return CityAvailabilityExecResult(
+                "store_id,record_path,store_name,city,available_today_quantity\n"
+                "store_vienna_meidling,/proc/stores/store_vienna_meidling.json,"
+                "PowerTool Vienna Meidling,Vienna,4\n"
+                "store_vienna_praterstern,/proc/stores/store_vienna_praterstern.json,"
+                "PowerTool Vienna Praterstern,Vienna,0\n"
+            )
+        raise AssertionError(f"unexpected SQL: {query}")
+
+
+def test_resolve_city_availability(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "catalog_tools._parse_catalog_descriptions",
+        lambda items: [
+            ParsedCatalogItems.model_validate(
+                {
+                    "items": [
+                        {
+                            "item_index": 0,
+                            "brand": "Heco",
+                            "product_kind": "Wood and Drywall Screw",
+                            "product_family": (
+                                "Heco Zinc Plated TopFix GTU-YPJ Wood and Drywall Screw"
+                            ),
+                            "constraints": [
+                                {
+                                    "text": "screw type drywall screw",
+                                    "label": "screw type",
+                                    "value": "drywall screw",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            ).items[0]
+        ],
+    )
+
+    result = resolve_city_availability(
+        CityAvailabilityFakeVM(),
+        ReqResolveCityAvailability(
+            product_description="the Wood and Drywall Screw from Heco ...",
+            city="Vienna",
+            answer_format="count: %d",
+        ),
+    )
+
+    assert result["formatted_message"] == "count: 4"
+    assert result["refs_to_submit"] == [
+        "/proc/catalog/FST-1KPF96UD.json",
+        "/proc/stores/store_vienna_meidling.json",
+        "/proc/stores/store_vienna_praterstern.json",
+    ]

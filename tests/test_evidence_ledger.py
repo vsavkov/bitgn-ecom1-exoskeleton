@@ -199,6 +199,31 @@ def test_apply_to_completion_uses_receipt_price_result() -> None:
     ]
 
 
+def test_apply_to_completion_uses_city_availability_result() -> None:
+    cmd = _completion(
+        task_type="availability_lookup",
+        row_refs=["/proc/catalog/WRONG.json"],
+        message="placeholder",
+    )
+
+    ledger = EvidenceLedger()
+    ledger.merge_city_availability_result(
+        refs=[
+            "/proc/catalog/FST-1KPF96UD.json",
+            "/proc/stores/store_vienna_meidling.json",
+        ],
+        formatted_message="count: 4",
+    )
+
+    updated = ledger.apply_to_completion(cmd)
+
+    assert updated.message == "count: 4"
+    assert updated.grounding_row_refs == [
+        "/proc/catalog/FST-1KPF96UD.json",
+        "/proc/stores/store_vienna_meidling.json",
+    ]
+
+
 def test_apply_to_completion_autocites_loaded_docs_for_matching_task_type() -> None:
     cmd = _completion(
         task_type="discount",
@@ -217,11 +242,11 @@ def test_apply_to_completion_autocites_loaded_docs_for_matching_task_type() -> N
 
     updated = ledger.apply_to_completion(cmd)
 
-    # security + discounts match the "discount" task_type; checkout does not
-    # match for a discount task; the origin story never matches anything.
+    # Discounts depend on checkoutability, so checkout.md is also relevant;
+    # the origin story never matches anything.
     assert "/docs/security.md" in updated.grounding_doc_refs
     assert "/docs/discounts.md" in updated.grounding_doc_refs
-    assert "/docs/checkout.md" not in updated.grounding_doc_refs
+    assert "/docs/checkout.md" in updated.grounding_doc_refs
     assert (
         "/docs/powertools-agentic-os-origin-story.md"
         not in updated.grounding_doc_refs

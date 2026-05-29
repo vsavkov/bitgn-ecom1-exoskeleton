@@ -34,7 +34,13 @@ from bitgn.vm.ecom.ecom_pb2 import (
     TreeRequest,
     WriteRequest,
 )
-from catalog_tools import ReqResolveCatalogItems, resolve_catalog_items
+from catalog_tools import (
+    ReqResolveCatalogItems,
+    ReqResolveCityAvailability,
+    resolve_catalog_items,
+    resolve_city_availability,
+    resolve_city_availability_from_task_text,
+)
 from checkout_preflight import ambiguous_checkout_preflight, selected_basket_preflight
 from security_preflight import security_preflight
 from config import (
@@ -229,6 +235,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "analyze_payment_fraud_history": ReqAnalyzePaymentFraudHistory,
     "analyze_receipt_price_check": ReqAnalyzeReceiptPriceCheck,
     "resolve_catalog_items": ReqResolveCatalogItems,
+    "resolve_city_availability": ReqResolveCityAvailability,
     "verify_store_manager": ReqVerifyStoreManager,
     "report_completion": ReportTaskCompletion,
 }
@@ -345,6 +352,17 @@ TOOLS: list[FunctionToolParam] = [
             "Pass raw product descriptions plus optional store_id/quantity "
             "thresholds. Returns exact SKU matches, availability, and canonical "
             "refs; unsupported schemas or unparsed descriptions raise an error."
+        ),
+    ),
+    _responses_function_tool(
+        ReqResolveCityAvailability,
+        name="resolve_city_availability",
+        description=(
+            "Deterministic helper for city-wide same-day product availability. "
+            "Use when a task asks how many units of one product are available "
+            "across every branch in a city, including zero-availability stores. "
+            "Returns formatted_message, total_available_today, product_ref, "
+            "every city store ref, and refs_to_submit."
         ),
     ),
     _responses_function_tool(
@@ -697,6 +715,8 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
         return analyze_receipt_price_check(vm, cmd)
     if isinstance(cmd, ReqResolveCatalogItems):
         return resolve_catalog_items(vm, cmd)
+    if isinstance(cmd, ReqResolveCityAvailability):
+        return resolve_city_availability(vm, cmd)
     if isinstance(cmd, ReqVerifyStoreManager):
         return verify_store_manager(vm, cmd)
     if isinstance(cmd, ReportTaskCompletion):
@@ -910,6 +930,25 @@ def _apply_receipt_price_result(
     return cmd.model_copy(update=updates)
 
 
+def _apply_city_availability_result(
+    cmd: ReportTaskCompletion,
+    *,
+    formatted_message: str,
+    refs_to_submit: list[str],
+) -> ReportTaskCompletion:
+    if cmd.task_type != "availability_lookup" or (
+        not formatted_message and not refs_to_submit
+    ):
+        return cmd
+
+    updates: dict[str, Any] = {}
+    if formatted_message:
+        updates["message"] = formatted_message
+    if refs_to_submit:
+        updates["grounding_row_refs"] = dedupe_refs(refs_to_submit)
+    return cmd.model_copy(update=updates)
+
+
 def _apply_loaded_doc_refs(
     cmd: ReportTaskCompletion,
     matched_refs: list[str],
@@ -1044,7 +1083,7 @@ def run_agent(
             _print_completion(cmd, completion_refs)
         return result_payload
 
-    denial = security_preflight(vm, classification)
+    denial = security_preflight(vm, classification, task_text=task_text)
     if denial is not None:
         denial_task_type = "discount" if denial.reason == "customer_discount_claimed_manager_approval" else "other"
         cmd = ReportTaskCompletion(
@@ -1055,6 +1094,33 @@ def run_agent(
             grounding_row_refs=denial.row_refs,
             protected_record_denial=denial.protected_record_denial,
             outcome="OUTCOME_DENIED_SECURITY",
+        )
+        return _finalize_preflight(cmd)
+
+    try:
+        city_availability = resolve_city_availability_from_task_text(vm, task_text)
+    except RuntimeError as exc:
+        city_availability = None
+        if debug:
+            print(f"{CLI_RED}ERR city availability helper: {exc}{CLI_CLR}")
+    if isinstance(city_availability, dict) and city_availability.get("status") == "ok":
+        refs_to_submit = [
+            ref
+            for ref in city_availability.get("refs_to_submit", [])
+            if isinstance(ref, str)
+        ]
+        cmd = ReportTaskCompletion(
+            completed_steps_laconic=[
+                "Resolved the exact catalogue product for the city availability task.",
+                "Summed same-day inventory across every store in the requested city.",
+                "Included the product record and every city store record.",
+            ],
+            task_type="availability_lookup",
+            message=str(city_availability.get("formatted_message") or ""),
+            grounding_doc_refs=[],
+            grounding_row_refs=refs_to_submit,
+            protected_record_denial=False,
+            outcome="OUTCOME_OK",
         )
         return _finalize_preflight(cmd)
 
@@ -1223,6 +1289,21 @@ def run_agent(
                 formatted_message = result.get("formatted_message")
                 refs_to_submit = result.get("refs_to_submit")
                 ledger.merge_receipt_price_result(
+                    refs=[
+                        ref
+                        for ref in (
+                            refs_to_submit if isinstance(refs_to_submit, list) else []
+                        )
+                        if isinstance(ref, str)
+                    ],
+                    formatted_message=(
+                        formatted_message if isinstance(formatted_message, str) else ""
+                    ),
+                )
+            if isinstance(cmd, ReqResolveCityAvailability) and isinstance(result, dict):
+                formatted_message = result.get("formatted_message")
+                refs_to_submit = result.get("refs_to_submit")
+                ledger.merge_city_availability_result(
                     refs=[
                         ref
                         for ref in (

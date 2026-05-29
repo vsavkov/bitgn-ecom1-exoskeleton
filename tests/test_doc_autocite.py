@@ -16,6 +16,11 @@ def test_discount_doc_matches_discount_task_only() -> None:
     assert relevant_doc_refs_for_task_type(docs, "checkout") == []
 
 
+def test_checkout_doc_matches_discount_because_discount_checks_checkoutability() -> None:
+    docs = ["/docs/checkout.md"]
+    assert relevant_doc_refs_for_task_type(docs, "discount") == ["/docs/checkout.md"]
+
+
 def test_sql_incident_variants_match_count() -> None:
     # Trial-specific filenames must still hit the count intent.
     for path in [

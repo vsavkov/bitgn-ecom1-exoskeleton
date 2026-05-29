@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+import re
 from typing import Literal
 
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
@@ -15,6 +16,7 @@ from task_classifier import TaskClassification
 
 SecurityReason = Literal[
     "customer_discount_claimed_manager_approval",
+    "employee_contact_disclosure",
     "system_override_attempt",
 ]
 
@@ -147,14 +149,90 @@ def system_override_security_preflight(
     )
 
 
+EMPLOYEE_CONTACT_DISCLOSURE_RE = re.compile(
+    r"\b(?:direct\s+)?(?:work\s+)?(?:e-?mail|email\s+address|phone|"
+    r"mobile|contact\s+details?|contact\s+info(?:rmation)?)\b",
+    re.IGNORECASE,
+)
+MANAGER_OR_EMPLOYEE_RE = re.compile(
+    r"\b(?:manager|store\s+manager|employee|staff|associate|lead)\b",
+    re.IGNORECASE,
+)
+MANAGER_AT_STORE_RE = re.compile(
+    r"(?:whether|if)\s+(?P<name>[A-Z][A-Za-z .'-]+?)\s+is\s+(?:really\s+)?"
+    r"(?:the\s+)?(?:store\s+)?manager\s+at\s+(?P<store>PowerTool\s+[A-Za-z]+(?:\s+[A-Za-z]+)?)",
+    re.IGNORECASE,
+)
+
+
+def employee_contact_security_preflight(
+    vm: RuntimeVM,
+    task_text: str,
+) -> SecurityDenial | None:
+    if not EMPLOYEE_CONTACT_DISCLOSURE_RE.search(task_text):
+        return None
+    if not MANAGER_OR_EMPLOYEE_RE.search(task_text):
+        return None
+
+    user_id, roles = _runtime_identity(vm)
+    role_names = {role.lower() for role in roles}
+    if user_id and not user_id.startswith("cust_"):
+        return None
+    if role_names and not role_names <= {"guest", "customer"}:
+        return None
+
+    row_refs: list[str] = []
+    match = MANAGER_AT_STORE_RE.search(task_text)
+    if match:
+        try:
+            manager_result = verify_store_manager(
+                vm,
+                ReqVerifyStoreManager(
+                    employee_name=" ".join(match.group("name").split()),
+                    store_name=" ".join(match.group("store").split()),
+                ),
+            )
+        except Exception:
+            manager_result = None
+        if isinstance(manager_result, dict):
+            refs_to_submit = manager_result.get("refs_to_submit")
+            if isinstance(refs_to_submit, list):
+                row_refs.extend(
+                    ref
+                    for ref in refs_to_submit
+                    if isinstance(ref, str) and ref.startswith("/")
+                )
+
+    return SecurityDenial(
+        reason="employee_contact_disclosure",
+        message=(
+            "OUTCOME_DENIED_SECURITY: direct employee contact details cannot "
+            "be disclosed to a customer or guest."
+        ),
+        doc_refs=["/docs/security.md"],
+        row_refs=row_refs,
+        completed_steps_laconic=[
+            "Detected a customer/guest request for direct employee contact details.",
+            "Checked runtime identity with /bin/id.",
+            "Refused disclosure under security/privacy policy.",
+        ],
+        protected_record_denial=False,
+    )
+
+
 def security_preflight(
     vm: RuntimeVM,
     classification: TaskClassification,
+    *,
+    task_text: str = "",
 ) -> SecurityDenial | None:
     # Order matters: system_override is the most aggressive signal and must
     # short-circuit before any other denial path so we do not look up records
     # named in the injection. Customer-discount denial runs next.
     denial = system_override_security_preflight(vm, classification)
+    if denial is not None:
+        return denial
+    denial = employee_contact_security_preflight(vm, task_text)
     if denial is not None:
         return denial
     return customer_discount_security_preflight(vm, classification)

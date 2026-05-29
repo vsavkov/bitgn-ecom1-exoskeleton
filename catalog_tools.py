@@ -3,9 +3,8 @@ import io
 import json
 import re
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
-from bitgn.vm.ecom.ecom_connect import EcomRuntimeClientSync
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
 from connectrpc.errors import ConnectError
 from openai import OpenAI
@@ -18,6 +17,10 @@ from config import (
     openai_client_kwargs,
     render_prompt,
 )
+
+
+class RuntimeVM(Protocol):
+    def exec(self, request: ExecRequest) -> Any: ...
 
 
 class CatalogLookupItem(BaseModel):
@@ -67,6 +70,24 @@ class ReqResolveCatalogItems(BaseModel):
             "at_least means available >= threshold/requested_quantity; below "
             "means available < threshold."
         ),
+    )
+
+
+class ReqResolveCityAvailability(BaseModel):
+    product_description: str = Field(
+        description=(
+            "Raw single product description from a city-wide availability task, "
+            "for example the text inside 'product (...)'."
+        )
+    )
+    city: str = Field(
+        description="Store city to aggregate, e.g. Vienna, Graz, Brno, or Linz."
+    )
+    answer_format: str = Field(
+        description=(
+            "Exact user-requested answer format containing %d, e.g. "
+            "'count: %d' or 'qty %d'."
+        )
     )
 
 
@@ -163,7 +184,18 @@ def _sql_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def _sql_rows(vm: EcomRuntimeClientSync, query: str) -> list[dict[str, str]]:
+def _dedupe_strings(values: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
     try:
         result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
     except ConnectError as exc:
@@ -185,7 +217,7 @@ def _sql_rows(vm: EcomRuntimeClientSync, query: str) -> list[dict[str, str]]:
         raise RuntimeError("catalog SQL returned invalid CSV") from exc
 
 
-def _has_catalog_projection(vm: EcomRuntimeClientSync) -> bool:
+def _has_catalog_projection(vm: RuntimeVM) -> bool:
     required_tables = {
         "product_variants",
         "product_variant_properties",
@@ -243,6 +275,7 @@ _GENERIC_CONSTRAINT_WORDS = {
     "luminous",
     "machine",
     "mask",
+    "pack",
     "power",
     "product",
     "protection",
@@ -264,6 +297,7 @@ _STRUCTURED_PROPERTY_LABEL_WORDS = {
     "connection",
     "connector",
     "contents",
+    "count",
     "diameter",
     "drive",
     "family",
@@ -273,6 +307,7 @@ _STRUCTURED_PROPERTY_LABEL_WORDS = {
     "luminous",
     "material",
     "mask",
+    "pack",
     "power",
     "product",
     "protection",
@@ -295,13 +330,73 @@ _EXTRA_CLAIM_BOUNDARY_RE = re.compile(
     r"\band\s+(?:has|supports|is)\b",
     re.IGNORECASE,
 )
+_CITY_AVAILABILITY_RE = re.compile(
+    r"Across\s+every\s+(?P<city>[A-Za-z][A-Za-z\s-]*?)\s+branch\b.*?"
+    r"product\s*\((?P<product>the\s+.*?)\)\s+are\s+available\s+today\?"
+    r".*?Answer\s+exactly\s+as\s+\"(?P<format>[^\"]*%d[^\"]*)\"",
+    re.IGNORECASE | re.DOTALL,
+)
+_UNIT_WORD_ALIASES = {
+    "pcs": "pc",
+    "pieces": "pc",
+}
 
 
 def _norm_words(value: str) -> str:
     value = value.lower().replace("-", " ")
     value = re.sub(r"(?<=\d)(?=[a-z])|(?<=[a-z])(?=\d)", " ", value)
     value = re.sub(r"[^a-z0-9]+", " ", value)
-    return " ".join(value.split())
+    words = [_UNIT_WORD_ALIASES.get(word, word) for word in value.split()]
+    return " ".join(words)
+
+
+def _property_rows_from_json(raw_properties: str) -> list[dict[str, str]]:
+    if not raw_properties:
+        return []
+    try:
+        parsed = json.loads(raw_properties)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, dict):
+        return []
+
+    rows: list[dict[str, str]] = []
+    for key, value in parsed.items():
+        property_key = str(key)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if item is None:
+                continue
+            if isinstance(item, dict):
+                text_value = item.get("text") or item.get("value_text") or item.get("value")
+                number_value = item.get("number") or item.get("value_number")
+            else:
+                text_value = "" if isinstance(item, int | float) else item
+                number_value = item if isinstance(item, int | float) else ""
+
+            rows.append(
+                {
+                    "property_key": property_key,
+                    "property_value_text": str(text_value or ""),
+                    "property_value_number": str(number_value or ""),
+                }
+            )
+    return rows
+
+
+def _extract_city_availability_request(task_text: str) -> ReqResolveCityAvailability | None:
+    match = _CITY_AVAILABILITY_RE.search(task_text)
+    if not match:
+        return None
+    return ReqResolveCityAvailability(
+        product_description=" ".join(match.group("product").split()),
+        city=" ".join(match.group("city").split()),
+        answer_format=match.group("format"),
+    )
+
+
+def _format_count_message(answer_format: str, total: int) -> str:
+    return answer_format.replace("%d", str(total), 1)
 
 
 def _property_label_candidates(key: str) -> list[str]:
@@ -598,7 +693,7 @@ def _product_family_lookup_terms(product_family: str) -> list[str]:
 
 
 def _fetch_catalog_candidates(
-    vm: EcomRuntimeClientSync,
+    vm: RuntimeVM,
     parsed: ParsedCatalogItem,
 ) -> list[dict[str, str]]:
     brand = parsed.brand
@@ -611,7 +706,9 @@ def _fetch_catalog_candidates(
     rows = _sql_rows(
         vm,
         "select pv.product_sku, pv.record_path, pv.product_name, pv.brand, "
-        "pk.product_kind_name, pf.product_family_name "
+        "pv.properties as variant_properties, "
+        "pk.product_kind_name, pf.product_family_name, "
+        "pf.properties as family_properties "
         "from product_variants pv "
         "join product_kinds pk on pk.product_kind_id = pv.product_kind_id "
         "join product_families pf on pf.product_family_id = pv.product_family_id "
@@ -631,7 +728,9 @@ def _fetch_catalog_candidates(
     return _sql_rows(
         vm,
         "select pv.product_sku, pv.record_path, pv.product_name, pv.brand, "
-        "pk.product_kind_name, pf.product_family_name "
+        "pv.properties as variant_properties, "
+        "pk.product_kind_name, pf.product_family_name, "
+        "pf.properties as family_properties "
         "from product_variants pv "
         "join product_kinds pk on pk.product_kind_id = pv.product_kind_id "
         "join product_families pf on pf.product_family_id = pv.product_family_id "
@@ -643,7 +742,7 @@ def _fetch_catalog_candidates(
 
 
 def _fetch_variant_properties(
-    vm: EcomRuntimeClientSync,
+    vm: RuntimeVM,
     skus: list[str],
 ) -> dict[str, list[dict[str, str]]]:
     if not skus:
@@ -663,7 +762,7 @@ def _fetch_variant_properties(
     return properties_by_sku
 
 
-def _fetch_store(vm: EcomRuntimeClientSync, store_id: str | None) -> dict[str, str] | None:
+def _fetch_store(vm: RuntimeVM, store_id: str | None) -> dict[str, str] | None:
     if not store_id:
         return None
     rows = _sql_rows(
@@ -675,7 +774,7 @@ def _fetch_store(vm: EcomRuntimeClientSync, store_id: str | None) -> dict[str, s
 
 
 def _fetch_availability(
-    vm: EcomRuntimeClientSync,
+    vm: RuntimeVM,
     store_id: str | None,
     skus: list[str],
 ) -> dict[str, int]:
@@ -730,7 +829,7 @@ def _refs_to_submit_for_availability_count(
 
 
 def resolve_catalog_items(
-    vm: EcomRuntimeClientSync,
+    vm: RuntimeVM,
     cmd: ReqResolveCatalogItems,
 ) -> dict[str, Any]:
     if not _has_catalog_projection(vm):
@@ -765,7 +864,10 @@ def resolve_catalog_items(
 
         for candidate in candidates:
             sku = candidate.get("product_sku") or ""
-            props = properties_by_sku.get(sku, [])
+            props = [
+                *properties_by_sku.get(sku, []),
+                *_property_rows_from_json(candidate.get("variant_properties") or ""),
+            ]
             matched, missing = _candidate_constraint_matches(
                 constraints,
                 props,
@@ -928,3 +1030,117 @@ def resolve_catalog_items(
         "refs_to_submit_for_availability_count": refs_to_submit_for_availability_count,
         "items": resolved_items,
     }
+
+
+def _select_unique_exact_match(
+    parsed: ParsedCatalogItem,
+    candidates: list[dict[str, str]],
+    properties_by_sku: dict[str, list[dict[str, str]]],
+) -> dict[str, Any] | None:
+    exact_matches: list[dict[str, Any]] = []
+    for candidate in candidates:
+        sku = candidate.get("product_sku") or ""
+        props = [
+            *properties_by_sku.get(sku, []),
+            *_property_rows_from_json(candidate.get("variant_properties") or ""),
+        ]
+        matched, missing = _candidate_constraint_matches(
+            parsed.constraints,
+            props,
+            candidate.get("product_name") or "",
+            product_family_name=candidate.get("product_family_name") or "",
+        )
+        if missing:
+            continue
+        exact_matches.append(
+            {
+                "sku": sku,
+                "record_path": candidate.get("record_path") or "",
+                "product_name": candidate.get("product_name") or "",
+                "matched_constraints": matched,
+            }
+        )
+
+    if len(exact_matches) != 1:
+        return None
+    return exact_matches[0]
+
+
+def resolve_city_availability(
+    vm: RuntimeVM,
+    cmd: ReqResolveCityAvailability,
+) -> dict[str, Any]:
+    if not _has_catalog_projection(vm):
+        raise RuntimeError("known ECOM catalogue SQL projection is unavailable")
+
+    parsed = _parse_catalog_descriptions(
+        [CatalogLookupItem(description=cmd.product_description)]
+    )[0]
+    candidates = _fetch_catalog_candidates(vm, parsed)
+    skus = sorted({row.get("product_sku") or "" for row in candidates if row.get("product_sku")})
+    properties_by_sku = _fetch_variant_properties(vm, skus)
+    exact_match = _select_unique_exact_match(parsed, candidates, properties_by_sku)
+    if exact_match is None:
+        return {
+            "status": "no_unique_exact_match",
+            "city": cmd.city,
+            "formatted_message": _format_count_message(cmd.answer_format, 0),
+            "total_available_today": 0,
+            "product_ref": "",
+            "store_refs": [],
+            "refs_to_submit": [],
+        }
+
+    rows = _sql_rows(
+        vm,
+        "select s.store_id, s.record_path, s.store_name, s.city, "
+        "coalesce(i.available_today_quantity, 0) as available_today_quantity "
+        "from stores s "
+        "left join store_inventory i on i.store_id = s.store_id "
+        f"and i.product_sku = {_sql_quote(exact_match['sku'])} "
+        f"where lower(s.city) = lower({_sql_quote(cmd.city)}) "
+        "order by s.store_id;",
+    )
+    total = 0
+    store_refs: list[str] = []
+    store_availability: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            available_today = int(row.get("available_today_quantity") or "0")
+        except ValueError:
+            available_today = 0
+        total += available_today
+        store_ref = row.get("record_path") or ""
+        if store_ref.startswith("/"):
+            store_refs.append(store_ref)
+        store_availability.append(
+            {
+                "store_id": row.get("store_id") or "",
+                "store_name": row.get("store_name") or "",
+                "record_path": store_ref,
+                "available_today_quantity": available_today,
+            }
+        )
+
+    product_ref = exact_match["record_path"]
+    return {
+        "status": "ok",
+        "city": cmd.city,
+        "product": exact_match,
+        "product_ref": product_ref,
+        "store_availability": store_availability,
+        "store_refs": _dedupe_strings(store_refs),
+        "total_available_today": total,
+        "formatted_message": _format_count_message(cmd.answer_format, total),
+        "refs_to_submit": _dedupe_strings([product_ref, *store_refs]),
+    }
+
+
+def resolve_city_availability_from_task_text(
+    vm: RuntimeVM,
+    task_text: str,
+) -> dict[str, Any] | None:
+    cmd = _extract_city_availability_request(task_text)
+    if cmd is None:
+        return None
+    return resolve_city_availability(vm, cmd)

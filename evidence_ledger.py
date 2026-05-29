@@ -22,6 +22,8 @@ class EvidenceLedger:
     fraud_total_message: str = ""
     receipt_refs: list[str] = field(default_factory=list)
     receipt_message: str = ""
+    city_availability_refs: list[str] = field(default_factory=list)
+    city_availability_message: str = ""
     loaded_doc_refs: list[str] = field(default_factory=list)
 
     def merge_availability_count(self, refs: list[str]) -> None:
@@ -65,6 +67,19 @@ class EvidenceLedger:
         if formatted_message:
             self.receipt_message = formatted_message
 
+    def merge_city_availability_result(
+        self,
+        *,
+        refs: list[str],
+        formatted_message: str,
+    ) -> None:
+        if refs:
+            self.city_availability_refs = dedupe_refs(
+                [*self.city_availability_refs, *refs]
+            )
+        if formatted_message:
+            self.city_availability_message = formatted_message
+
     def register_loaded_docs(self, paths: list[str]) -> None:
         if paths:
             self.loaded_doc_refs = dedupe_refs([*self.loaded_doc_refs, *paths])
@@ -76,6 +91,7 @@ class EvidenceLedger:
         from agent import (
             _apply_archive_fraud_result,
             _apply_availability_count_catalog_refs,
+            _apply_city_availability_result,
             _apply_loaded_doc_refs,
             _apply_receipt_price_result,
             _apply_support_note_catalog_refs,
@@ -94,6 +110,11 @@ class EvidenceLedger:
             cmd,
             formatted_message=self.receipt_message,
             refs_to_submit=self.receipt_refs,
+        )
+        cmd = _apply_city_availability_result(
+            cmd,
+            formatted_message=self.city_availability_message,
+            refs_to_submit=self.city_availability_refs,
         )
         cmd = _apply_loaded_doc_refs(
             cmd,

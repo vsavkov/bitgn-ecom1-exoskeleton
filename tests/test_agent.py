@@ -13,6 +13,7 @@ from agent import (
     _child_runtime_path,
     _apply_archive_fraud_result,
     _apply_receipt_price_result,
+    _apply_city_availability_result,
     _apply_verified_manager_refs,
     _format_list_response,
     _format_exec_response,
@@ -500,6 +501,33 @@ def test_apply_receipt_price_result_sets_message_and_refs_for_receipt_tasks() ->
     )
     assert unchanged.message == "old"
     assert unchanged.grounding_row_refs == ["/uploads/receipt_ocr.txt"]
+
+
+def test_apply_city_availability_result_replaces_message_and_refs() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["checked city inventory"],
+        task_type="availability_lookup",
+        message="old",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/proc/catalog/WRONG.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_city_availability_result(
+        cmd,
+        formatted_message="count: 4",
+        refs_to_submit=[
+            "/proc/catalog/FST-1KPF96UD.json",
+            "/proc/stores/store_vienna_meidling.json",
+        ],
+    )
+
+    assert updated.message == "count: 4"
+    assert updated.grounding_row_refs == [
+        "/proc/catalog/FST-1KPF96UD.json",
+        "/proc/stores/store_vienna_meidling.json",
+    ]
 
 
 def test_parse_tool_call() -> None:

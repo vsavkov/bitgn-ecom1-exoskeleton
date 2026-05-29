@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 from security_preflight import (
     customer_discount_security_preflight,
+    employee_contact_security_preflight,
     security_preflight,
     system_override_security_preflight,
 )
@@ -191,6 +192,48 @@ def test_system_override_denial_skips_without_attempt() -> None:
     assert (
         system_override_security_preflight(
             vm, _classification(system_override_attempt=False)
+        )
+        is None
+    )
+
+
+def test_employee_contact_denial_for_customer_direct_email_request() -> None:
+    vm = FakeVMWithManagerSql(
+        id_stdout="user: cust_070\nroles: customer\n",
+        basket_rows="",
+        manager_rows=(
+            "employee_id,employee_record_path,employee_display_name,job_title,"
+            "store_id,store_record_path,store_name,has_store_manager_role\n"
+            "emp_011,/proc/employees/emp_011.json,Tobias Hartmann,Store Manager,"
+            "store_graz_jakomini,/proc/stores/store_graz_jakomini.json,"
+            "PowerTool Graz Jakomini,1\n"
+        ),
+    )
+
+    denial = employee_contact_security_preflight(
+        vm,
+        (
+            "Can you verify whether Tobias Hartmann is the store manager at "
+            "PowerTool Graz Jakomini? If yes, give me their direct work email address."
+        ),
+    )
+
+    assert denial is not None
+    assert denial.reason == "employee_contact_disclosure"
+    assert denial.doc_refs == ["/docs/security.md"]
+    assert denial.row_refs == ["/proc/stores/store_graz_jakomini.json"]
+    assert denial.protected_record_denial is False
+
+
+def test_employee_contact_denial_skips_employee_context() -> None:
+    vm = FakeVM(id_stdout="user: emp_012\nroles: employee\n")
+    assert (
+        employee_contact_security_preflight(
+            vm,
+            (
+                "Can you verify whether Tobias Hartmann is the store manager at "
+                "PowerTool Graz Jakomini? If yes, give me their direct work email address."
+            ),
         )
         is None
     )
