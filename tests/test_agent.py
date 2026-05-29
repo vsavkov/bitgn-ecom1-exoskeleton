@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 from bitgn.vm.ecom.ecom_pb2 import NodeKind
@@ -20,8 +21,10 @@ from agent import (
     _format_tree_response,
     _format_tree_entry,
     _function_call_output,
+    _function_call_output_for_call_id,
     _apply_availability_count_catalog_refs,
     _apply_support_note_catalog_refs,
+    _append_synthetic_tool_pair,
     _iter_tree_paths,
     _is_command_path,
     _is_markdown_path,
@@ -32,6 +35,7 @@ from agent import (
     _parse_tool_call,
     _remember_seen_tool_use,
     _render_command,
+    _synthetic_function_call,
     _trace_agent_inputs,
     _trace_agent_outputs,
     _trace_cmd,
@@ -159,6 +163,12 @@ def test_tree_path_iteration_and_followup_selection() -> None:
         "/docs/policy.MD",
     }
     assert seen_help == {"/bin/date"}
+    assert _tree_followup_commands(
+        ReqTree(root="/", auto_followups=False),
+        result,
+        set(),
+        set(),
+    ) == []
     assert "tree -L 2 /" in _format_tree_response(ReqTree(root="/"), result)
 
 
@@ -252,7 +262,41 @@ def test_function_call_and_output_text_helpers() -> None:
         "call_id": "call_1",
         "output": "done",
     }
+    assert _function_call_output_for_call_id("call_2", "done") == {
+        "type": "function_call_output",
+        "call_id": "call_2",
+        "output": "done",
+    }
     assert _output_text(response) == "hello"
+
+
+def test_synthetic_tool_pair_helpers() -> None:
+    cmd = ReqRead(path="/AGENTS.MD")
+    call = _synthetic_function_call(cmd, "call_auto_1")
+
+    assert call["type"] == "function_call"
+    assert call["id"] == "fc_call_auto_1"
+    assert call["call_id"] == "call_auto_1"
+    assert call["name"] == "read"
+    assert json.loads(call["arguments"]) == {
+        "path": "/AGENTS.MD",
+        "number": False,
+        "start_line": 0,
+        "end_line": 0,
+    }
+    assert call["status"] == "completed"
+
+    context = []
+    _append_synthetic_tool_pair(context, cmd, "file body", "call_auto_1")
+
+    assert context == [
+        call,
+        {
+            "type": "function_call_output",
+            "call_id": "call_auto_1",
+            "output": "file body",
+        },
+    ]
 
 
 def test_apply_availability_count_catalog_refs_replaces_catalog_refs_only() -> None:

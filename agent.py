@@ -145,6 +145,13 @@ class ReportTaskCompletion(BaseModel):
 class ReqTree(BaseModel):
     level: int = Field(2, description="max tree depth, 0 means unlimited")
     root: str = Field("/", description="absolute root path to inspect")
+    auto_followups: bool = Field(
+        True,
+        description=(
+            "when true, automatically read Markdown files and command --help "
+            "entries discovered in the tree"
+        ),
+    )
 
 
 class ReqFind(BaseModel):
@@ -246,10 +253,11 @@ TOOLS: list[FunctionToolParam] = [
         name="tree",
         description=(
             "List a runtime filesystem tree under an absolute path. Tree output is "
-            "enriched once per trial: extensionless file entries include their "
-            "'<path> --help' output, and Markdown files are read "
-            "case-insensitively. Repeated enrichment for the same path is "
-            "suppressed."
+            "enriched once per trial when auto_followups is true: extensionless "
+            "file entries include their '<path> --help' output, and Markdown "
+            "files are read case-insensitively. Repeated enrichment for the same "
+            "path is suppressed. Set auto_followups=false for broad directory "
+            "overviews where the file contents would be too noisy."
         ),
     ),
     _responses_function_tool(
@@ -557,6 +565,9 @@ def _tree_followup_commands(
     seen_help: set[str],
     seen_read: set[str],
 ) -> list[BaseModel]:
+    if not cmd.auto_followups:
+        return []
+
     help_commands: list[BaseModel] = []
     read_commands: list[BaseModel] = []
 
@@ -663,11 +674,39 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
 
 
 def _function_call_output(tool_call, output: str) -> dict:
+    return _function_call_output_for_call_id(tool_call.call_id, output)
+
+
+def _function_call_output_for_call_id(call_id: str, output: str) -> dict:
     return {
         "type": "function_call_output",
-        "call_id": tool_call.call_id,
+        "call_id": call_id,
         "output": output,
     }
+
+
+def _synthetic_function_call(cmd: BaseModel, call_id: str) -> dict:
+    name = TOOL_NAMES_BY_MODEL.get(type(cmd))
+    if name is None:
+        raise ValueError(f"Unknown synthetic tool command: {cmd}")
+    return {
+        "type": "function_call",
+        "id": f"fc_{call_id}",
+        "call_id": call_id,
+        "name": name,
+        "arguments": json.dumps(cmd.model_dump(mode="json"), ensure_ascii=False),
+        "status": "completed",
+    }
+
+
+def _append_synthetic_tool_pair(
+    context: list[Any],
+    cmd: BaseModel,
+    output: str,
+    call_id: str,
+) -> None:
+    context.append(_synthetic_function_call(cmd, call_id))
+    context.append(_function_call_output_for_call_id(call_id, output))
 
 
 def _parse_tool_call(tool_call) -> BaseModel:
@@ -813,8 +852,21 @@ def run_agent(
         "formatter_output": formatter_output_lines,
     }
 
+    synthetic_call_index = 0
+
+    def append_synthetic_tool_result(cmd: BaseModel, output: str) -> None:
+        nonlocal synthetic_call_index
+        synthetic_call_index += 1
+        _append_synthetic_tool_pair(
+            context,
+            cmd,
+            output,
+            f"call_auto_{synthetic_call_index}",
+        )
+
     must: list[BaseModel] = [
-        ReqTree(level=2, root="/"),
+        ReqRead(path="/AGENTS.MD"),
+        ReqTree(level=2, root="/", auto_followups=False),
         ReqTree(level=3, root="/bin"),
         ReqTree(level=3, root="/docs"),
         ReqExec(path="/bin/date"),
@@ -824,12 +876,27 @@ def run_agent(
     for cmd in must:
         result = dispatch(vm, cmd)
         _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
-        formatted = _format_result_with_tree_followups(
-            vm, cmd, result, tree_help_paths, tree_read_paths, debug
-        )
+        formatted = _format_result(cmd, result)
         if debug:
             print(f"{CLI_GREEN}AUTO{CLI_CLR}: {formatted}")
-        context.append({"role": "user", "content": formatted})
+        append_synthetic_tool_result(cmd, formatted)
+
+        if not isinstance(cmd, ReqTree):
+            continue
+
+        for followup in _tree_followup_commands(
+            cmd, result, tree_help_paths, tree_read_paths
+        ):
+            try:
+                followup_result = dispatch(vm, followup)
+                _remember_seen_tool_use(followup, tree_help_paths, tree_read_paths)
+                followup_formatted = _format_result(followup, followup_result)
+                if debug:
+                    print(f"{CLI_GREEN}AUTO{CLI_CLR}: {followup_formatted}")
+                append_synthetic_tool_result(followup, followup_formatted)
+            except ConnectError as exc:
+                if debug:
+                    print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 
     ambiguous_checkout = ambiguous_checkout_preflight(vm, task_text)
     if ambiguous_checkout is not None:
