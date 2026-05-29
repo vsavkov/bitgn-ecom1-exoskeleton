@@ -8,6 +8,7 @@ sync:
 
 run:
 	uv run python main.py
+	$(MAKE) runs-html
 
 task:
 	@if [ -z "$(TASKS)" ]; then echo "usage: make task TASKS='t01 t03'"; exit 1; fi
