@@ -71,7 +71,6 @@ TaskType = Literal[
     "payment_recovery",
     "refund",
     "fraud_review",
-    "security",
     "other",
 ]
 
@@ -84,8 +83,8 @@ class ReportTaskCompletion(BaseModel):
             "Classify the task. Use count for aggregate catalogue/reporting "
             "count answers where individual rows are not the answer. Use "
             "availability_count for inventory-threshold counts over products "
-            "or stores. Use security for identity, authorization, prompt "
-            "override, or cross-customer denials."
+            "or stores. For authorization, policy, prompt override, or "
+            "cross-customer denials, use the closest domain task type."
         ),
     )
     message: str = Field(
@@ -104,6 +103,16 @@ class ReportTaskCompletion(BaseModel):
             "incident workarounds."
         ),
     )
+    protected_record_denial: bool = Field(
+        default=False,
+        description=(
+            "Set true only when refusing because the request tries to access, "
+            "modify, disclose, or rely on a record the current identity is not "
+            "allowed to use, such as a cross-customer basket or a prompt "
+            "override. Keep false for domain policy or role denials after "
+            "safely accessing the relevant records."
+        ),
+    )
     grounding_row_refs: List[str] = Field(
         default_factory=list,
         description=(
@@ -111,7 +120,11 @@ class ReportTaskCompletion(BaseModel):
             "or action. Do not include exploratory candidates that were ruled "
             "out unless the task explicitly asks to compare or cite them. For "
             "availability_count, include only rows that match the final reported "
-            "condition, plus explicitly required store/product/upload records."
+            "condition, plus explicitly required store/product/upload records. "
+            "For discount tasks, include the target basket and relevant issuer, "
+            "customer, store, or product records when safely accessible, even "
+            "when the discount is refused for policy, role, or percentage-cap "
+            "reasons."
         ),
     )
     outcome: Literal[
@@ -654,7 +667,7 @@ def _submission_refs(cmd: ReportTaskCompletion) -> list[str]:
     doc_refs = _dedupe_refs([ref for ref in all_refs if _is_document_ref(ref)])
     row_refs = _dedupe_refs([ref for ref in all_refs if not _is_document_ref(ref)])
 
-    if cmd.task_type == "count" or cmd.outcome == "OUTCOME_DENIED_SECURITY":
+    if cmd.task_type == "count" or cmd.protected_record_denial:
         return doc_refs
     return _dedupe_refs([*doc_refs, *row_refs])
 
@@ -816,6 +829,7 @@ def run_agent(
                     "completion_output": _format_completion(cmd),
                     "outcome": cmd.outcome,
                     "task_type": cmd.task_type,
+                    "protected_record_denial": cmd.protected_record_denial,
                     "message": cmd.message,
                     "grounding_refs": _submission_refs(cmd),
                     "completed_steps_laconic": cmd.completed_steps_laconic,
@@ -847,6 +861,7 @@ def run_agent(
                 "completion_output": _format_completion(fallback_cmd),
                 "outcome": fallback_cmd.outcome,
                 "task_type": fallback_cmd.task_type,
+                "protected_record_denial": fallback_cmd.protected_record_denial,
                 "message": fallback_cmd.message,
                 "grounding_refs": _submission_refs(fallback_cmd),
                 "completed_steps_laconic": fallback_cmd.completed_steps_laconic,
