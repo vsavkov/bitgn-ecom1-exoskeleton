@@ -40,10 +40,6 @@ class ExplicitRecordSpec(NamedTuple):
 
 PRODUCT_SKU_RE = re.compile(r"^[A-Z]{3}-[A-Z0-9]+$")
 EMPLOYEE_ID_RE = re.compile(r"^emp_\d+$")
-MANAGER_STORE_VERIFICATION_RE = re.compile(
-    r"\b(?:check|confirm|verify)\b[\s\S]{0,160}\b(?:manager|store\s+manager|manages?)\b",
-    re.IGNORECASE,
-)
 CROSS_CUSTOMER_DENIAL_RE = re.compile(
     r"\b(?:"
     r"another customer|other customer|different customer|"
@@ -60,12 +56,6 @@ CUSTOMER_SCOPED_REF_RE = re.compile(
     re.IGNORECASE,
 )
 CATALOG_REF_RE = re.compile(r"^/proc/catalog(?:/|$)", re.IGNORECASE)
-SQL_TRUST_TASK_RE = re.compile(
-    r"\btrust\s+sql\b|\bsql\b[\s\S]{0,80}\bstale\b|\bstale\b[\s\S]{0,80}\bsql\b|"
-    r"\bjson\b[\s\S]{0,80}\bstale\b",
-    re.IGNORECASE,
-)
-SQL_README_RE = re.compile(r"^sql-readme-[A-Za-z0-9_.-]+\.md$", re.IGNORECASE)
 PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
     "baskets": ("shopping_baskets", "basket_id", re.compile(r"^basket_\d+$")),
     "customers": ("customer_accounts", "customer_id", re.compile(r"^cust_\d+$")),
@@ -576,53 +566,6 @@ def replace_customer_facing_employee_refs(
     return dedupe_refs(replaced_refs)
 
 
-def searchable_text(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
-
-
-def manager_store_refs_from_task(vm: RuntimeVM, task_text: str) -> list[str]:
-    if not MANAGER_STORE_VERIFICATION_RE.search(task_text):
-        return []
-
-    normalized_task = f" {searchable_text(task_text)} "
-    refs: list[str] = []
-    rows = sql_rows(
-        vm,
-        "select store_name, record_path from stores order by length(store_name) desc;",
-    )
-    for row in rows:
-        store_name = row.get("store_name") or ""
-        store_ref = row.get("record_path") or ""
-        if not store_ref.startswith("/"):
-            continue
-        if f" {searchable_text(store_name)} " in normalized_task:
-            refs.append(store_ref)
-    return dedupe_refs(refs)
-
-
-def sql_readme_refs_from_task(vm: RuntimeVM, task_text: str) -> list[str]:
-    if not SQL_TRUST_TASK_RE.search(task_text):
-        return []
-
-    try:
-        result = vm.list(ListRequest(path="/bin"))
-    except (AttributeError, ConnectError):
-        return []
-
-    refs: list[str] = []
-    for entry in getattr(result, "entries", []) or []:
-        if getattr(entry, "kind", None) not in {
-            NodeKind.NODE_KIND_FILE,
-            NodeKind.NODE_KIND_UNSPECIFIED,
-        }:
-            continue
-        name = getattr(entry, "name", "")
-        if SQL_README_RE.match(name):
-            refs.append(f"/bin/{name}")
-
-    return dedupe_refs(sorted(refs))
-
-
 def is_cross_customer_protected_record_denial(
     cmd: CompletionLike,
     row_refs: Sequence[str],
@@ -657,8 +600,6 @@ def submission_refs(
     )
 
     if cmd.task_type == "count" or protected_record_denial:
-        if vm is not None and cmd.task_type == "count" and task_text:
-            doc_refs = dedupe_refs([*doc_refs, *sql_readme_refs_from_task(vm, task_text)])
         refs = doc_refs
     else:
         user_id: str | None = None
@@ -679,7 +620,6 @@ def submission_refs(
                         user_id=user_id,
                         roles=roles,
                     ),
-                    *manager_store_refs_from_task(vm, task_text),
                 ]
             )
         if vm is not None and cmd.task_type == "refund":

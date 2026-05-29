@@ -20,7 +20,6 @@ from submission_refs import (
     is_cross_customer_protected_record_denial,
     is_document_ref,
     linked_payment_refs_for_returns,
-    manager_store_refs_from_task,
     normalize_runtime_path,
     normalize_submission_refs,
     parse_runtime_identity,
@@ -29,7 +28,6 @@ from submission_refs import (
     sql_quote,
     sql_record_path,
     sql_rows,
-    sql_readme_refs_from_task,
     submission_refs,
     support_note_refs_from_catalog_result,
 )
@@ -393,53 +391,6 @@ def test_linked_payment_refs_for_returns_adds_refund_evidence() -> None:
     ) == ["/proc/payments/pay_023.json"]
 
 
-def test_manager_store_refs_from_task_requires_manager_verification_intent() -> None:
-    vm = FakeVM(
-        sql_outputs={
-            "from stores order by length(store_name) desc": csv_rows(
-                "store_name,record_path",
-                "PowerTool Vienna Praterstern,/proc/stores/store_vienna_praterstern.json",
-                "PowerTool Innsbruck Wilten,/proc/stores/store_innsbruck_wilten.json",
-            )
-        }
-    )
-
-    assert manager_store_refs_from_task(
-        vm,
-        "Please verify Philipp Lehmann is manager at PowerTool Vienna Praterstern.",
-    ) == ["/proc/stores/store_vienna_praterstern.json"]
-    assert manager_store_refs_from_task(
-        vm,
-        "Please check if Greta Engel really manages PowerTool Innsbruck Wilten.",
-    ) == ["/proc/stores/store_innsbruck_wilten.json"]
-    assert manager_store_refs_from_task(
-        vm,
-        "For basket basket_053 at PowerTool Innsbruck Wilten, manager approved it.",
-    ) == []
-
-
-def test_sql_readme_refs_from_task_detects_stale_json_sql_instruction() -> None:
-    vm = FakeVM(
-        list_outputs={
-            "/bin": [
-                "README.md",
-                "sql",
-                "sql-readme-2024-07-17.md",
-                "sql-readme-2024-08-01.md",
-            ]
-        }
-    )
-
-    assert sql_readme_refs_from_task(
-        vm,
-        "PS: availability in JSON is stale, trust SQL",
-    ) == [
-        "/bin/sql-readme-2024-07-17.md",
-        "/bin/sql-readme-2024-08-01.md",
-    ]
-    assert sql_readme_refs_from_task(vm, "Count catalogue products.") == []
-
-
 def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:
     vm = FakeVM(existing_paths={"/proc/baskets/basket_001.json"})
 
@@ -462,28 +413,6 @@ def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:
         vm,
         task_text="basket_001",
     ) == ["/docs/security.md"]
-
-
-def test_submission_refs_auto_adds_sql_readme_for_sql_trusted_count() -> None:
-    vm = FakeVM(
-        list_outputs={"/bin": ["sql", "sql-readme-2024-07-17.md"]},
-        existing_paths={"/proc/baskets/basket_001.json"},
-    )
-
-    assert submission_refs(
-        CompletionStub(
-            task_type="count",
-            grounding_doc_refs=[
-                "/docs/current-updates/catalogue-counting-2024-07-17.md"
-            ],
-            grounding_row_refs=["/proc/baskets/basket_001.json"],
-        ),
-        vm,
-        task_text="For catalogue count report, trust SQL because JSON is stale.",
-    ) == [
-        "/docs/current-updates/catalogue-counting-2024-07-17.md",
-        "/bin/sql-readme-2024-07-17.md",
-    ]
 
 
 def test_submission_refs_drops_customer_rows_for_cross_customer_denial() -> None:
@@ -558,10 +487,6 @@ def test_submission_refs_replaces_customer_facing_employee_ref_and_adds_store() 
             "e.employee_id = 'emp_001'": csv_rows(
                 "store_record_path",
                 "/proc/stores/store_vienna_praterstern.json",
-            ),
-            "from stores order by length(store_name) desc": csv_rows(
-                "store_name,record_path",
-                "PowerTool Vienna Praterstern,/proc/stores/store_vienna_praterstern.json",
             ),
         },
         existing_paths={

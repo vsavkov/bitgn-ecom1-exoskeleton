@@ -48,6 +48,7 @@ from connectrpc.errors import ConnectError
 from google.protobuf.json_format import MessageToDict
 from langsmith.run_helpers import get_current_run_tree
 from langsmith.wrappers import wrap_openai
+from manager_verification import ReqVerifyStoreManager, verify_store_manager
 from openai import OpenAI
 from openai.types.responses import (
     FunctionToolParam,
@@ -211,6 +212,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "stat": ReqStat,
     "exec": ReqExec,
     "resolve_catalog_items": ReqResolveCatalogItems,
+    "verify_store_manager": ReqVerifyStoreManager,
     "report_completion": ReportTaskCompletion,
 }
 
@@ -299,6 +301,17 @@ TOOLS: list[FunctionToolParam] = [
             "Pass raw product descriptions plus optional store_id/quantity "
             "thresholds. Returns exact SKU matches, availability, and canonical "
             "refs; unsupported schemas or unparsed descriptions raise an error."
+        ),
+    ),
+    _responses_function_tool(
+        ReqVerifyStoreManager,
+        name="verify_store_manager",
+        description=(
+            "Verify that a named employee is assigned to a named store and has "
+            "the store_manager role. Use this for pure manager/store "
+            "verification questions and for discount or approval tasks that "
+            "mention a named manager. The result includes refs_to_submit based "
+            "on the actual SQL verification."
         ),
     ),
     _responses_function_tool(
@@ -619,6 +632,8 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
         return vm.exec(ExecRequest(path=cmd.path, args=cmd.args, stdin=cmd.stdin))
     if isinstance(cmd, ReqResolveCatalogItems):
         return resolve_catalog_items(vm, cmd)
+    if isinstance(cmd, ReqVerifyStoreManager):
+        return verify_store_manager(vm, cmd)
     if isinstance(cmd, ReportTaskCompletion):
         return vm.answer(
             AnswerRequest(
@@ -713,6 +728,17 @@ def _apply_support_note_catalog_refs(
     return cmd.model_copy(update={"grounding_row_refs": row_refs})
 
 
+def _apply_verified_manager_refs(
+    cmd: ReportTaskCompletion,
+    refs_to_submit: list[str],
+) -> ReportTaskCompletion:
+    if not refs_to_submit:
+        return cmd
+
+    row_refs = dedupe_refs([*cmd.grounding_row_refs, *refs_to_submit])
+    return cmd.model_copy(update={"grounding_row_refs": row_refs})
+
+
 @traceable(
     run_type="chain",
     name="ECOM Agent",
@@ -741,6 +767,7 @@ def run_agent(
     formatter_output_lines: list[str] = []
     availability_count_catalog_refs: list[str] = []
     support_note_catalog_refs: list[str] = []
+    verified_manager_refs: list[str] = []
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
@@ -864,6 +891,7 @@ def run_agent(
                     cmd,
                     support_note_catalog_refs,
                 )
+                cmd = _apply_verified_manager_refs(cmd, verified_manager_refs)
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,
@@ -900,6 +928,15 @@ def run_agent(
                 checked_refs = support_note_refs_from_catalog_result(result)
                 if checked_refs:
                     support_note_catalog_refs = checked_refs
+            if isinstance(cmd, ReqVerifyStoreManager) and isinstance(result, dict):
+                refs_to_submit = result.get("refs_to_submit")
+                if isinstance(refs_to_submit, list):
+                    verified_manager_refs = dedupe_refs(
+                        [
+                            *verified_manager_refs,
+                            *(ref for ref in refs_to_submit if isinstance(ref, str)),
+                        ]
+                    )
 
             if isinstance(cmd, ReportTaskCompletion):
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)

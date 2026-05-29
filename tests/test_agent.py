@@ -10,6 +10,7 @@ from agent import (
     ReqSearch,
     ReqTree,
     _child_runtime_path,
+    _apply_verified_manager_refs,
     _format_list_response,
     _format_exec_response,
     _format_read_response,
@@ -273,6 +274,31 @@ def test_apply_support_note_catalog_refs_replaces_catalog_refs_only() -> None:
     assert updated.grounding_row_refs == [
         "/proc/stores/store_vienna_praterstern.json",
         "/proc/catalog/STO-2R84BSHQ.json",
+    ]
+
+
+def test_apply_verified_manager_refs_adds_tool_evidence() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["verified manager"],
+        task_type="discount",
+        message="Verified.",
+        grounding_doc_refs=["/docs/security.md"],
+        grounding_row_refs=["/proc/baskets/basket_001.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_verified_manager_refs(
+        cmd,
+        [
+            "/proc/stores/store_vienna_praterstern.json",
+            "/proc/baskets/basket_001.json",
+        ],
+    )
+
+    assert updated.grounding_row_refs == [
+        "/proc/baskets/basket_001.json",
+        "/proc/stores/store_vienna_praterstern.json",
     ]
 
 
