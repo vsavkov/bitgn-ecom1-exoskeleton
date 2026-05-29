@@ -23,6 +23,7 @@ from agent import (
     _apply_support_note_catalog_refs,
     _iter_tree_paths,
     _is_command_path,
+    _is_markdown_path,
     _is_truncated,
     _mark_truncated,
     _normalize_runtime_path,
@@ -98,6 +99,27 @@ def test_tree_path_iteration_and_followup_selection() -> None:
                     ),
                 ],
             ),
+            SimpleNamespace(
+                name="docs",
+                kind=NodeKind.NODE_KIND_DIR,
+                children=[
+                    SimpleNamespace(
+                        name="security.md",
+                        kind=NodeKind.NODE_KIND_FILE,
+                        children=[],
+                    ),
+                    SimpleNamespace(
+                        name="policy.MD",
+                        kind=NodeKind.NODE_KIND_FILE,
+                        children=[],
+                    ),
+                    SimpleNamespace(
+                        name="notes.txt",
+                        kind=NodeKind.NODE_KIND_FILE,
+                        children=[],
+                    ),
+                ],
+            ),
         ],
     )
     result = SimpleNamespace(root=tree, truncated=False)
@@ -110,17 +132,31 @@ def test_tree_path_iteration_and_followup_selection() -> None:
         "/bin",
         "/bin/date",
         "/bin/README.md",
+        "/docs",
+        "/docs/security.md",
+        "/docs/policy.MD",
+        "/docs/notes.txt",
     ]
     assert _is_command_path("/bin/date", tree.children[1].children[0])
     assert not _is_command_path("/bin/README.md", tree.children[1].children[1])
+    assert _is_markdown_path("/docs/security.md", tree.children[2].children[0])
+    assert _is_markdown_path("/docs/policy.MD", tree.children[2].children[1])
+    assert not _is_markdown_path("/docs/notes.txt", tree.children[2].children[2])
 
     followups = _tree_followup_commands(ReqTree(root="/"), result, seen_help, seen_read)
     assert followups == [
         ReqRead(path="/AGENTS.MD"),
         ReqRead(path="/bin/README.md"),
+        ReqRead(path="/docs/security.md"),
+        ReqRead(path="/docs/policy.MD"),
         ReqExec(path="/bin/date", args=["--help"]),
     ]
-    assert seen_read == {"/AGENTS.MD", "/bin/README.md"}
+    assert seen_read == {
+        "/AGENTS.MD",
+        "/bin/README.md",
+        "/docs/security.md",
+        "/docs/policy.MD",
+    }
     assert seen_help == {"/bin/date"}
     assert "tree -L 2 /" in _format_tree_response(ReqTree(root="/"), result)
 

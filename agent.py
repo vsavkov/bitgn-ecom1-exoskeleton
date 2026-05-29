@@ -245,7 +245,7 @@ TOOLS: list[FunctionToolParam] = [
         description=(
             "List a runtime filesystem tree under an absolute path. Tree output is "
             "enriched once per trial: extensionless file entries include their "
-            "'<path> --help' output, and AGENTS.md/README.md files are read "
+            "'<path> --help' output, and Markdown files are read "
             "case-insensitively. Repeated enrichment for the same path is "
             "suppressed."
         ),
@@ -494,9 +494,6 @@ def _trace_agent_outputs(output) -> dict:
     return {"output": output}
 
 
-INSTRUCTION_FILENAMES = {"agents.md", "readme.md"}
-
-
 def _normalize_runtime_path(path: str) -> str:
     if not path or path == "/":
         return "/"
@@ -534,6 +531,12 @@ def _is_command_path(path: str, entry) -> bool:
     return "." not in name
 
 
+def _is_markdown_path(path: str, entry) -> bool:
+    if getattr(entry, "kind", None) != NodeKind.NODE_KIND_FILE:
+        return False
+    return path.rsplit("/", 1)[-1].lower().endswith(".md")
+
+
 def _tree_followup_commands(
     cmd: ReqTree,
     result,
@@ -547,13 +550,11 @@ def _tree_followup_commands(
         if getattr(entry, "kind", None) != NodeKind.NODE_KIND_FILE:
             continue
 
-        name = path.rsplit("/", 1)[-1]
-        lower_name = name.lower()
         if _is_command_path(path, entry) and path not in seen_help:
             seen_help.add(path)
             help_commands.append(ReqExec(path=path, args=["--help"]))
 
-        if lower_name in INSTRUCTION_FILENAMES and path not in seen_read:
+        if _is_markdown_path(path, entry) and path not in seen_read:
             seen_read.add(path)
             read_commands.append(
                 ReqRead(path=path, number=False, start_line=0, end_line=0)
