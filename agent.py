@@ -32,6 +32,7 @@ from bitgn.vm.ecom.ecom_pb2 import (
     WriteRequest,
 )
 from catalog_tools import ReqResolveCatalogItems, resolve_catalog_items
+from checkout_preflight import ambiguous_checkout_preflight
 from config import (
     CLI_BLUE,
     CLI_CLR,
@@ -746,6 +747,41 @@ def run_agent(
         if debug:
             print(f"{CLI_GREEN}AUTO{CLI_CLR}: {formatted}")
         context.append({"role": "user", "content": formatted})
+
+    ambiguous_checkout = ambiguous_checkout_preflight(vm, task_text)
+    if ambiguous_checkout is not None:
+        basket_list = ", ".join(ambiguous_checkout.basket_ids)
+        cmd = ReportTaskCompletion(
+            completed_steps_laconic=[
+                "Detected a checkout request without an explicit basket id.",
+                "Found multiple active baskets for the current customer.",
+                "Asked for clarification instead of choosing a basket.",
+            ],
+            task_type="checkout",
+            message=f"Which basket should I check out? I found multiple active baskets: {basket_list}.",
+            grounding_doc_refs=[],
+            protected_record_denial=False,
+            grounding_row_refs=ambiguous_checkout.basket_refs,
+            outcome="OUTCOME_NONE_CLARIFICATION",
+        )
+        dispatch(vm, cmd, task_text=task_text)
+        completion_refs = _submission_refs(cmd, vm, task_text=task_text)
+        final_result = {
+            "completed": True,
+            "langsmith_run_id": langsmith_run_id,
+            "langsmith_trace_id": langsmith_trace_id,
+            "formatter_output": formatter_output_lines,
+            "completion_output": _format_completion(cmd, completion_refs),
+            "outcome": cmd.outcome,
+            "task_type": cmd.task_type,
+            "protected_record_denial": cmd.protected_record_denial,
+            "message": cmd.message,
+            "grounding_refs": completion_refs,
+            "completed_steps_laconic": cmd.completed_steps_laconic,
+        }
+        if print_completion:
+            _print_completion(cmd, completion_refs)
+        return final_result
 
     context.append({"role": "user", "content": task_text})
 
