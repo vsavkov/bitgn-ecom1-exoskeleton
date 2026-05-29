@@ -423,6 +423,66 @@ def can_auto_cite_customer_scoped_record(
     return True
 
 
+def customer_scoped_ref_owner(
+    vm: RuntimeVM,
+    ref: str,
+) -> str | None:
+    path = normalize_runtime_path(split_ref_fragment(ref)[0])
+    parts = [part for part in path.split("/") if part]
+    if len(parts) != 3 or parts[0] != "proc":
+        return None
+
+    folder = parts[1]
+    record_id = parts[2].removesuffix(".json")
+    if folder == "customers" and re.match(r"^cust_\d+$", record_id):
+        return record_id
+
+    spec_by_folder = {
+        "baskets": ("shopping_baskets", "basket_id"),
+        "payments": ("payment_transactions", "payment_id"),
+        "returns": ("return_requests", "return_id"),
+    }
+    spec = spec_by_folder.get(folder)
+    if spec is None:
+        return None
+
+    table, key_column = spec
+    try:
+        rows = sql_rows(
+            vm,
+            "select customer_id "
+            f"from {table} "
+            f"where {key_column} = {sql_quote(record_id)} limit 1;",
+        )
+    except Exception:
+        return None
+
+    if not rows:
+        return None
+    return rows[0].get("customer_id") or None
+
+
+def has_cross_customer_denial_ref(
+    vm: RuntimeVM,
+    row_refs: Sequence[str],
+    *,
+    user_id: str | None,
+) -> bool:
+    if not user_id or not user_id.startswith("cust_"):
+        return False
+
+    for ref in row_refs:
+        path = normalize_runtime_path(split_ref_fragment(ref)[0])
+        if not CUSTOMER_SCOPED_REF_RE.match(path):
+            continue
+        owner = customer_scoped_ref_owner(vm, ref)
+        # Unknown ownership is not enough to discard evidence. A known
+        # cross-customer owner in a security denial is protected record leakage.
+        if owner is not None and owner != user_id:
+            return True
+    return False
+
+
 def explicit_record_path_if_allowed(
     vm: RuntimeVM,
     spec: ExplicitRecordSpec,
@@ -625,13 +685,24 @@ def submission_refs(
         cmd.protected_record_denial
         or is_cross_customer_protected_record_denial(cmd, row_refs)
     )
+    user_id: str | None = None
+    roles: set[str] = set()
+    if (
+        not protected_record_denial
+        and vm is not None
+        and getattr(cmd, "outcome", "") == "OUTCOME_DENIED_SECURITY"
+    ):
+        user_id, roles = runtime_identity(vm)
+        protected_record_denial = has_cross_customer_denial_ref(
+            vm,
+            row_refs,
+            user_id=user_id,
+        )
 
     if cmd.task_type == "count" or protected_record_denial:
         refs = doc_refs
     else:
-        user_id: str | None = None
-        roles: set[str] = set()
-        if vm is not None:
+        if vm is not None and user_id is None and not roles:
             user_id, roles = runtime_identity(vm)
 
         # The final answer is graded on refs separately from the text. When the

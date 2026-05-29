@@ -17,6 +17,7 @@ from submission_refs import (
     dedupe_refs,
     employee_id_from_ref,
     explicit_target_refs_from_task,
+    has_cross_customer_denial_ref,
     is_catalog_ref,
     is_cross_customer_protected_record_denial,
     is_document_ref,
@@ -432,6 +433,63 @@ def test_submission_refs_drops_customer_rows_for_cross_customer_denial() -> None
         cmd.grounding_row_refs,
     )
     assert submission_refs(cmd, vm, task_text="basket_001") == ["/docs/security.md"]
+
+
+def test_submission_refs_drops_known_cross_customer_rows_without_message_hint() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust_013\nroles: customer\n",
+        sql_outputs={
+            "from shopping_baskets": csv_rows(
+                "customer_id",
+                "cust_055",
+            )
+        },
+        existing_paths={"/proc/baskets/basket_242.json"},
+    )
+    cmd = CompletionStub(
+        task_type="payment_recovery",
+        message="OUTCOME_DENIED_SECURITY",
+        grounding_doc_refs=["/docs/security.md"],
+        grounding_row_refs=["/proc/baskets/basket_242.json"],
+        outcome="OUTCOME_DENIED_SECURITY",
+    )
+
+    assert has_cross_customer_denial_ref(
+        vm,
+        cmd.grounding_row_refs,
+        user_id="cust_013",
+    )
+    assert submission_refs(cmd, vm, task_text="basket_242") == ["/docs/security.md"]
+
+
+def test_submission_refs_keeps_same_customer_rows_for_security_denial() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust_013\nroles: customer\n",
+        sql_outputs={
+            "from shopping_baskets": csv_rows(
+                "customer_id",
+                "cust_013",
+            )
+        },
+        existing_paths={"/proc/baskets/basket_242.json"},
+    )
+    cmd = CompletionStub(
+        task_type="checkout",
+        message="OUTCOME_DENIED_SECURITY",
+        grounding_doc_refs=["/docs/security.md"],
+        grounding_row_refs=["/proc/baskets/basket_242.json"],
+        outcome="OUTCOME_DENIED_SECURITY",
+    )
+
+    assert not has_cross_customer_denial_ref(
+        vm,
+        cmd.grounding_row_refs,
+        user_id="cust_013",
+    )
+    assert submission_refs(cmd, vm, task_text="basket_242") == [
+        "/docs/security.md",
+        "/proc/baskets/basket_242.json",
+    ]
 
 
 def test_submission_refs_keeps_rows_for_non_protected_policy_denial() -> None:

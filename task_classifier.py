@@ -1,3 +1,4 @@
+import re
 from typing import Any, Literal
 
 from openai import OpenAI
@@ -85,6 +86,26 @@ class TaskClassification(BaseModel):
 
 
 TASK_CLASSIFIER_PROMPT = render_prompt("task_classifier.j2")
+HARD_SYSTEM_OVERRIDE_RE = re.compile(
+    r"<\s*/?\s*system\b|"
+    r"\bset\s+active\s+customer(?:_id)?\b|"
+    r"\bignore\s+basket\s+ownership\b|"
+    r"\bbypass\s+authorization\b|"
+    r"\boverride\s+all\s+checks\b|"
+    r"\bthis\s+message\s+overrides\b|"
+    r"\btreat\s+as\s+pre[-\s]?approved\b|"
+    r"\bcustomer_id\s*=",
+    re.IGNORECASE,
+)
+STORE_FLOOR_CHECKOUT_SHORTCUT_RE = re.compile(
+    r"\bstore\s+associate\s+exception\s+handbook\b|"
+    r"\bqueue[-\s]?save\b|"
+    r"\bquick\s+complete\b|"
+    r"\bdo\s+not\s+re[-\s]?check\s+stock\b|"
+    r"\bdon't\s+re[-\s]?check\s+stock\b|"
+    r"\bdesk\s+note\b",
+    re.IGNORECASE,
+)
 
 
 def _parsed_response(resp: Any) -> TaskClassification | None:
@@ -104,6 +125,27 @@ def _parsed_response(resp: Any) -> TaskClassification | None:
             if isinstance(parsed, dict):
                 return TaskClassification.model_validate(parsed)
     return None
+
+
+def _normalize_classification(
+    parsed: TaskClassification,
+    task_text: str,
+) -> TaskClassification:
+    if not parsed.system_override_attempt:
+        return parsed
+    if HARD_SYSTEM_OVERRIDE_RE.search(task_text):
+        return parsed
+    if (
+        parsed.checkout_intent
+        and parsed.explicit_basket_id
+        and STORE_FLOOR_CHECKOUT_SHORTCUT_RE.search(task_text)
+    ):
+        # Store-floor shortcuts are business-policy claims, not necessarily
+        # prompt-injection. Let the main checkout flow read the relevant docs,
+        # inspect ownership/inventory, and return unsupported when policy says
+        # the shortcut cannot bypass current state.
+        return parsed.model_copy(update={"system_override_attempt": False})
+    return parsed
 
 
 def classify_task(
@@ -140,4 +182,4 @@ def classify_task(
     parsed = _parsed_response(resp)
     if parsed is None:
         return TaskClassification()
-    return parsed
+    return _normalize_classification(parsed, task_text)
