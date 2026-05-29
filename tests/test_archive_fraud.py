@@ -285,3 +285,20 @@ def test_analyze_archive_fraud_export_reads_runtime_file() -> None:
     )
 
     assert result["total_message"] == "EUR 6142.00"
+
+
+def test_analyze_archive_fraud_total_matches_refs_to_submit() -> None:
+    # The grader penalises any drift between the reported EUR total and the
+    # row refs we cite, so the helper must keep total_cents consistent with
+    # the rows behind refs_to_submit even after non-overlapping selection
+    # drops some candidate incidents.
+    result = analyze_archive_fraud_content("/archive/payments.tsv", sample_export())
+
+    refs = result["refs_to_submit"]
+    fraud_row_ids = {ref.rsplit("#row=", 1)[-1] for ref in refs}
+    parsed = {row.row_id: row for row in _parse_archive_tsv(sample_export())}
+
+    assert fraud_row_ids <= set(parsed)
+    expected_total = sum(parsed[row_id].amount_cents for row_id in fraud_row_ids)
+    assert result["total_cents"] == expected_total
+    assert result["fraud_row_count"] == len(fraud_row_ids)
