@@ -92,15 +92,15 @@ def openai_client_kwargs() -> dict:
     }
 
 
-def answer_formatter_model() -> str:
-    return os.getenv("ANSWER_FORMATTER_MODEL", "gpt-5.4-nano")
+def helper_model() -> str:
+    return os.getenv("HELPER_MODEL", "gpt-5.4-nano")
 
 
-def answer_formatter_reasoning_effort() -> ReasoningEffort:
+def helper_reasoning_effort() -> ReasoningEffort:
     return cast(
         ReasoningEffort,
         env_choice(
-            "ANSWER_FORMATTER_REASONING_EFFORT",
+            "HELPER_REASONING_EFFORT",
             "low",
             {"none", "low", "medium", "high", "xhigh"},
         ),

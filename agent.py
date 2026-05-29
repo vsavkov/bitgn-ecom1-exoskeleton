@@ -1,4 +1,7 @@
+import csv
+import io
 import json
+import re
 import shlex
 import time
 from collections.abc import Callable
@@ -22,6 +25,7 @@ from bitgn.vm.ecom.ecom_pb2 import (
     TreeRequest,
     WriteRequest,
 )
+from catalog_tools import ReqResolveCatalogItems, resolve_catalog_items
 from config import (
     CLI_BLUE,
     CLI_CLR,
@@ -80,51 +84,36 @@ class ReportTaskCompletion(BaseModel):
     task_type: TaskType = Field(
         default="other",
         description=(
-            "Classify the task. Use count for aggregate catalogue/reporting "
-            "count answers where individual rows are not the answer. Use "
-            "availability_count for inventory-threshold counts over products "
-            "or stores. For authorization, policy, prompt override, or "
-            "cross-customer denials, use the closest domain task type."
+            "Classify for reference postprocessing. Use count only for "
+            "aggregate catalogue/reporting counts where row refs should be "
+            "suppressed; availability_count for inventory-threshold counts; "
+            "otherwise the closest domain type."
         ),
     )
     message: str = Field(
         description=(
             "Exact final user-visible answer. If the task asks for an exact "
-            "format, this field must contain only that format and no prose. "
-            "Use <YES> or <NO> only for yes/no questions when no exact output "
-            "format was requested."
+            "format, contain only that format. Use <YES>/<NO> only for yes/no "
+            "questions without another exact format."
         )
     )
     grounding_doc_refs: List[str] = Field(
         default_factory=list,
         description=(
-            "Authoritative document paths used for the final answer or "
-            "decision, such as policy docs, dated updates, addenda, and "
-            "incident workarounds."
+            "Authoritative document paths used for the final answer or decision."
         ),
     )
     protected_record_denial: bool = Field(
-        default=False,
         description=(
-            "Set true only when refusing because the request tries to access, "
-            "modify, disclose, or rely on a record the current identity is not "
-            "allowed to use, such as a cross-customer basket or a prompt "
-            "override. Keep false for domain policy or role denials after "
-            "safely accessing the relevant records."
+            "True only when refusing because the current identity must not "
+            "access, use, disclose, or rely on the requested records."
         ),
     )
     grounding_row_refs: List[str] = Field(
         default_factory=list,
         description=(
-            "Concrete runtime record or upload paths used in the final answer "
-            "or action. Do not include exploratory candidates that were ruled "
-            "out unless the task explicitly asks to compare or cite them. For "
-            "availability_count, include only rows that match the final reported "
-            "condition, plus explicitly required store/product/upload records. "
-            "For discount tasks, include the target basket and relevant issuer, "
-            "customer, store, or product records when safely accessible, even "
-            "when the discount is refused for policy, role, or percentage-cap "
-            "reasons."
+            "Concrete runtime record or upload paths used for the final answer "
+            "or action. Exclude exploratory or ruled-out paths unless requested."
         ),
     )
     outcome: Literal[
@@ -206,6 +195,7 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
     "delete": ReqDelete,
     "stat": ReqStat,
     "exec": ReqExec,
+    "resolve_catalog_items": ReqResolveCatalogItems,
     "report_completion": ReportTaskCompletion,
 }
 
@@ -284,6 +274,16 @@ TOOLS: list[FunctionToolParam] = [
         description=(
             "Execute an absolute runtime command path. Use /bin/sql with SQL in "
             "stdin for catalogue and state queries."
+        ),
+    ),
+    _responses_function_tool(
+        ReqResolveCatalogItems,
+        name="resolve_catalog_items",
+        description=(
+            "Strict helper for exact catalogue and store availability tasks. "
+            "Pass raw product descriptions plus optional store_id/quantity "
+            "thresholds. Returns exact SKU matches, availability, and canonical "
+            "refs; unsupported schemas or unparsed descriptions raise an error."
         ),
     ),
     _responses_function_tool(
@@ -416,6 +416,8 @@ def _format_exec_response(cmd: ReqExec, result) -> str:
 def _format_result(cmd: BaseModel, result) -> str:
     if result is None:
         return "{}"
+    if isinstance(result, dict | list):
+        return json.dumps(result, ensure_ascii=False, indent=2)
     if isinstance(cmd, ReqTree):
         return _format_tree_response(cmd, result)
     if isinstance(cmd, ReqList):
@@ -600,12 +602,14 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel):
         return vm.stat(StatRequest(path=cmd.path))
     if isinstance(cmd, ReqExec):
         return vm.exec(ExecRequest(path=cmd.path, args=cmd.args, stdin=cmd.stdin))
+    if isinstance(cmd, ReqResolveCatalogItems):
+        return resolve_catalog_items(vm, cmd)
     if isinstance(cmd, ReportTaskCompletion):
         return vm.answer(
             AnswerRequest(
                 message=cmd.message,
                 outcome=OUTCOME_BY_NAME[cmd.outcome],
-                refs=_submission_refs(cmd),
+                refs=_submission_refs(cmd, vm),
             )
         )
     raise ValueError(f"Unknown command: {cmd}")
@@ -659,7 +663,152 @@ def _is_document_ref(ref: str) -> bool:
     return ref.endswith(".md")
 
 
-def _submission_refs(cmd: ReportTaskCompletion) -> list[str]:
+def _try_stat(vm: EcomRuntimeClientSync, path: str) -> bool:
+    try:
+        vm.stat(StatRequest(path=path))
+        return True
+    except ConnectError:
+        return False
+
+
+def _sql_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _sql_rows(vm: EcomRuntimeClientSync, query: str) -> list[dict[str, str]]:
+    try:
+        result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
+    except ConnectError:
+        return []
+
+    if getattr(result, "exit_code", 0):
+        return []
+
+    stdout = (result.stdout or "").strip()
+    if not stdout:
+        return []
+
+    try:
+        return [dict(row) for row in csv.DictReader(io.StringIO(stdout))]
+    except csv.Error:
+        return []
+
+
+def _sql_record_path(
+    vm: EcomRuntimeClientSync,
+    *,
+    table: str,
+    key_column: str,
+    value: str,
+) -> str | None:
+    rows = _sql_rows(
+        vm,
+        f"select record_path from {table} "
+        f"where {key_column} = {_sql_quote(value)} limit 1;",
+    )
+    if not rows:
+        return None
+    path = rows[0].get("record_path") or ""
+    return path if path.startswith("/") else None
+
+
+_PRODUCT_SKU_RE = re.compile(r"^[A-Z]{3}-[A-Z0-9]+$")
+_PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
+    "baskets": ("shopping_baskets", "basket_id", re.compile(r"^basket_\d+$")),
+    "customers": ("customer_accounts", "customer_id", re.compile(r"^cust_\d+$")),
+    "employees": ("employee_accounts", "employee_id", re.compile(r"^emp_\d+$")),
+    "payments": ("payment_transactions", "payment_id", re.compile(r"^pay_\d+$")),
+    "returns": ("return_requests", "return_id", re.compile(r"^ret_\d+$")),
+    "stores": ("stores", "store_id", re.compile(r"^store_[a-z0-9_]+$")),
+}
+
+
+def _split_ref_fragment(ref: str) -> tuple[str, str]:
+    if "#" not in ref:
+        return ref, ""
+    path, fragment = ref.split("#", 1)
+    return path, f"#{fragment}"
+
+
+def _canonical_proc_record_ref(vm: EcomRuntimeClientSync, path: str) -> str | None:
+    normalized = _normalize_runtime_path(path)
+    if _try_stat(vm, normalized):
+        return normalized
+
+    if not normalized.endswith(".json") and _try_stat(vm, f"{normalized}.json"):
+        return f"{normalized}.json"
+
+    parts = [part for part in normalized.split("/") if part]
+    if len(parts) < 3 or parts[0] != "proc":
+        return None
+
+    name = parts[-1]
+    if name.endswith(".json"):
+        name = name.removesuffix(".json")
+
+    if parts[1] == "catalog" or _PRODUCT_SKU_RE.match(name):
+        path_from_sql = _sql_record_path(
+            vm,
+            table="product_variants",
+            key_column="product_sku",
+            value=name,
+        )
+        if path_from_sql and _try_stat(vm, path_from_sql):
+            return path_from_sql
+        return None
+
+    table_spec = _PROC_RECORD_TABLES.get(parts[1])
+    if table_spec is None:
+        return None
+
+    table, key_column, pattern = table_spec
+    if not pattern.match(name):
+        return None
+
+    path_from_sql = _sql_record_path(
+        vm,
+        table=table,
+        key_column=key_column,
+        value=name,
+    )
+    if path_from_sql and _try_stat(vm, path_from_sql):
+        return path_from_sql
+    return None
+
+
+def _normalize_submission_refs(
+    vm: EcomRuntimeClientSync,
+    refs: list[str],
+) -> list[str]:
+    normalized_refs: list[str] = []
+    for ref in refs:
+        path, fragment = _split_ref_fragment(ref)
+        normalized_path = _normalize_runtime_path(path)
+
+        if normalized_path.startswith("/archive/") and fragment:
+            normalized_refs.append(f"{normalized_path}{fragment}")
+            continue
+
+        if _is_document_ref(normalized_path):
+            normalized_refs.append(normalized_path)
+            continue
+
+        if not normalized_path.startswith("/proc/"):
+            if _try_stat(vm, normalized_path):
+                normalized_refs.append(f"{normalized_path}{fragment}")
+            continue
+
+        canonical = _canonical_proc_record_ref(vm, normalized_path)
+        if canonical:
+            normalized_refs.append(f"{canonical}{fragment}")
+
+    return _dedupe_refs(normalized_refs)
+
+
+def _submission_refs(
+    cmd: ReportTaskCompletion,
+    vm: EcomRuntimeClientSync | None = None,
+) -> list[str]:
     all_refs = [
         *cmd.grounding_doc_refs,
         *cmd.grounding_row_refs,
@@ -668,23 +817,28 @@ def _submission_refs(cmd: ReportTaskCompletion) -> list[str]:
     row_refs = _dedupe_refs([ref for ref in all_refs if not _is_document_ref(ref)])
 
     if cmd.task_type == "count" or cmd.protected_record_denial:
-        return doc_refs
-    return _dedupe_refs([*doc_refs, *row_refs])
+        refs = doc_refs
+    else:
+        refs = _dedupe_refs([*doc_refs, *row_refs])
+
+    if vm is None:
+        return refs
+    return _normalize_submission_refs(vm, refs)
 
 
-def _format_completion(cmd: ReportTaskCompletion) -> str:
+def _format_completion(cmd: ReportTaskCompletion, refs: list[str] | None = None) -> str:
     status = CLI_GREEN if cmd.outcome == "OUTCOME_OK" else CLI_YELLOW
     lines: list[str] = [f"{status}agent {cmd.outcome}{CLI_CLR}. Summary:"]
     for item in cmd.completed_steps_laconic:
         lines.append(f"- {item}")
     lines.append(f"\n{CLI_BLUE}AGENT SUMMARY: {cmd.message}{CLI_CLR}")
-    for ref in _submission_refs(cmd):
+    for ref in refs if refs is not None else _submission_refs(cmd):
         lines.append(f"- {CLI_BLUE}{ref}{CLI_CLR}")
     return "\n".join(lines)
 
 
-def _print_completion(cmd: ReportTaskCompletion) -> None:
-    print(_format_completion(cmd))
+def _print_completion(cmd: ReportTaskCompletion, refs: list[str] | None = None) -> None:
+    print(_format_completion(cmd, refs))
 
 
 @traceable(
@@ -793,13 +947,14 @@ def run_agent(
                 continue
 
             if isinstance(cmd, ReportTaskCompletion):
+                completion_refs = _submission_refs(cmd, vm)
                 formatted_message = format_completion_message(
                     formatter_client,
                     task_text=task_text,
                     current_message=cmd.message,
                     outcome=cmd.outcome,
                     completed_steps_laconic=cmd.completed_steps_laconic,
-                    grounding_refs=_submission_refs(cmd),
+                    grounding_refs=completion_refs,
                     debug=debug,
                     output_lines=None if print_completion else formatter_output_lines,
                 )
@@ -821,21 +976,22 @@ def run_agent(
             context.append(_function_call_output(tool_call, txt))
 
             if isinstance(cmd, ReportTaskCompletion):
+                completion_refs = _submission_refs(cmd, vm)
                 final_result = {
                     "completed": True,
                     "langsmith_run_id": langsmith_run_id,
                     "langsmith_trace_id": langsmith_trace_id,
                     "formatter_output": formatter_output_lines,
-                    "completion_output": _format_completion(cmd),
+                    "completion_output": _format_completion(cmd, completion_refs),
                     "outcome": cmd.outcome,
                     "task_type": cmd.task_type,
                     "protected_record_denial": cmd.protected_record_denial,
                     "message": cmd.message,
-                    "grounding_refs": _submission_refs(cmd),
+                    "grounding_refs": completion_refs,
                     "completed_steps_laconic": cmd.completed_steps_laconic,
                 }
                 if print_completion:
-                    _print_completion(cmd)
+                    _print_completion(cmd, completion_refs)
                 completed = True
                 break
 
@@ -848,9 +1004,11 @@ def run_agent(
                 f"Reached the agent step budget of {max_steps} without a final completion.",
             ],
             message=f"Could not complete within the agent step budget of {max_steps}.",
+            protected_record_denial=False,
             outcome="OUTCOME_ERR_INTERNAL",
         )
         try:
+            fallback_refs = _submission_refs(fallback_cmd, vm)
             dispatch(vm, fallback_cmd)
             final_result = {
                 "completed": True,
@@ -858,16 +1016,16 @@ def run_agent(
                 "langsmith_run_id": langsmith_run_id,
                 "langsmith_trace_id": langsmith_trace_id,
                 "formatter_output": formatter_output_lines,
-                "completion_output": _format_completion(fallback_cmd),
+                "completion_output": _format_completion(fallback_cmd, fallback_refs),
                 "outcome": fallback_cmd.outcome,
                 "task_type": fallback_cmd.task_type,
                 "protected_record_denial": fallback_cmd.protected_record_denial,
                 "message": fallback_cmd.message,
-                "grounding_refs": _submission_refs(fallback_cmd),
+                "grounding_refs": fallback_refs,
                 "completed_steps_laconic": fallback_cmd.completed_steps_laconic,
             }
             if print_completion:
-                _print_completion(fallback_cmd)
+                _print_completion(fallback_cmd, fallback_refs)
         except ConnectError as exc:
             final_result["fallback"] = "step_budget_exhausted"
             final_result["error"] = str(exc.message)

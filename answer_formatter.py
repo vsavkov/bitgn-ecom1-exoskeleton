@@ -10,8 +10,8 @@ from config import (
     CLI_CLR,
     CLI_RED,
     CLI_YELLOW,
-    answer_formatter_model,
-    answer_formatter_reasoning_effort,
+    helper_model,
+    helper_reasoning_effort,
     render_prompt,
 )
 
@@ -112,7 +112,7 @@ def format_completion_message(
 
     try:
         resp = client.responses.parse(
-            model=answer_formatter_model(),
+            model=helper_model(),
             instructions=ANSWER_FORMATTER_PROMPT,
             input=[
                 {
@@ -121,7 +121,7 @@ def format_completion_message(
                 }
             ],
             text_format=FormattedAnswer,
-            reasoning=Reasoning(effort=answer_formatter_reasoning_effort()),
+            reasoning=Reasoning(effort=helper_reasoning_effort()),
             max_output_tokens=1024,
         )
     except Exception as exc:

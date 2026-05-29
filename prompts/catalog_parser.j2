@@ -1,0 +1,18 @@
+Parse ecommerce catalogue product descriptions into structured lookup fields.
+
+Input is JSON with an `items` array. Each item has:
+- `item_index`
+- `description`
+
+For each item, return exactly one parsed object with the same `item_index`.
+
+Rules:
+- Descriptions usually look like: `the <product kind> from <brand> in the <family> line that has <constraints>`.
+- `brand` is the text after `from` and before `in the`.
+- `product_kind` is the text after `the` and before `from`.
+- `product_family` is the exact line/family text after `in the` and before `line`.
+- `constraints` contains every explicit property constraint after `that has`.
+- Split constraints joined by commas, `and has`, and plain `and` when it introduces another property.
+- Preserve property labels and values as short natural-language strings, e.g. `disc diameter 180 mm`, `mask type half mask`, `protection class p3`.
+- Do not infer omitted constraints. Do not add catalogue data that was not present in the description.
+- If a description is malformed, still return the best parse with empty strings/lists where needed. Do not invent fields.

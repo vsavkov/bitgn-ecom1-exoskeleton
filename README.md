@@ -35,8 +35,8 @@ Useful environment overrides:
 - `BITGN_API_KEY` is required for official ECOM benchmark runs
 - `BENCH_ID` or `BENCHMARK_ID` defaults to `bitgn/ecom1-dev`
 - `MODEL_ID` can be set in `.env`; this checkout currently uses `gpt-5.4-mini`
-- `ANSWER_FORMATTER_MODEL` controls the final answer formatter; default is `gpt-5.4-nano`
-- `ANSWER_FORMATTER_REASONING_EFFORT` controls formatter reasoning; default is `low`
+- `HELPER_MODEL` controls helper agents such as the answer formatter and catalog parser; default is `gpt-5.4-nano`
+- `HELPER_REASONING_EFFORT` controls helper-agent reasoning; default is `low`
 - `AGENT_MAX_STEPS` caps response/tool iterations per trial; default is `75`
 - `TRIAL_BATCH_SIZE` controls concurrent trials during `make run`; default is `10`
 - `OPENAI_TIMEOUT_SECONDS` caps each OpenAI request; default is `40`
