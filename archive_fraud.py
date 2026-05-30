@@ -60,8 +60,6 @@ ARCHIVE_CUSTOMER_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = (
     ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS
 )
 ARCHIVE_SIGNAL_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = 100_000
-ARCHIVE_HIGH_VALUE_PAIR_WINDOW_SECONDS = 60 * 60
-ARCHIVE_HIGH_VALUE_PAIR_MIN_TOTAL_CENTS = 150_000
 
 
 __all__ = [
@@ -240,67 +238,6 @@ def _archive_signal_city_hop_incidents(
     return incidents
 
 
-def _archive_high_value_pair_incidents(
-    rows: list[ArchivePaymentRow],
-) -> list[FraudIncident]:
-    # This fills the gap between 10-minute city hops and the generic high-value
-    # rules that require at least three rows. Two expensive transactions sharing
-    # a customer, card, or customer-owned device across cities inside an hour
-    # are still a coherent archive fraud incident.
-    grouped: dict[tuple[str, str], list[ArchivePaymentRow]] = {}
-    for row in rows:
-        if row.customer_ref:
-            grouped.setdefault(("customer_ref", row.customer_ref), []).append(row)
-        if row.payment_method_fingerprint:
-            grouped.setdefault(
-                ("payment_method_fingerprint", row.payment_method_fingerprint),
-                [],
-            ).append(row)
-        if (
-            row.archive_channel in CUSTOMER_CONTROLLED_CHANNELS
-            and row.device_fingerprint
-        ):
-            grouped.setdefault(
-                ("device_fingerprint", row.device_fingerprint),
-                [],
-            ).append(row)
-
-    incidents: list[FraudIncident] = []
-    for (key, key_value), group_rows in grouped.items():
-        ordered = sorted(group_rows, key=lambda row: (row.created_at, row.row_id))
-        for index, first in enumerate(ordered):
-            window_rows = [
-                row
-                for row in ordered[index:]
-                if (row.created_at - first.created_at).total_seconds()
-                <= ARCHIVE_HIGH_VALUE_PAIR_WINDOW_SECONDS
-            ]
-            if len(window_rows) < 2:
-                continue
-            # The 10-minute city-hop rules already own short impossible-travel
-            # chains; pair rules cover slower high-value hops inside one hour.
-            if (
-                window_rows[-1].created_at - window_rows[0].created_at
-            ).total_seconds() <= ARCHIVE_CITY_HOP_WINDOW_SECONDS:
-                continue
-            if len({row.store_city for row in window_rows}) < 2:
-                continue
-            if sum(row.amount_cents for row in window_rows) < (
-                ARCHIVE_HIGH_VALUE_PAIR_MIN_TOTAL_CENTS
-            ):
-                continue
-            incidents.append(
-                FraudIncident(
-                    rule="archive_high_value_pair",
-                    key=key,
-                    key_value=key_value,
-                    rows=tuple(window_rows),
-                )
-            )
-
-    return incidents
-
-
 def _batched_short_city_hop_incidents(
     incidents: list[FraudIncident],
 ) -> list[FraudIncident]:
@@ -363,10 +300,7 @@ def _filter_archive_city_hop_incidents(
 def _detect_archive_incidents(
     rows: list[ArchivePaymentRow],
 ) -> tuple[list[FraudIncident], list[FraudIncident]]:
-    strong_incidents = [
-        *_candidate_incidents(list(rows)),  # type: ignore[arg-type]
-        *_archive_high_value_pair_incidents(rows),
-    ]
+    strong_incidents = _candidate_incidents(list(rows))  # type: ignore[arg-type]
     city_hop_incidents = _filter_archive_city_hop_incidents(
         [
             *_archive_city_hop_incidents(rows),
