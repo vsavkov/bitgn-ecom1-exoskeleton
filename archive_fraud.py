@@ -55,7 +55,7 @@ ARCHIVE_CITY_HOP_WINDOW_SECONDS = 10 * 60
 ARCHIVE_CITY_HOP_BATCH_WINDOW_SECONDS = 60 * 60
 ARCHIVE_CITY_HOP_BATCH_MIN_INCIDENTS = 3
 ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS = 4
-ARCHIVE_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = 150_000
+ARCHIVE_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = 100_000
 ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS = 10_000
 
 
@@ -222,10 +222,6 @@ def _archive_signal_city_hop_incidents(
             if len(chain) < 2:
                 continue
             if len({row.store_city for row in chain}) < 2:
-                continue
-            if sum(row.amount_cents for row in chain) < (
-                ARCHIVE_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS
-            ):
                 continue
             incidents.append(
                 FraudIncident(
