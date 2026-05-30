@@ -237,6 +237,7 @@ def _has_catalog_projection(vm: RuntimeVM) -> bool:
 
 
 _UNIT_SUFFIXES = {
+    "a",
     "cm",
     "k",
     "kw",
@@ -254,6 +255,7 @@ _GENERIC_CONSTRAINT_WORDS = {
     "adapter",
     "adhesive",
     "anchor",
+    "amperage",
     "bar",
     "battery",
     "class",
@@ -269,9 +271,12 @@ _GENERIC_CONSTRAINT_WORDS = {
     "fastener",
     "finish",
     "fitting",
+    "flux",
     "ip",
     "kit",
     "length",
+    "lumen",
+    "lumens",
     "luminous",
     "machine",
     "mask",
@@ -290,20 +295,26 @@ _GENERIC_CONSTRAINT_WORDS = {
     "volume",
     "wattage",
     "width",
+    "current",
 }
 _STRUCTURED_PROPERTY_LABEL_WORDS = {
+    "amperage",
     "class",
     "color",
     "connection",
     "connector",
     "contents",
     "count",
+    "current",
     "diameter",
     "drive",
     "family",
     "finish",
+    "flux",
     "ip",
     "length",
+    "lumen",
+    "lumens",
     "luminous",
     "material",
     "mask",
@@ -337,6 +348,10 @@ _CITY_AVAILABILITY_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _UNIT_WORD_ALIASES = {
+    "amp": "a",
+    "amps": "a",
+    "ampere": "a",
+    "amperes": "a",
     "pcs": "pc",
     "pieces": "pc",
 }
@@ -402,12 +417,15 @@ def _format_count_message(answer_format: str, total: int) -> str:
 def _property_label_candidates(key: str) -> list[str]:
     label = key.replace("_", " ")
     parts = label.split()
+    original_parts = parts[:]
+    unit_suffix = parts[-1] if parts and parts[-1] in _UNIT_SUFFIXES else ""
     labels = [label]
-    if len(parts) > 1 and parts[-1] in _UNIT_SUFFIXES:
+    if len(parts) > 1 and unit_suffix:
         labels.append(" ".join(parts[:-1]))
         parts = parts[:-1]
     if len(parts) > 1 and parts[-1] in {
         "count",
+        "current",
         "diameter",
         "family",
         "length",
@@ -423,6 +441,13 @@ def _property_label_candidates(key: str) -> list[str]:
         "width",
     }:
         labels.append(parts[-1])
+    # Catalogue schemas vary between snapshots: LED brightness may be exposed as
+    # luminous_flux_lm, lumens, or a generic *_lm output key, while automotive
+    # charger current may be current_a, charging_current_a, or output_a.
+    if unit_suffix == "lm" or set(original_parts) & {"flux", "lumen", "lumens"}:
+        labels.extend(["luminous flux", "flux", "lumens"])
+    if unit_suffix == "a" or set(original_parts) & {"amperage", "current"}:
+        labels.extend(["current", "amperage"])
     if "color" in parts:
         labels.append("color family")
         labels.append("color")

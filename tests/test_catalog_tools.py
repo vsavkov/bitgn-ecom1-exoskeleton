@@ -96,6 +96,19 @@ def test_catalog_text_normalization_and_numbers() -> None:
         "paint color",
         "color",
     ]
+    assert _property_label_candidates("charging_current_a") == [
+        "charging current a",
+        "charging current",
+        "amperage",
+        "current",
+    ]
+    assert _property_label_candidates("light_output_lm") == [
+        "light output lm",
+        "luminous flux",
+        "light output",
+        "lumens",
+        "flux",
+    ]
     assert _number_from_text("about 12,5 mm") == 12.5
     assert _number_from_text("none") is None
 
@@ -140,6 +153,24 @@ def test_catalog_constraint_matching() -> None:
         key="rated_voltage_v",
         text_value="",
         number_value="400",
+    )
+    assert _property_matches_constraint(
+        "current 6 A",
+        key="charging_current_a",
+        text_value="",
+        number_value="6",
+    )
+    assert _property_matches_constraint(
+        "luminous flux 470 lm",
+        key="lumens",
+        text_value="",
+        number_value="470",
+    )
+    assert _property_matches_constraint(
+        "luminous flux 470 lm",
+        key="light_output_lm",
+        text_value="",
+        number_value="470",
     )
     assert not _property_matches_constraint(
         "color family red",
@@ -255,6 +286,68 @@ def test_structured_constraints_match_compact_unit_variant_tail() -> None:
     )
 
     assert matched == ["tool type hammer", "length 250 mm"]
+    assert missing == []
+
+
+def test_structured_constraints_match_compact_current_variant_tail() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="product type jump starter",
+                label="product type",
+                value="jump starter",
+            ),
+            ParsedCatalogConstraint(
+                text="voltage 12 V",
+                label="voltage",
+                value="12 V",
+            ),
+            ParsedCatalogConstraint(
+                text="current 6 A",
+                label="current",
+                value="6 A",
+            ),
+        ],
+        [],
+        "Osram Classic Night 3QE-SVE Automotive Charger and Bulb jump starter 12V 6A",
+        product_family_name="Osram Classic Night 3QE-SVE Automotive Charger and Bulb",
+    )
+
+    assert matched == ["product type jump starter", "voltage 12 V", "current 6 A"]
+    assert missing == []
+
+
+def test_structured_constraints_match_lumen_property_aliases() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="wattage 6 W",
+                label="wattage",
+                value="6 W",
+            ),
+            ParsedCatalogConstraint(
+                text="luminous flux 470 lm",
+                label="luminous flux",
+                value="470 lm",
+            ),
+        ],
+        [
+            {
+                "property_key": "wattage_w",
+                "property_value_text": "",
+                "property_value_number": "6",
+            },
+            {
+                "property_key": "lumens",
+                "property_value_text": "",
+                "property_value_number": "470",
+            },
+        ],
+        "Osram Warm Classic 2NL-Z7I LED Bulb G9 6W 2700K non-dimmable",
+        product_family_name="Osram Warm Classic 2NL-Z7I LED Bulb",
+    )
+
+    assert matched == ["wattage 6 W", "luminous flux 470 lm"]
     assert missing == []
 
 
