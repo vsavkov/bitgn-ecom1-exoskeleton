@@ -2,42 +2,50 @@ from types import SimpleNamespace
 
 from answer_formatter import (
     FormattedAnswer,
-    _leading_yes_no_token_message,
     _parsed_response,
     format_completion_message,
 )
 
 
-def test_leading_yes_no_token_message_rewrites_only_word_plus_space() -> None:
-    assert _leading_yes_no_token_message(" yes it is") == "<YES> it is"
-    assert _leading_yes_no_token_message("NO thanks") == "<NO> thanks"
-    assert _leading_yes_no_token_message("yes") == "<YES>"
-    assert _leading_yes_no_token_message(" No ") == "<NO>"
-    assert _leading_yes_no_token_message("yesterday was fine") is None
+class FakeResponses:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
 
-
-def test_format_completion_message_fast_path_does_not_call_client() -> None:
-    class Client:
-        @property
-        def responses(self):
-            raise AssertionError("formatter client should not be used")
-
-    output_lines: list[str] = []
-
-    assert (
-        format_completion_message(
-            Client(),
-            task_text="Can I?",
-            current_message="Yes this is allowed",
-            outcome="OUTCOME_OK",
-            completed_steps_laconic=[],
-            grounding_refs=[],
-            debug=False,
-            output_lines=output_lines,
+    def parse(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(
+            output_parsed={
+                "missed_elements": "used tenant boolean format",
+                "formatted_message": "TRUE(1)",
+            },
+            output=[],
         )
-        == "<YES> this is allowed"
+
+
+class FakeClient:
+    def __init__(self) -> None:
+        self.responses = FakeResponses()
+
+
+def test_format_completion_message_passes_agents_md_to_formatter() -> None:
+    client = FakeClient()
+
+    result = format_completion_message(
+        client,
+        task_text="Can I?",
+        current_message="Yes this is allowed",
+        outcome="OUTCOME_OK",
+        completed_steps_laconic=[],
+        grounding_refs=["/docs/security.md"],
+        agents_md="For yes/no answers, answer exactly `TRUE(1)` or `FALSE(0)`.",
+        debug=False,
     )
-    assert output_lines
+
+    assert result == "TRUE(1)"
+    payload = client.responses.calls[0]["input"][0]["content"]
+    assert "agents_md" in payload
+    assert "TRUE(1)" in payload
+    assert "/docs/security.md" in payload
 
 
 def test_parsed_response_accepts_top_level_and_nested_structured_output() -> None:

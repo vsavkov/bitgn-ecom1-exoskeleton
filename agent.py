@@ -263,40 +263,6 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
 }
 
 TOOL_NAMES_BY_MODEL = {model: name for name, model in TOOL_MODELS.items()}
-DEFAULT_YES_NO_TOKENS = ("<YES>", "<NO>")
-
-
-def _yes_no_tokens_from_agents_md(content: str) -> tuple[str, str]:
-    normalized = content.upper()
-    if "TRUE(1)" in normalized and "FALSE(0)" in normalized:
-        return ("TRUE(1)", "FALSE(0)")
-    if "<YES>" in normalized and "<NO>" in normalized:
-        return DEFAULT_YES_NO_TOKENS
-    return DEFAULT_YES_NO_TOKENS
-
-
-def _apply_yes_no_tokens(
-    cmd: ReportTaskCompletion,
-    tokens: tuple[str, str],
-) -> ReportTaskCompletion:
-    if tokens == DEFAULT_YES_NO_TOKENS:
-        return cmd
-
-    message = cmd.message.strip()
-    upper = message.upper()
-    yes_token, no_token = tokens
-
-    if upper == "<YES>" or upper.startswith("<YES> "):
-        return cmd.model_copy(update={"message": yes_token})
-    if upper == "<NO>" or upper.startswith("<NO> "):
-        return cmd.model_copy(update={"message": no_token})
-    if upper in {"YES", "TRUE", "TRUE(1)"}:
-        return cmd.model_copy(update={"message": yes_token})
-    if upper in {"NO", "FALSE", "FALSE(0)"}:
-        return cmd.model_copy(update={"message": no_token})
-    return cmd
-
-
 def _responses_function_tool(
     model: type[BaseModel],
     *,
@@ -1318,7 +1284,7 @@ def run_agent(
     tree_read_paths: set[str] = set()
     formatter_output_lines: list[str] = []
     ledger = EvidenceLedger()
-    yes_no_tokens = DEFAULT_YES_NO_TOKENS
+    agents_md_content = ""
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
@@ -1371,7 +1337,7 @@ def run_agent(
                 isinstance(cmd, ReqRead)
                 and cmd.path.rstrip("/").upper() == "/AGENTS.MD"
             ):
-                yes_no_tokens = _yes_no_tokens_from_agents_md(result.content or "")
+                agents_md_content = result.content or ""
             _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
             formatted = _format_result(cmd, result)
             if debug:
@@ -1422,7 +1388,20 @@ def run_agent(
             payment_recovery_review,
             task_text=task_text,
         )
-        cmd = _apply_yes_no_tokens(cmd, yes_no_tokens)
+        completion_refs = _submission_refs(cmd, vm, task_text=task_text)
+        formatted_message = format_completion_message(
+            formatter_client,
+            task_text=task_text,
+            task_type=cmd.task_type,
+            current_message=cmd.message,
+            outcome=cmd.outcome,
+            completed_steps_laconic=cmd.completed_steps_laconic,
+            grounding_refs=completion_refs,
+            agents_md=agents_md_content,
+            debug=debug,
+            output_lines=None if print_completion else formatter_output_lines,
+        )
+        cmd = cmd.model_copy(update={"message": formatted_message})
         dispatch(vm, cmd, task_text=task_text)
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
         result_payload = {
@@ -1696,11 +1675,11 @@ def run_agent(
                     outcome=cmd.outcome,
                     completed_steps_laconic=cmd.completed_steps_laconic,
                     grounding_refs=completion_refs,
+                    agents_md=agents_md_content,
                     debug=debug,
                     output_lines=None if print_completion else formatter_output_lines,
                 )
                 cmd = cmd.model_copy(update={"message": formatted_message})
-                cmd = _apply_yes_no_tokens(cmd, yes_no_tokens)
             elif isinstance(cmd, ReqResolveCatalogItems):
                 cmd = _normalize_catalog_resolution_for_task(cmd, task_text=task_text)
 
