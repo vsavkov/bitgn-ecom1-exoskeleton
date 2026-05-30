@@ -350,6 +350,8 @@ thead .task-head {{
 .sum-head {{
   left: 0;
   z-index: 4;
+  background: #111827;
+  color: #ffffff;
 }}
 .empty {{
   padding: 20px;
