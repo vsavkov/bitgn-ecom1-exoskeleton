@@ -109,9 +109,7 @@ def amount_refund_clarification_preflight(
     if len(refs) <= 1:
         return None
 
-    payment_ids = [
-        row.get("payment_id") or "" for row in rows if row.get("payment_id")
-    ]
+    payment_ids = [row.get("payment_id") or "" for row in rows if row.get("payment_id")]
     amount = f"EUR {amount_cents // 100}.{amount_cents % 100:02d}"
     return RefundClarification(
         completed_steps_laconic=[
@@ -157,30 +155,45 @@ def rejected_return_clarification_preflight(
         return None
 
     row = rejected_rows[0]
+    amount_cents = _row_amount_cents(row)
+    if amount_cents is None:
+        return None
+
+    # A rejected return is normally a policy denial. Ask for clarification only
+    # when the supplied amount is also ambiguous across this customer's payments,
+    # because the user may be pointing at an unrefundable record while describing
+    # another same-amount purchase.
+    amount_payment_refs = _payment_refs_for_amount(
+        vm,
+        user_id=user_id,
+        amount_cents=amount_cents,
+    )
+    if len(amount_payment_refs) <= 1:
+        return None
+
     payment_id = row.get("payment_id") or ""
     return_id = row.get("return_id") or ""
     refs = dedupe_refs(
         [
-            row.get("payment_record_path") or "",
+            *amount_payment_refs,
             row.get("return_record_path") or "",
         ]
     )
+    amount = f"EUR {amount_cents // 100}.{amount_cents % 100:02d}"
     return RefundClarification(
         completed_steps_laconic=[
             "Resolved the refund request to a single customer payment.",
+            (f"Found linked return {return_id} for {payment_id} with status rejected."),
             (
-                f"Found linked return {return_id} for {payment_id} with status "
-                "rejected."
-            ),
-            (
-                "Asked for clarification because a rejected return is not the same "
-                "workflow as finalizing a pending refund."
+                f"Found multiple {amount} payments for the current customer, "
+                "so the rejected target does not identify a supported refund basis."
             ),
         ],
         message=(
             f"I found payment {payment_id} and linked return {return_id}, but that "
-            "return is rejected. Please clarify whether you want to dispute the "
-            "rejected return or provide a new refund basis."
+            f"return is rejected. I also found multiple {amount} payments for your "
+            "account, so please clarify which purchase or refund basis you want me "
+            "to use."
         ),
         doc_refs=["/docs/security.md", "/docs/returns.md"],
         row_refs=refs,
@@ -273,4 +286,39 @@ def _payment_return_rows_for_amount(
         + "and p.payment_currency = 'EUR' "
         + "order by p.payment_created_at desc, p.payment_id, "
         + "r.return_created_at desc, r.return_id;",
+    )
+
+
+def _row_amount_cents(row: dict[str, str]) -> int | None:
+    raw_amount = (row.get("payment_amount_cents") or "").strip()
+    raw_currency = (row.get("payment_currency") or "").strip().upper()
+    if raw_currency != "EUR":
+        return None
+    try:
+        return int(raw_amount)
+    except ValueError:
+        return None
+
+
+def _payment_refs_for_amount(
+    vm: RuntimeVM,
+    *,
+    user_id: str,
+    amount_cents: int,
+) -> list[str]:
+    rows = _sql_rows(
+        vm,
+        "select payment_id, record_path, payment_created_at "
+        "from payment_transactions "
+        f"where customer_id = {sql_quote(user_id)} "
+        f"and payment_amount_cents = {amount_cents} "
+        "and payment_currency = 'EUR' "
+        "order by payment_created_at desc, payment_id;",
+    )
+    return dedupe_refs(
+        [
+            row.get("record_path") or ""
+            for row in rows
+            if (row.get("record_path") or "").startswith("/")
+        ]
     )
