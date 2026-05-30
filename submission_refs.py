@@ -56,12 +56,11 @@ class ExplicitRecordSpec(NamedTuple):
 
 
 PRODUCT_SKU_RE = re.compile(
-    r"^(?=[A-Z0-9-]{10,}$)(?=[A-Z0-9-]*\d)[A-Z]{2,}(?:-[A-Z0-9]+)+$"
+    r"^(?=[A-Z0-9-]{10,}$)[A-Z]{2,}(?:-[A-Z0-9]+)+$"
 )
 MESSAGE_SKU_RE = re.compile(
     r"(?<![A-Z0-9-])"
     r"(?=[A-Z0-9-]{10,}(?![A-Z0-9-]))"
-    r"(?=[A-Z0-9-]*\d)"
     r"[A-Z]{2,}(?:-[A-Z0-9]+)+"
     r"(?![A-Z0-9-])"
 )
@@ -84,6 +83,10 @@ CUSTOMER_SCOPED_REF_RE = re.compile(
     re.IGNORECASE,
 )
 CATALOG_REF_RE = re.compile(r"^/proc/catalog(?:/|$)", re.IGNORECASE)
+BASKET_REF_RE = re.compile(
+    r"^/proc/(?:baskets/|carts/[^/]+/)(?P<basket>basket[-_]\d+)(?:\.json)?$",
+    re.IGNORECASE,
+)
 PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
     "baskets": ("shopping_baskets", "basket_id", re.compile(r"^basket_\d+$")),
     "customers": ("customer_accounts", "customer_id", CUSTOMER_ID_RE),
@@ -430,6 +433,28 @@ def task_sku_refs(vm: RuntimeVM, task_text: str) -> list[str]:
     if not task_text:
         return []
     return sku_refs(vm, MESSAGE_SKU_RE.findall(task_text))
+
+
+def negated_task_sku_refs(vm: RuntimeVM, task_text: str) -> list[str]:
+    if not task_text:
+        return []
+
+    negated_skus: list[str] = []
+    for match in MESSAGE_SKU_RE.finditer(task_text):
+        context = task_text[max(0, match.start() - 48) : match.start()].lower()
+        if any(
+            marker in context
+            for marker in (
+                "but not",
+                "except",
+                "excluding",
+                "exclude",
+                "not sku",
+                "without sku",
+            )
+        ):
+            negated_skus.append(match.group(0))
+    return sku_refs(vm, negated_skus)
 
 
 def upload_receipt_sku_refs(vm: RuntimeVM, refs: Sequence[str]) -> list[str]:
@@ -924,6 +949,69 @@ def is_cross_customer_protected_record_denial(
     return bool(CROSS_CUSTOMER_DENIAL_RE.search(message))
 
 
+def is_guest_identity(user_id: str | None, roles: set[str]) -> bool:
+    return (not user_id and roles <= {"guest"}) or user_id in {"guest", "anonymous"}
+
+
+def is_negative_catalog_answer(message: str) -> bool:
+    normalized = " ".join(message.lower().split()).strip()
+    return normalized in {"<no>", "no", "nein", "false"} or (
+        normalized.startswith("false(") and normalized.endswith(")")
+    )
+
+
+def is_crosslist_report_task(task_text: str, message: str) -> bool:
+    combined = f"{task_text}\n{message}".lower()
+    return "/exports/crosslist" in combined and "purchase request" in combined
+
+
+def filter_crosslist_refs(row_refs: Sequence[str]) -> list[str]:
+    return dedupe_refs(
+        [
+            ref
+            for ref in row_refs
+            if UPLOAD_REF_RE.match(normalize_runtime_path(split_ref_fragment(ref)[0]))
+        ]
+    )
+
+
+def basket_id_from_ref(ref: str) -> str | None:
+    path = normalize_runtime_path(split_ref_fragment(ref)[0])
+    match = BASKET_REF_RE.match(path)
+    if not match:
+        return None
+    return match.group("basket").replace("_", "-")
+
+
+def filter_extra_basket_refs_named_in_message(
+    row_refs: Sequence[str],
+    message: str,
+) -> list[str]:
+    baskets_in_refs = {
+        basket_id
+        for ref in row_refs
+        if (basket_id := basket_id_from_ref(ref)) is not None
+    }
+    if len(baskets_in_refs) <= 1:
+        return list(row_refs)
+
+    normalized_message = message.replace("_", "-").lower()
+    baskets_in_message = {
+        basket_id
+        for basket_id in baskets_in_refs
+        if basket_id.lower() in normalized_message
+    }
+    if len(baskets_in_message) != 1:
+        return list(row_refs)
+
+    return [
+        ref
+        for ref in row_refs
+        if (basket_id := basket_id_from_ref(ref)) is None
+        or basket_id in baskets_in_message
+    ]
+
+
 def submission_refs(
     cmd: CompletionLike,
     vm: RuntimeVM | None = None,
@@ -960,12 +1048,25 @@ def submission_refs(
             row_refs,
             user_id=user_id,
         )
+        if (
+            not protected_record_denial
+            and is_guest_identity(user_id, roles)
+            and any(
+                CUSTOMER_SCOPED_REF_RE.match(
+                    normalize_runtime_path(split_ref_fragment(ref)[0])
+                )
+                for ref in row_refs
+            )
+        ):
+            protected_record_denial = True
 
     if protected_record_denial:
         refs = doc_refs
     else:
         if vm is not None and user_id is None and not roles:
             user_id, roles = runtime_identity(vm)
+        if is_crosslist_report_task(task_text, cmd.message):
+            row_refs = filter_crosslist_refs(row_refs)
 
         # The final answer is graded on refs separately from the text. When the
         # user names an exact basket/payment/return/customer id, preserve that
@@ -986,6 +1087,7 @@ def submission_refs(
             "availability_count",
             "availability_lookup",
             "receipt_price_check",
+            "checkout",
         }:
             row_refs = dedupe_refs(
                 [
@@ -994,6 +1096,24 @@ def submission_refs(
                     *upload_receipt_sku_refs(vm, row_refs),
                 ]
             )
+        if vm is not None and task_text:
+            excluded_refs = set(negated_task_sku_refs(vm, task_text))
+            if excluded_refs:
+                row_refs = [
+                    ref
+                    for ref in row_refs
+                    if normalize_runtime_path(split_ref_fragment(ref)[0])
+                    not in excluded_refs
+                ]
+        if cmd.task_type == "catalog_lookup" and is_negative_catalog_answer(cmd.message):
+            row_refs = [
+                ref
+                for ref in row_refs
+                if not CATALOG_REF_RE.match(
+                    normalize_runtime_path(split_ref_fragment(ref)[0])
+                )
+            ]
+        row_refs = filter_extra_basket_refs_named_in_message(row_refs, cmd.message)
         # Auto-pin every product SKU named in the final message. The grader
         # treats any SKU we surfaced to the user as evidence that must be
         # cited, and quote/table answers routinely list more SKUs than the

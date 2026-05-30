@@ -136,9 +136,10 @@ class ReportTaskCompletion(BaseModel):
         default="other",
         description=(
             "Classify for reference postprocessing. Use count only for "
-            "aggregate catalogue/reporting counts where row refs should be "
-            "suppressed; availability_count for inventory-threshold counts; "
-            "otherwise the closest domain type."
+            "staff/location/customer/reporting totals where row refs should "
+            "be suppressed. Product catalogue count requests are catalog_lookup "
+            "unless they ask inventory-threshold availability, then use "
+            "availability_count. Otherwise choose the closest domain type."
         ),
     )
     message: str = Field(

@@ -790,6 +790,67 @@ def test_submission_refs_adds_explicit_sku_refs_for_availability_count() -> None
     ]
 
 
+def test_submission_refs_adds_sku_refs_without_digits() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Alpen/PT-BIT-ALP-HSS-REDUCED.json": {
+                "sku": "PT-BIT-ALP-HSS-REDUCED"
+            },
+            "/proc/locations/Linz/store-linz-kleinmuenchen.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=["/proc/locations/Linz/store-linz-kleinmuenchen.json"],
+        ),
+        vm,
+        task_text="How many of PT-BIT-ALP-HSS-REDUCED are short?",
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/locations/Linz/store-linz-kleinmuenchen.json",
+        "/proc/catalog/Alpen/PT-BIT-ALP-HSS-REDUCED.json",
+    ]
+
+
+def test_submission_refs_removes_explicitly_excluded_sku_refs() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json": {
+                "sku": "PT-SAW-MAK-DHS680-RAIL"
+            },
+            "/proc/catalog/Makita/PT-SAW-MAK-DHS680-BLADE.json": {
+                "sku": "PT-SAW-MAK-DHS680-BLADE"
+            },
+            "/proc/locations/Salzburg/store-salzburg-maxglan.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/proc/locations/Salzburg/store-salzburg-maxglan.json",
+                "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
+                "/proc/catalog/Makita/PT-SAW-MAK-DHS680-BLADE.json",
+            ],
+            message="<NO>",
+        ),
+        vm,
+        task_text=(
+            "Do you have accessory bundle without batteries "
+            "(but not PT-SAW-MAK-DHS680-BLADE) in stock?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/locations/Salzburg/store-salzburg-maxglan.json",
+        "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
+    ]
+
+
 def test_submission_refs_adds_receipt_upload_sku_refs() -> None:
     vm = FakeVM(
         files={
@@ -881,6 +942,108 @@ def test_submission_refs_skips_sku_auto_pin_for_count_tasks() -> None:
     )
 
     assert refs == ["/docs/catalogue.md"]
+
+
+def test_submission_refs_drops_catalog_candidates_for_negative_existence_answer() -> None:
+    vm = FakeVM(
+        id_stdout="user: emp_004\nroles: store_associate\n",
+        files={
+            "/proc/catalog/PowerTools Plans/PT-DIG-PLAN-WORKBENCH.json": {
+                "sku": "PT-DIG-PLAN-WORKBENCH"
+            },
+            "/proc/catalog/PowerTools Plans/PT-DIG-PLAN-GARDEN-SHED.json": {
+                "sku": "PT-DIG-PLAN-GARDEN-SHED"
+            },
+        },
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="catalog_lookup",
+            message="FALSE(0)",
+            grounding_doc_refs=["/docs/catalogue-lookup.md"],
+            grounding_row_refs=[
+                "/proc/catalog/PowerTools Plans/PT-DIG-PLAN-WORKBENCH.json",
+                "/proc/catalog/PowerTools Plans/PT-DIG-PLAN-GARDEN-SHED.json",
+            ],
+        ),
+        vm,
+    ) == ["/docs/catalogue-lookup.md"]
+
+
+def test_submission_refs_keeps_only_upload_for_crosslist_report() -> None:
+    vm = FakeVM(
+        files={
+            "/uploads/request_ocr.txt": {"text": "line 1"},
+            "/exports/crosslist.tsv": {"text": "report"},
+            "/proc/catalog/Karcher/PT-WASH-KAR-K4-PIPE.json": {
+                "sku": "PT-WASH-KAR-K4-PIPE"
+            },
+        },
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="catalog_lookup",
+            message="/exports/crosslist.tsv",
+            grounding_doc_refs=["/docs/purchase-request-crosslist.md"],
+            grounding_row_refs=[
+                "/uploads/request_ocr.txt",
+                "/proc/catalog/Karcher/PT-WASH-KAR-K4-PIPE.json",
+                "/exports/crosslist.tsv",
+            ],
+        ),
+        vm,
+        task_text=(
+            "Read the uploaded competitor purchase request OCR at "
+            "/uploads/request_ocr.txt and create a TSV crosslist report at "
+            "/exports/crosslist.tsv."
+        ),
+    ) == [
+        "/docs/purchase-request-crosslist.md",
+        "/uploads/request_ocr.txt",
+    ]
+
+
+def test_submission_refs_drops_guest_security_denial_customer_refs() -> None:
+    vm = FakeVM(id_stdout="user: guest\nroles: guest\n")
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="checkout",
+            outcome="OUTCOME_DENIED_SECURITY",
+            message="OUTCOME_DENIED_SECURITY",
+            grounding_doc_refs=["/docs/security.md", "/docs/checkout.md"],
+            grounding_row_refs=["/proc/carts/cust-0034/basket-0018.json"],
+        ),
+        vm,
+    ) == ["/docs/security.md", "/docs/checkout.md"]
+
+
+def test_submission_refs_drops_extra_basket_refs_when_message_names_target() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust_003\nroles: customer\n",
+        files={
+            "/proc/carts/cust-003/basket-0005.json": {"customer_id": "cust_003"},
+            "/proc/carts/cust-003/basket-0006.json": {"customer_id": "cust_003"},
+        },
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="other",
+            message="Added the item to basket-0005.",
+            grounding_doc_refs=["/docs/checkout.md"],
+            grounding_row_refs=[
+                "/proc/carts/cust-003/basket-0005.json",
+                "/proc/carts/cust-003/basket-0006.json",
+            ],
+        ),
+        vm,
+    ) == [
+        "/docs/checkout.md",
+        "/proc/carts/cust-003/basket-0005.json",
+    ]
 
 
 def test_submission_refs_replaces_customer_facing_employee_ref_and_adds_store() -> None:
