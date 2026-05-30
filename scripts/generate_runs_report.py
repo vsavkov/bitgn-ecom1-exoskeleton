@@ -240,9 +240,9 @@ def _render_html(records: list[RunRecord], benchmark_id: str = "") -> str:
             )
         body_rows.append(f"<tr>{''.join(cells)}</tr>")
 
-    footer_cells = ["<th class=\"task-id\">sum</th>"]
+    sum_cells = ["<th class=\"task-head sum-head\">sum</th>"]
     for total in totals:
-        footer_cells.append(f"<td class=\"sum-cell\">{escape(_format_score(total))}</td>")
+        sum_cells.append(f"<td class=\"sum-cell\">{escape(_format_score(total))}</td>")
 
     if not records:
         body_rows.append("<tr><td class=\"empty\">No run_*.json files found in this benchmark runs folder.</td></tr>")
@@ -287,16 +287,16 @@ table {{
   min-width: max-content;
 }}
 col.task-col {{
-  width: 88px;
+  width: 64px;
 }}
 col.run-col {{
-  width: 112px;
+  width: 84px;
 }}
 th, td {{
   border-right: 1px solid #d1d5db;
   border-bottom: 1px solid #d1d5db;
-  padding: 8px 10px;
-  font-size: 13px;
+  padding: 5px 6px;
+  font-size: 11px;
   text-align: center;
   white-space: nowrap;
 }}
@@ -323,33 +323,33 @@ thead .task-head {{
   font-weight: 700;
 }}
 .run-score {{
-  margin-top: 3px;
+  margin-top: 2px;
   color: #374151;
-  font-size: 12px;
+  font-size: 10px;
 }}
 .run-model {{
-  max-width: 96px;
-  margin-top: 3px;
+  max-width: 72px;
+  margin-top: 2px;
   overflow: hidden;
   color: #6b7280;
-  font-size: 11px;
+  font-size: 9px;
   text-overflow: ellipsis;
 }}
 .score-cell {{
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }}
-tfoot th, tfoot td {{
+.sum-head, .sum-cell {{
   position: sticky;
-  bottom: 0;
+  top: 46px;
+  z-index: 2;
   background: #111827;
   color: #ffffff;
   font-weight: 700;
 }}
-tfoot .task-id {{
-  z-index: 3;
-  background: #111827;
-  color: #ffffff;
+.sum-head {{
+  left: 0;
+  z-index: 4;
 }}
 .empty {{
   padding: 20px;
@@ -365,11 +365,13 @@ tfoot .task-id {{
 <div class="table-wrap">
 <table>
 <colgroup>{''.join(colgroup)}</colgroup>
-<thead><tr>{''.join(header_cells)}</tr></thead>
+<thead>
+<tr>{''.join(header_cells)}</tr>
+<tr>{''.join(sum_cells)}</tr>
+</thead>
 <tbody>
 {''.join(body_rows)}
 </tbody>
-<tfoot><tr>{''.join(footer_cells)}</tr></tfoot>
 </table>
 </div>
 </body>
