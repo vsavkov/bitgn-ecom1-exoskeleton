@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from html import escape
@@ -15,6 +16,12 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from config import env_flag, load_dotenv  # noqa: E402
+
+load_dotenv()
+
 DEFAULT_RUNS_ROOT = PROJECT_ROOT / "runs"
 DEFAULT_BENCHMARK_ID = os.getenv("BENCH_ID") or os.getenv("BENCHMARK_ID") or "bitgn/ecom1-dev"
 
@@ -84,6 +91,8 @@ def _case_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+
+
 def _load_run(path: Path) -> RunRecord:
     payload = json.loads(path.read_text())
     started_at = str(payload.get("started_at") or "")
@@ -135,6 +144,7 @@ def _load_runs(runs_dir: Path) -> list[RunRecord]:
     )
 
 
+
 def _interpolate(start: tuple[int, int, int], end: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:
     return (
         round(start[0] + (end[0] - start[0]) * ratio),
@@ -170,6 +180,28 @@ def _format_score(score: float | None) -> str:
     return f"{score:.2f}".rstrip("0").rstrip(".")
 
 
+def _display_score(case: TestCase | None) -> float | None:
+    if case is None:
+        return None
+    return case.score
+
+
+def _score_source(case: TestCase | None) -> str:
+    if case is None:
+        return "none"
+    if case.score is not None:
+        return "official"
+    return "none"
+
+
+def _run_display_score(record: RunRecord) -> float | None:
+    if record.score is not None:
+        return record.score
+    scores = [_display_score(case) for case in record.cases.values()]
+    values = [score for score in scores if score is not None]
+    return sum(values) if values else None
+
+
 def _run_label(record: RunRecord) -> str:
     parsed = _parse_datetime(record.started_at)
     if parsed:
@@ -182,7 +214,7 @@ def _cell_title(task_id: str, record: RunRecord, case: TestCase | None) -> str:
     if case:
         if case.task_text:
             lines.append(case.task_text)
-        lines.append(f"score: {_format_score(case.score)}")
+        lines.append(f"score: {_format_score(_display_score(case))} ({_score_source(case)})")
         if case.trace_id:
             lines.append(f"trace: {case.trace_id}")
         if case.comment:
@@ -207,14 +239,18 @@ def _render_html(records: list[RunRecord], benchmark_id: str = "") -> str:
     generated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     benchmark_id = _benchmark_id_for_html(records, benchmark_id)
     task_ids = sorted({task_id for record in records for task_id in record.cases}, key=_natural_key)
-    totals = [sum(case.score or 0 for case in record.cases.values()) for record in records]
+    totals = [
+        sum(score for score in (_display_score(case) for case in record.cases.values()) if score is not None)
+        for record in records
+    ]
 
     colgroup = ["<col class=\"task-col\">"] + ["<col class=\"run-col\">" for _ in records]
     header_cells = ["<th class=\"task-head\">task</th>"]
     for record in records:
         label = escape(_run_label(record))
         model = escape(record.model_id)
-        total = escape(_format_score(record.score))
+        run_score = _run_display_score(record)
+        total = escape(_format_score(run_score))
         header_cells.append(
             "<th>"
             f"<div class=\"run-label\">{label}</div>"
@@ -228,12 +264,13 @@ def _render_html(records: list[RunRecord], benchmark_id: str = "") -> str:
         cells = [f"<th class=\"task-id\">{escape(task_id)}</th>"]
         for record in records:
             case = record.cases.get(task_id)
-            score = case.score if case else None
+            score = _display_score(case)
             background, text = _score_color(score)
             title = escape(_cell_title(task_id, record, case), quote=True)
+            source = escape(_score_source(case), quote=True)
             cells.append(
                 "<td "
-                f"class=\"score-cell\" title=\"{title}\" "
+                f"class=\"score-cell score-{source}\" title=\"{title}\" "
                 f"style=\"background:{background};color:{text}\">"
                 f"{escape(_format_score(score))}"
                 "</td>"

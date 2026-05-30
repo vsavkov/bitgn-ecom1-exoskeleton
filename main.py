@@ -137,11 +137,28 @@ def _run_artifact_path(started_at: datetime) -> Path:
     raise RuntimeError(f"could not choose a free run artifact path for {base}")
 
 
+
+
+def _agent_output_case_fields(agent_output: dict) -> dict:
+    return {
+        "outcome": agent_output.get("outcome"),
+        "task_type": agent_output.get("task_type"),
+        "protected_record_denial": agent_output.get("protected_record_denial"),
+        "message": agent_output.get("message") or "",
+        "grounding_refs": agent_output.get("grounding_refs") or [],
+        "completed_steps_laconic": agent_output.get("completed_steps_laconic") or [],
+        "completion_output": agent_output.get("completion_output") or "",
+        "fallback": agent_output.get("fallback") or "",
+    }
+
+
 def _write_run_artifact(result, started_at: datetime, trial_outputs: dict[str, dict]) -> Path:
     finished_at = datetime.now().astimezone()
     test_cases = []
+    emitted_trial_ids: set[str] = set()
 
     for trial in result.trials:
+        emitted_trial_ids.add(trial.trial_id)
         score_detail = list(trial.score_detail)
         agent_output = trial_outputs.get(trial.trial_id) or {}
         langsmith_trace_id = (
@@ -165,6 +182,38 @@ def _write_run_artifact(result, started_at: datetime, trial_outputs: dict[str, d
                 "score_detail": score_detail,
                 "grader_comment": grader_comment,
                 "error": trial.error,
+                **_agent_output_case_fields(agent_output),
+            }
+        )
+
+    # Competition/prod runs can seal score details until reveal. In that mode
+    # submit_run may return no trial records even though we have local agent
+    # outputs for every started trial. Keep those traces in the artifact so
+    # reports remain useful for quality/debug analysis without relying on scores.
+    for trial_id, agent_output in sorted(
+        trial_outputs.items(),
+        key=lambda item: (item[1].get("task_id") or "", item[0]),
+    ):
+        if trial_id in emitted_trial_ids:
+            continue
+        langsmith_trace_id = (
+            agent_output.get("langsmith_trace_id") or agent_output.get("langsmith_run_id")
+        )
+        test_cases.append(
+            {
+                "task_id": agent_output.get("task_id") or "",
+                "task_text": agent_output.get("instruction") or "",
+                "trial_id": trial_id,
+                "trace_id": langsmith_trace_id,
+                "langsmith_trace_id": langsmith_trace_id,
+                "langsmith_run_id": agent_output.get("langsmith_run_id"),
+                "score": None,
+                "score_available": False,
+                "state": "",
+                "score_detail": [],
+                "grader_comment": "",
+                "error": agent_output.get("error") or "",
+                **_agent_output_case_fields(agent_output),
             }
         )
 

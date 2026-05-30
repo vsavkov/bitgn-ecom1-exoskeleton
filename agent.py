@@ -667,6 +667,32 @@ def _tree_followup_commands(
     return read_commands + help_commands
 
 
+def _auto_followup_timeout_ms(cmd: BaseModel) -> int | None:
+    if isinstance(cmd, ReqExec) and cmd.args == ["--help"]:
+        return env_int("AGENT_AUTO_HELP_TIMEOUT_MS", 1000, minimum=100)
+    return None
+
+
+def _format_followup_error(cmd: BaseModel, exc: ConnectError) -> str:
+    if isinstance(cmd, ReqExec):
+        path = shlex.quote(cmd.path)
+        args = " ".join(shlex.quote(arg) for arg in cmd.args)
+        command = f"{path} {args}".strip()
+    else:
+        command = TOOL_NAMES_BY_MODEL.get(type(cmd), type(cmd).__name__)
+    code = getattr(exc.code, "value", exc.code)
+    return _render_command(
+        command,
+        f"[AUTO-FOLLOWUP ERROR: {code}: {exc.message}]",
+    )
+
+
+def _runtime_call(method: Callable[..., Any], request: Any, timeout_ms: int | None):
+    if timeout_ms is None:
+        return method(request)
+    return method(request, timeout_ms=timeout_ms)
+
+
 def _format_result_with_tree_followups(
     vm: EcomRuntimeClientSync,
     cmd: BaseModel,
@@ -681,9 +707,14 @@ def _format_result_with_tree_followups(
 
     for followup in _tree_followup_commands(cmd, result, seen_help, seen_read):
         try:
-            followup_result = dispatch(vm, followup)
+            followup_result = dispatch(
+                vm,
+                followup,
+                timeout_ms=_auto_followup_timeout_ms(followup),
+            )
             parts.append(_format_result(followup, followup_result))
         except ConnectError as exc:
+            parts.append(_format_followup_error(followup, exc))
             if debug:
                 print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 
@@ -696,11 +727,22 @@ def _format_result_with_tree_followups(
     process_inputs=_trace_dispatch_inputs,
     process_outputs=_trace_dispatch_outputs,
 )
-def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
+def dispatch(
+    vm: EcomRuntimeClientSync,
+    cmd: BaseModel,
+    *,
+    task_text: str = "",
+    timeout_ms: int | None = None,
+):
     if isinstance(cmd, ReqTree):
-        return vm.tree(TreeRequest(root=cmd.root, level=cmd.level))
+        return _runtime_call(
+            vm.tree,
+            TreeRequest(root=cmd.root, level=cmd.level),
+            timeout_ms,
+        )
     if isinstance(cmd, ReqFind):
-        return vm.find(
+        return _runtime_call(
+            vm.find,
             FindRequest(
                 root=cmd.root,
                 name=cmd.name,
@@ -710,22 +752,27 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
                     "dirs": NodeKind.NODE_KIND_DIR,
                 }[cmd.kind],
                 limit=cmd.limit,
-            )
+            ),
+            timeout_ms,
         )
     if isinstance(cmd, ReqSearch):
-        return vm.search(
-            SearchRequest(root=cmd.root, pattern=cmd.pattern, limit=cmd.limit)
+        return _runtime_call(
+            vm.search,
+            SearchRequest(root=cmd.root, pattern=cmd.pattern, limit=cmd.limit),
+            timeout_ms,
         )
     if isinstance(cmd, ReqList):
-        return vm.list(ListRequest(path=cmd.path))
+        return _runtime_call(vm.list, ListRequest(path=cmd.path), timeout_ms)
     if isinstance(cmd, ReqRead):
-        return vm.read(
+        return _runtime_call(
+            vm.read,
             ReadRequest(
                 path=cmd.path,
                 number=cmd.number,
                 start_line=cmd.start_line,
                 end_line=cmd.end_line,
-            )
+            ),
+            timeout_ms,
         )
     if isinstance(cmd, ReqWrite):
         if not raw_file_mutation_allowed(task_text):
@@ -733,18 +780,26 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
                 "raw file write is not allowed for this task unless the user "
                 "explicitly asks to create, edit, update, delete, or save a file"
             )
-        return vm.write(WriteRequest(path=cmd.path, content=cmd.content))
+        return _runtime_call(
+            vm.write,
+            WriteRequest(path=cmd.path, content=cmd.content),
+            timeout_ms,
+        )
     if isinstance(cmd, ReqDelete):
         if not raw_file_mutation_allowed(task_text):
             raise RuntimeError(
                 "raw file delete is not allowed for this task unless the user "
                 "explicitly asks to create, edit, update, delete, or save a file"
             )
-        return vm.delete(DeleteRequest(path=cmd.path))
+        return _runtime_call(vm.delete, DeleteRequest(path=cmd.path), timeout_ms)
     if isinstance(cmd, ReqStat):
-        return vm.stat(StatRequest(path=cmd.path))
+        return _runtime_call(vm.stat, StatRequest(path=cmd.path), timeout_ms)
     if isinstance(cmd, ReqExec):
-        return vm.exec(ExecRequest(path=cmd.path, args=cmd.args, stdin=cmd.stdin))
+        return _runtime_call(
+            vm.exec,
+            ExecRequest(path=cmd.path, args=cmd.args, stdin=cmd.stdin),
+            timeout_ms,
+        )
     if isinstance(cmd, ReqAnalyzeArchiveFraudExport):
         return analyze_archive_fraud_export(vm, cmd)
     if isinstance(cmd, ReqAnalyzePaymentFraudHistory):
@@ -758,12 +813,14 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
     if isinstance(cmd, ReqVerifyStoreManager):
         return verify_store_manager(vm, cmd)
     if isinstance(cmd, ReportTaskCompletion):
-        return vm.answer(
+        return _runtime_call(
+            vm.answer,
             AnswerRequest(
                 message=cmd.message,
                 outcome=OUTCOME_BY_NAME[cmd.outcome],
                 refs=_submission_refs(cmd, vm, task_text=task_text),
-            )
+            ),
+            timeout_ms,
         )
     raise ValueError(f"Unknown command: {cmd}")
 
@@ -1273,13 +1330,19 @@ def run_agent(
                 cmd, result, tree_help_paths, tree_read_paths
             ):
                 try:
-                    followup_result = dispatch(vm, followup)
+                    followup_result = dispatch(
+                        vm,
+                        followup,
+                        timeout_ms=_auto_followup_timeout_ms(followup),
+                    )
                     _remember_seen_tool_use(followup, tree_help_paths, tree_read_paths)
                     followup_formatted = _format_result(followup, followup_result)
                     if debug:
                         print(f"{CLI_GREEN}AUTO{CLI_CLR}: {followup_formatted}")
                     append_synthetic_tool_result(followup, followup_formatted)
                 except ConnectError as exc:
+                    followup_formatted = _format_followup_error(followup, exc)
+                    append_synthetic_tool_result(followup, followup_formatted)
                     if debug:
                         print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
 

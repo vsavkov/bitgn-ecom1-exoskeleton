@@ -2,6 +2,8 @@ import json
 from types import SimpleNamespace
 
 from bitgn.vm.ecom.ecom_pb2 import NodeKind
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
 
 from agent import (
     ReportTaskCompletion,
@@ -20,11 +22,13 @@ from agent import (
     _apply_payment_recovery_review,
     _apply_payment_recovery_retry_timestamp,
     _apply_verified_manager_refs,
+    _auto_followup_timeout_ms,
     _format_list_response,
     _format_exec_response,
     _format_read_response,
     _format_result,
     _format_search_response,
+    _format_followup_error,
     _format_tree_response,
     _format_tree_entry,
     _function_call_output,
@@ -176,6 +180,11 @@ def test_tree_path_iteration_and_followup_selection() -> None:
                         children=[],
                     ),
                     SimpleNamespace(
+                        name="sql",
+                        kind=NodeKind.NODE_KIND_FILE,
+                        children=[],
+                    ),
+                    SimpleNamespace(
                         name="README.md",
                         kind=NodeKind.NODE_KIND_FILE,
                         children=[],
@@ -214,6 +223,7 @@ def test_tree_path_iteration_and_followup_selection() -> None:
         "/AGENTS.MD",
         "/bin",
         "/bin/date",
+        "/bin/sql",
         "/bin/README.md",
         "/docs",
         "/docs/security.md",
@@ -221,7 +231,8 @@ def test_tree_path_iteration_and_followup_selection() -> None:
         "/docs/notes.txt",
     ]
     assert _is_command_path("/bin/date", tree.children[1].children[0])
-    assert not _is_command_path("/bin/README.md", tree.children[1].children[1])
+    assert _is_command_path("/bin/sql", tree.children[1].children[1])
+    assert not _is_command_path("/bin/README.md", tree.children[1].children[2])
     assert _is_markdown_path("/docs/security.md", tree.children[2].children[0])
     assert _is_markdown_path("/docs/policy.MD", tree.children[2].children[1])
     assert not _is_markdown_path("/docs/notes.txt", tree.children[2].children[2])
@@ -233,6 +244,7 @@ def test_tree_path_iteration_and_followup_selection() -> None:
         ReqRead(path="/docs/security.md"),
         ReqRead(path="/docs/policy.MD"),
         ReqExec(path="/bin/date", args=["--help"]),
+        ReqExec(path="/bin/sql", args=["--help"]),
     ]
     assert seen_read == {
         "/AGENTS.MD",
@@ -240,7 +252,7 @@ def test_tree_path_iteration_and_followup_selection() -> None:
         "/docs/security.md",
         "/docs/policy.MD",
     }
-    assert seen_help == {"/bin/date"}
+    assert seen_help == {"/bin/date", "/bin/sql"}
     assert _tree_followup_commands(
         ReqTree(root="/", auto_followups=False),
         result,
@@ -260,6 +272,17 @@ def test_remember_seen_tool_use() -> None:
 
     assert seen_read == {"/docs/security.md"}
     assert seen_help == {"/bin/date"}
+
+
+def test_auto_help_timeout_and_error_formatting() -> None:
+    exc = ConnectError(Code.DEADLINE_EXCEEDED, "timed out")
+
+    assert _auto_followup_timeout_ms(ReqExec(path="/bin/sql", args=["--help"])) == 1000
+    assert _auto_followup_timeout_ms(ReqExec(path="/bin/sql")) is None
+    assert _auto_followup_timeout_ms(ReqRead(path="/docs/security.md")) is None
+    assert _format_followup_error(ReqExec(path="/bin/sql", args=["--help"]), exc).startswith(
+        "/bin/sql --help\n[AUTO-FOLLOWUP ERROR: deadline_exceeded: timed out]"
+    )
 
 
 def test_format_read_search_exec_and_json_results() -> None:
