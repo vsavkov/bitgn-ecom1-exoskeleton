@@ -133,19 +133,19 @@ def _dedupe_incidents_by_rows(incidents: list[FraudIncident]) -> list[FraudIncid
 def _archive_city_hop_incidents(
     rows: list[ArchivePaymentRow],
 ) -> list[FraudIncident]:
-    grouped: dict[tuple[str, str], list[ArchivePaymentRow]] = {}
+    # In customer-owned channels, the customer identity is enough for short
+    # impossible-travel hops. Cards/devices may change during account takeover,
+    # while staff-operated channels still need the narrower signal-hop path.
+    grouped: dict[str, list[ArchivePaymentRow]] = {}
     for row in rows:
         if row.archive_channel not in CUSTOMER_CONTROLLED_CHANNELS:
             continue
         if not row.customer_ref:
             continue
-        for signal in (row.payment_method_fingerprint, row.device_fingerprint):
-            if not signal:
-                continue
-            grouped.setdefault((row.customer_ref, signal), []).append(row)
+        grouped.setdefault(row.customer_ref, []).append(row)
 
     incidents: list[FraudIncident] = []
-    for (customer_ref, _signal), group_rows in grouped.items():
+    for customer_ref, group_rows in grouped.items():
         ordered = sorted(group_rows, key=lambda row: (row.created_at, row.row_id))
         chain: list[ArchivePaymentRow] = []
 

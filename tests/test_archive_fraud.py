@@ -256,6 +256,70 @@ def test_detect_archive_fraud_keeps_three_row_high_value_device_cluster() -> Non
     assert {incident.rule for incident in incidents} == {"high_value_device_multicity"}
 
 
+def test_detect_archive_fraud_keeps_customer_city_hop_with_changed_signals() -> None:
+    rows = [
+        tsv_row(
+            "CH1",
+            "2023-11-12T08:01:00Z",
+            "arch_cust_city_hop",
+            "Graz",
+            75_000,
+            "pm_city_hop_a",
+            "dev_city_hop_a",
+            "web",
+        ),
+        tsv_row(
+            "CH2",
+            "2023-11-12T08:05:00Z",
+            "arch_cust_city_hop",
+            "Vienna",
+            30_000,
+            "pm_city_hop_b",
+            "dev_city_hop_b",
+            "web",
+        ),
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert [row.row_id for row in fraud_rows] == ["CH1", "CH2"]
+    assert {incident.rule for incident in incidents} == {"archive_customer_city_hop"}
+
+
+def test_detect_archive_fraud_ignores_low_value_customer_hop_with_changed_signals() -> None:
+    rows = [
+        tsv_row(
+            "CH1",
+            "2023-11-12T08:01:00Z",
+            "arch_cust_city_hop",
+            "Graz",
+            5_000,
+            "pm_city_hop_a",
+            "dev_city_hop_a",
+            "web",
+        ),
+        tsv_row(
+            "CH2",
+            "2023-11-12T08:05:00Z",
+            "arch_cust_city_hop",
+            "Vienna",
+            4_000,
+            "pm_city_hop_b",
+            "dev_city_hop_b",
+            "web",
+        ),
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert fraud_rows == []
+    assert incidents == []
+
+
 def test_detect_archive_fraud_ignores_service_desk_customer_without_reused_payment() -> None:
     cities = [
         "Graz",
