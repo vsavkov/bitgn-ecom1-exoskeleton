@@ -76,8 +76,8 @@ from payment_recovery import (
     retry_available_at_from_policy_text,
 )
 from payment_recovery_review import (
-    PaymentRecoveryTerminalReview,
-    review_payment_recovery_terminal_state,
+    PaymentRecoveryReview,
+    review_payment_recovery_state,
 )
 from receipt_price import ReqAnalyzeReceiptPriceCheck, analyze_receipt_price_check
 from refund_preflight import amount_refund_clarification_preflight
@@ -1077,28 +1077,32 @@ def _apply_catalog_lookup_result(
     return cmd.model_copy(update=updates) if updates else cmd
 
 
-def _apply_payment_recovery_terminal_review(
+def _apply_payment_recovery_review(
     cmd: ReportTaskCompletion,
-    review: PaymentRecoveryTerminalReview,
+    review: PaymentRecoveryReview,
 ) -> ReportTaskCompletion:
-    if cmd.task_type != "payment_recovery" or not review.already_paid_terminal_state:
+    if cmd.task_type != "payment_recovery":
         return cmd
 
     updates: dict[str, str] = {}
-    if cmd.outcome == "OUTCOME_NONE_CLARIFICATION":
+    if (
+        review.already_paid_terminal_state or review.retry_lockout_state
+    ) and cmd.outcome == "OUTCOME_NONE_CLARIFICATION":
         updates["outcome"] = "OUTCOME_NONE_UNSUPPORTED"
-    if review.formatted_message:
+    if (
+        review.already_paid_terminal_state or review.retry_lockout_state
+    ) and review.formatted_message:
         updates["message"] = review.formatted_message
     return cmd.model_copy(update=updates) if updates else cmd
 
 
-def _review_payment_recovery_terminal_state(
+def _review_payment_recovery_state(
     client: Any,
     cmd: ReportTaskCompletion,
     *,
     task_text: str,
-) -> PaymentRecoveryTerminalReview:
-    return review_payment_recovery_terminal_state(
+) -> PaymentRecoveryReview:
+    return review_payment_recovery_state(
         client,
         task_text=task_text,
         task_type=cmd.task_type,
@@ -1112,28 +1116,26 @@ def _review_payment_recovery_terminal_state(
 def _apply_payment_recovery_retry_timestamp(
     vm: Any,
     cmd: ReportTaskCompletion,
+    review: PaymentRecoveryReview,
     *,
     task_text: str,
 ) -> ReportTaskCompletion:
     if cmd.task_type != "payment_recovery" or cmd.outcome != "OUTCOME_NONE_UNSUPPORTED":
         return cmd
-
-    step_text = " ".join(cmd.completed_steps_laconic)
-    if not any(
-        marker in step_text.lower()
-        for marker in ("retry_available_at", "retry lockout", "lockout")
-    ):
+    if not review.retry_lockout_state:
         return cmd
 
     payment_ids = payment_ids_from_refs_and_text(
         cmd.grounding_row_refs,
-        f"{task_text} {step_text}",
+        f"{task_text} {' '.join(cmd.completed_steps_laconic)}",
     )
     if not payment_ids:
         return cmd
 
-    timestamp = ""
+    timestamp = review.retry_available_at
     for ref in cmd.grounding_doc_refs:
+        if timestamp:
+            break
         normalized = ref.lower()
         if not ref.endswith(".md") or not any(
             marker in normalized for marker in ("3ds", "verification", "lockout")
@@ -1287,13 +1289,18 @@ def run_agent(
     ledger.register_loaded_docs(sorted(tree_read_paths))
 
     def _finalize_preflight(cmd: ReportTaskCompletion) -> dict:
-        terminal_review = _review_payment_recovery_terminal_state(
+        payment_recovery_review = _review_payment_recovery_state(
             formatter_client,
             cmd,
             task_text=task_text,
         )
-        cmd = _apply_payment_recovery_terminal_review(cmd, terminal_review)
-        cmd = _apply_payment_recovery_retry_timestamp(vm, cmd, task_text=task_text)
+        cmd = _apply_payment_recovery_review(cmd, payment_recovery_review)
+        cmd = _apply_payment_recovery_retry_timestamp(
+            vm,
+            cmd,
+            payment_recovery_review,
+            task_text=task_text,
+        )
         dispatch(vm, cmd, task_text=task_text)
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
         result_payload = {
@@ -1515,14 +1522,17 @@ def run_agent(
                 # during the main loop beyond what the must startup pulled in.
                 ledger.register_loaded_docs(sorted(tree_read_paths))
                 cmd = ledger.apply_to_completion(cmd, task_text=task_text)
-                terminal_review = _review_payment_recovery_terminal_state(
+                payment_recovery_review = _review_payment_recovery_state(
                     formatter_client,
                     cmd,
                     task_text=task_text,
                 )
-                cmd = _apply_payment_recovery_terminal_review(cmd, terminal_review)
+                cmd = _apply_payment_recovery_review(cmd, payment_recovery_review)
                 cmd = _apply_payment_recovery_retry_timestamp(
-                    vm, cmd, task_text=task_text
+                    vm,
+                    cmd,
+                    payment_recovery_review,
+                    task_text=task_text,
                 )
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(

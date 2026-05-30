@@ -6,6 +6,7 @@ from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field
 
 from config import helper_model, helper_reasoning_effort, render_prompt
+from payment_recovery import ISO_TIMESTAMP_RE
 
 if TYPE_CHECKING:
     P = ParamSpec("P")
@@ -21,18 +22,29 @@ else:
     from langsmith import traceable
 
 
-class PaymentRecoveryTerminalReview(BaseModel):
+class PaymentRecoveryReview(BaseModel):
     already_paid_terminal_state: bool = Field(
         description=(
             "True only when the completion evidence says the target payment is "
             "already paid or has payment_status/status paid."
         )
     )
+    retry_lockout_state: bool = Field(
+        description=(
+            "True only when the completion evidence says 3DS recovery is blocked "
+            "by a retry lockout, retry delay, cooldown, or retry_available_at policy."
+        )
+    )
+    retry_available_at: str = Field(
+        description=(
+            "Exact ISO timestamp for retry availability when supplied in the "
+            "completion evidence; otherwise an empty string."
+        )
+    )
     formatted_message: str = Field(
         description=(
-            "Final answer message. If already_paid_terminal_state is true, it "
-            "must explicitly say the payment is paid/already paid; otherwise it "
-            "must equal the current message."
+            "Final answer message. If a terminal state is true, it must make "
+            "that state explicit; otherwise it must equal the current message."
         )
     )
 
@@ -40,34 +52,36 @@ class PaymentRecoveryTerminalReview(BaseModel):
 PAYMENT_RECOVERY_REVIEW_PROMPT = render_prompt("payment_recovery_review.j2")
 
 
-def _fallback_review(message: str) -> PaymentRecoveryTerminalReview:
-    return PaymentRecoveryTerminalReview(
+def _fallback_review(message: str) -> PaymentRecoveryReview:
+    return PaymentRecoveryReview(
         already_paid_terminal_state=False,
+        retry_lockout_state=False,
+        retry_available_at="",
         formatted_message=message,
     )
 
 
-def _parsed_response(resp: Any) -> PaymentRecoveryTerminalReview | None:
+def _parsed_response(resp: Any) -> PaymentRecoveryReview | None:
     output_parsed = getattr(resp, "output_parsed", None)
-    if isinstance(output_parsed, PaymentRecoveryTerminalReview):
+    if isinstance(output_parsed, PaymentRecoveryReview):
         return output_parsed
     if isinstance(output_parsed, dict):
-        return PaymentRecoveryTerminalReview.model_validate(output_parsed)
+        return PaymentRecoveryReview.model_validate(output_parsed)
 
     for item in resp.output or []:
         if getattr(item, "type", None) != "message":
             continue
         for content in getattr(item, "content", []) or []:
             parsed = getattr(content, "parsed", None)
-            if isinstance(parsed, PaymentRecoveryTerminalReview):
+            if isinstance(parsed, PaymentRecoveryReview):
                 return parsed
             if isinstance(parsed, dict):
-                return PaymentRecoveryTerminalReview.model_validate(parsed)
+                return PaymentRecoveryReview.model_validate(parsed)
     return None
 
 
-@traceable(run_type="llm", name="Payment Recovery Terminal Review")
-def review_payment_recovery_terminal_state(
+@traceable(run_type="llm", name="Payment Recovery Review")
+def review_payment_recovery_state(
     client: Any,
     *,
     task_text: str,
@@ -76,7 +90,7 @@ def review_payment_recovery_terminal_state(
     current_message: str,
     completed_steps_laconic: Sequence[str],
     grounding_refs: Sequence[str],
-) -> PaymentRecoveryTerminalReview:
+) -> PaymentRecoveryReview:
     if task_type != "payment_recovery" or outcome not in {
         "OUTCOME_NONE_CLARIFICATION",
         "OUTCOME_NONE_UNSUPPORTED",
@@ -101,7 +115,7 @@ def review_payment_recovery_terminal_state(
                     "content": json.dumps(payload, ensure_ascii=False, indent=2),
                 }
             ],
-            text_format=PaymentRecoveryTerminalReview,
+            text_format=PaymentRecoveryReview,
             reasoning=Reasoning(effort=helper_reasoning_effort()),
             max_output_tokens=512,
         )
@@ -113,4 +127,12 @@ def review_payment_recovery_terminal_state(
         return _fallback_review(current_message)
 
     formatted_message = parsed.formatted_message.strip() or current_message
-    return parsed.model_copy(update={"formatted_message": formatted_message})
+    retry_available_at = parsed.retry_available_at.strip()
+    if retry_available_at and not ISO_TIMESTAMP_RE.fullmatch(retry_available_at):
+        retry_available_at = ""
+    return parsed.model_copy(
+        update={
+            "formatted_message": formatted_message,
+            "retry_available_at": retry_available_at,
+        }
+    )

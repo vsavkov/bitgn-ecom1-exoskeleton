@@ -17,7 +17,7 @@ from agent import (
     _apply_city_availability_result,
     _apply_catalog_availability_lookup_refs,
     _apply_catalog_lookup_result,
-    _apply_payment_recovery_terminal_review,
+    _apply_payment_recovery_review,
     _apply_payment_recovery_retry_timestamp,
     _apply_verified_manager_refs,
     _format_list_response,
@@ -55,7 +55,7 @@ from agent import (
     _trace_dispatch_outputs,
     _tree_followup_commands,
 )
-from payment_recovery_review import PaymentRecoveryTerminalReview
+from payment_recovery_review import PaymentRecoveryReview
 from catalog_tools import CatalogLookupItem
 
 
@@ -683,7 +683,7 @@ def test_apply_catalog_lookup_result_ignores_non_table_tasks() -> None:
     assert updated == cmd
 
 
-def test_apply_payment_recovery_terminal_review_changes_paid_clarification() -> None:
+def test_apply_payment_recovery_review_changes_paid_clarification() -> None:
     cmd = ReportTaskCompletion(
         completed_steps_laconic=["Payment status is paid."],
         task_type="payment_recovery",
@@ -693,15 +693,40 @@ def test_apply_payment_recovery_terminal_review_changes_paid_clarification() -> 
         protected_record_denial=False,
         outcome="OUTCOME_NONE_CLARIFICATION",
     )
-    review = PaymentRecoveryTerminalReview(
+    review = PaymentRecoveryReview(
         already_paid_terminal_state=True,
+        retry_lockout_state=False,
+        retry_available_at="",
         formatted_message="OUTCOME_NONE_UNSUPPORTED: payment is already paid",
     )
 
-    updated = _apply_payment_recovery_terminal_review(cmd, review)
+    updated = _apply_payment_recovery_review(cmd, review)
 
     assert updated.outcome == "OUTCOME_NONE_UNSUPPORTED"
     assert updated.message == "OUTCOME_NONE_UNSUPPORTED: payment is already paid"
+
+
+def test_apply_payment_recovery_review_changes_retry_lockout_clarification() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["A retry lockout applies."],
+        task_type="payment_recovery",
+        message="OUTCOME_NONE_CLARIFICATION",
+        grounding_doc_refs=[],
+        grounding_row_refs=[],
+        protected_record_denial=False,
+        outcome="OUTCOME_NONE_CLARIFICATION",
+    )
+    review = PaymentRecoveryReview(
+        already_paid_terminal_state=False,
+        retry_lockout_state=True,
+        retry_available_at="",
+        formatted_message="OUTCOME_NONE_UNSUPPORTED: retry blocked",
+    )
+
+    updated = _apply_payment_recovery_review(cmd, review)
+
+    assert updated.outcome == "OUTCOME_NONE_UNSUPPORTED"
+    assert updated.message == "OUTCOME_NONE_UNSUPPORTED: retry blocked"
 
 
 def test_apply_catalog_availability_lookup_refs_merges_store_and_catalog_refs() -> None:
@@ -753,6 +778,12 @@ def test_apply_payment_recovery_retry_timestamp_reads_policy_doc() -> None:
             }
         ),
         cmd,
+        PaymentRecoveryReview(
+            already_paid_terminal_state=False,
+            retry_lockout_state=True,
+            retry_available_at="",
+            formatted_message="OUTCOME_NONE_UNSUPPORTED",
+        ),
         task_text="Can you recover basket basket_202?",
     )
 
@@ -761,6 +792,34 @@ def test_apply_payment_recovery_retry_timestamp_reads_policy_doc() -> None:
     )
     assert updated.completed_steps_laconic[-1] == (
         "Retry is blocked until 2024-07-18T14:49:48Z."
+    )
+
+
+def test_apply_payment_recovery_retry_timestamp_uses_review_timestamp() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["Recovery is currently blocked by policy."],
+        task_type="payment_recovery",
+        message="OUTCOME_NONE_UNSUPPORTED",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/proc/payments/pay_002.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_NONE_UNSUPPORTED",
+    )
+
+    updated = _apply_payment_recovery_retry_timestamp(
+        ReadOnlyVM({}),
+        cmd,
+        PaymentRecoveryReview(
+            already_paid_terminal_state=False,
+            retry_lockout_state=True,
+            retry_available_at="2024-07-18T14:49:48Z",
+            formatted_message="OUTCOME_NONE_UNSUPPORTED",
+        ),
+        task_text="Can you recover pay_002?",
+    )
+
+    assert updated.message == (
+        "OUTCOME_NONE_UNSUPPORTED: retry blocked until 2024-07-18T14:49:48Z"
     )
 
 

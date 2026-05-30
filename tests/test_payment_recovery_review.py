@@ -2,9 +2,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from payment_recovery_review import (
-    PaymentRecoveryTerminalReview,
+    PaymentRecoveryReview,
     _parsed_response,
-    review_payment_recovery_terminal_state,
+    review_payment_recovery_state,
 )
 
 
@@ -48,13 +48,17 @@ def test_parsed_response_accepts_structured_output() -> None:
         FakeResponse(
             output_parsed={
                 "already_paid_terminal_state": True,
+                "retry_lockout_state": False,
+                "retry_available_at": "",
                 "formatted_message": "payment is already paid",
             }
         )
     )
 
-    assert parsed == PaymentRecoveryTerminalReview(
+    assert parsed == PaymentRecoveryReview(
         already_paid_terminal_state=True,
+        retry_lockout_state=False,
+        retry_available_at="",
         formatted_message="payment is already paid",
     )
 
@@ -66,6 +70,8 @@ def test_parsed_response_accepts_structured_output() -> None:
                         FakeContent(
                             parsed={
                                 "already_paid_terminal_state": False,
+                                "retry_lockout_state": False,
+                                "retry_available_at": "",
                                 "formatted_message": "OUTCOME_NONE_UNSUPPORTED",
                             }
                         )
@@ -74,22 +80,26 @@ def test_parsed_response_accepts_structured_output() -> None:
             ]
         )
     )
-    assert nested == PaymentRecoveryTerminalReview(
+    assert nested == PaymentRecoveryReview(
         already_paid_terminal_state=False,
+        retry_lockout_state=False,
+        retry_available_at="",
         formatted_message="OUTCOME_NONE_UNSUPPORTED",
     )
 
 
-def test_review_payment_recovery_terminal_state_uses_helper_payload() -> None:
+def test_review_payment_recovery_state_uses_helper_payload() -> None:
     responses = FakeResponses(
-        payload=PaymentRecoveryTerminalReview(
+        payload=PaymentRecoveryReview(
             already_paid_terminal_state=True,
+            retry_lockout_state=False,
+            retry_available_at="",
             formatted_message="OUTCOME_NONE_UNSUPPORTED: payment is already paid",
         )
     )
     client = FakeClient(responses)
 
-    review = review_payment_recovery_terminal_state(
+    review = review_payment_recovery_state(
         client,
         task_text="Recover 3DS for pay_031 safely.",
         task_type="payment_recovery",
@@ -102,14 +112,14 @@ def test_review_payment_recovery_terminal_state_uses_helper_payload() -> None:
     assert review.already_paid_terminal_state is True
     assert review.formatted_message == "OUTCOME_NONE_UNSUPPORTED: payment is already paid"
     assert responses.calls
-    assert responses.calls[0]["text_format"] is PaymentRecoveryTerminalReview
+    assert responses.calls[0]["text_format"] is PaymentRecoveryReview
 
 
-def test_review_payment_recovery_terminal_state_skips_unrelated_tasks() -> None:
+def test_review_payment_recovery_state_skips_unrelated_tasks() -> None:
     responses = FakeResponses()
     client = FakeClient(responses)
 
-    review = review_payment_recovery_terminal_state(
+    review = review_payment_recovery_state(
         client,
         task_text="Check out basket_001.",
         task_type="checkout",
@@ -119,17 +129,19 @@ def test_review_payment_recovery_terminal_state_skips_unrelated_tasks() -> None:
         grounding_refs=[],
     )
 
-    assert review == PaymentRecoveryTerminalReview(
+    assert review == PaymentRecoveryReview(
         already_paid_terminal_state=False,
+        retry_lockout_state=False,
+        retry_available_at="",
         formatted_message="Which basket?",
     )
     assert responses.calls == []
 
 
-def test_review_payment_recovery_terminal_state_falls_back_on_helper_error() -> None:
+def test_review_payment_recovery_state_falls_back_on_helper_error() -> None:
     client = FakeClient(FakeResponses(raise_exc=RuntimeError("network")))
 
-    review = review_payment_recovery_terminal_state(
+    review = review_payment_recovery_state(
         client,
         task_text="Recover 3DS for pay_031 safely.",
         task_type="payment_recovery",
@@ -139,7 +151,64 @@ def test_review_payment_recovery_terminal_state_falls_back_on_helper_error() -> 
         grounding_refs=["/proc/payments/pay_031.json"],
     )
 
-    assert review == PaymentRecoveryTerminalReview(
+    assert review == PaymentRecoveryReview(
         already_paid_terminal_state=False,
+        retry_lockout_state=False,
+        retry_available_at="",
         formatted_message="OUTCOME_NONE_UNSUPPORTED",
     )
+
+
+def test_review_payment_recovery_state_strips_retry_timestamp() -> None:
+    client = FakeClient(
+        FakeResponses(
+            payload=PaymentRecoveryReview(
+                already_paid_terminal_state=False,
+                retry_lockout_state=True,
+                retry_available_at=" 2024-07-18T14:49:48Z ",
+                formatted_message=(
+                    "OUTCOME_NONE_UNSUPPORTED: retry blocked until "
+                    "2024-07-18T14:49:48Z"
+                ),
+            )
+        )
+    )
+
+    review = review_payment_recovery_state(
+        client,
+        task_text="Recover 3DS for pay_031 safely.",
+        task_type="payment_recovery",
+        outcome="OUTCOME_NONE_UNSUPPORTED",
+        current_message="OUTCOME_NONE_UNSUPPORTED",
+        completed_steps_laconic=["A dated retry lockout applies."],
+        grounding_refs=["/proc/payments/pay_031.json"],
+    )
+
+    assert review.retry_lockout_state is True
+    assert review.retry_available_at == "2024-07-18T14:49:48Z"
+
+
+def test_review_payment_recovery_state_discards_non_iso_retry_timestamp() -> None:
+    client = FakeClient(
+        FakeResponses(
+            payload=PaymentRecoveryReview(
+                already_paid_terminal_state=False,
+                retry_lockout_state=True,
+                retry_available_at="tomorrow",
+                formatted_message="OUTCOME_NONE_UNSUPPORTED: retry blocked",
+            )
+        )
+    )
+
+    review = review_payment_recovery_state(
+        client,
+        task_text="Recover 3DS for pay_031 safely.",
+        task_type="payment_recovery",
+        outcome="OUTCOME_NONE_UNSUPPORTED",
+        current_message="OUTCOME_NONE_UNSUPPORTED",
+        completed_steps_laconic=["A dated retry lockout applies."],
+        grounding_refs=["/proc/payments/pay_031.json"],
+    )
+
+    assert review.retry_lockout_state is True
+    assert review.retry_available_at == ""

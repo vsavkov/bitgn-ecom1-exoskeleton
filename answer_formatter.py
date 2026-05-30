@@ -65,42 +65,6 @@ def _leading_yes_no_token_message(message: str) -> str | None:
     return None
 
 
-def _payment_recovery_lockout_message(
-    *,
-    task_type: str,
-    current_message: str,
-    outcome: str,
-    completed_steps_laconic: Sequence[str],
-) -> str | None:
-    if task_type != "payment_recovery" or outcome != "OUTCOME_NONE_UNSUPPORTED":
-        return None
-
-    stripped = current_message.strip()
-    if re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", stripped):
-        return None
-
-    step_text = " ".join(completed_steps_laconic)
-    if not re.search(
-        r"\b(?:lockout|blocked|blocks|retry|recover|recovery)\b",
-        step_text,
-        flags=re.IGNORECASE,
-    ):
-        return None
-
-    match = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", step_text)
-    if not match:
-        return None
-
-    timestamp = match.group(0)
-    # Business rule: retry-lockout recoveries are unsupported until the policy
-    # timestamp, and the grader checks that the exact timestamp is user-visible.
-    return (
-        f"{stripped}: retry blocked until {timestamp}"
-        if stripped
-        else f"Retry blocked until {timestamp}"
-    )
-
-
 def _parsed_response(resp) -> FormattedAnswer | None:
     output_parsed = getattr(resp, "output_parsed", None)
     if isinstance(output_parsed, FormattedAnswer):
@@ -140,19 +104,6 @@ def format_completion_message(
                 f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}",
                 output_lines,
             )
-        return formatted_message
-
-    formatted_message = _payment_recovery_lockout_message(
-        task_type=task_type,
-        current_message=current_message,
-        outcome=outcome,
-        completed_steps_laconic=completed_steps_laconic,
-    )
-    if formatted_message is not None:
-        _emit(
-            f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}",
-            output_lines,
-        )
         return formatted_message
 
     payload = {

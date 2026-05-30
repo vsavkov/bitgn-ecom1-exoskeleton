@@ -11,6 +11,10 @@ Return only structured output with:
 - already_paid_terminal_state: true only when the supplied evidence says the target
   payment is already paid, has payment_status paid, has status paid, or is otherwise
   a completed paid transaction, so a fresh 3DS recovery is not eligible.
+- retry_lockout_state: true only when the supplied evidence says 3DS recovery is
+  blocked by a retry lockout, retry delay, cooldown, or retry_available_at policy.
+- retry_available_at: exact ISO timestamp if supplied in the current_message or
+  completed_steps_laconic; otherwise an empty string.
 - formatted_message: the final answer message to use.
 
 Rules:
@@ -19,9 +23,17 @@ Rules:
 - Set already_paid_terminal_state=false if the evidence is unclear, only mentions a
   payment amount, only mentions payment id/path, or describes retry lockout, missing
   ownership, security denial, failed 3DS, or requires_3ds_action instead of paid.
+- Set retry_lockout_state=false if the evidence is unclear, only mentions generic
+  recovery, already-paid status, missing ownership, security denial, failed 3DS, or
+  requires_3ds_action without a retry lockout/delay/cooldown.
+- If already_paid_terminal_state=true, set retry_lockout_state=false unless the
+  evidence explicitly describes both states for the same target payment.
 - If already_paid_terminal_state=true, formatted_message must preserve the current
   decision and explicitly say the payment is paid or already paid. If current_message
   is only an outcome token, append a short explanation such as
   ": payment is already paid".
-- If already_paid_terminal_state=false, formatted_message must equal current_message.
+- If retry_lockout_state=true, formatted_message must preserve the current decision
+  and explicitly say retry/recovery is blocked. If retry_available_at is supplied,
+  include that exact timestamp. If it is not supplied, do not invent one.
+- If both terminal-state fields are false, formatted_message must equal current_message.
 - Never add markdown, citations, row refs, or extra operational advice.
