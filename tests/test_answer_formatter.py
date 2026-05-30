@@ -54,6 +54,15 @@ def test_payment_already_paid_message_is_added_for_recovery_unsupported() -> Non
         )
         == "OUTCOME_NONE_UNSUPPORTED: payment is already paid"
     )
+    assert (
+        _payment_already_paid_message(
+            task_type="payment_recovery",
+            current_message="OUTCOME_NONE_UNSUPPORTED",
+            outcome="OUTCOME_NONE_UNSUPPORTED",
+            completed_steps_laconic=["Confirmed pay_031 has status paid."],
+        )
+        == "OUTCOME_NONE_UNSUPPORTED: payment is already paid"
+    )
 
 
 def test_payment_already_paid_message_does_not_rewrite_other_unsupported() -> None:

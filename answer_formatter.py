@@ -14,6 +14,7 @@ from config import (
     helper_reasoning_effort,
     render_prompt,
 )
+from payment_recovery import mentions_paid_terminal_state
 
 if TYPE_CHECKING:
     P = ParamSpec("P")
@@ -79,8 +80,8 @@ def _payment_already_paid_message(
     if "paid" in stripped.lower():
         return None
 
-    step_text = " ".join(completed_steps_laconic).lower()
-    if not re.search(r"\balready\s+paid\b|\bstatus\s+is\s+paid\b|\bis\s+paid\b", step_text):
+    step_text = " ".join(completed_steps_laconic)
+    if not mentions_paid_terminal_state(step_text):
         return None
 
     # Business rule: 3DS recovery is unsupported for an already-paid payment,
