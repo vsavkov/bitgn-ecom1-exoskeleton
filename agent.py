@@ -56,6 +56,7 @@ from config import (
     render_prompt,
 )
 from connectrpc.errors import ConnectError
+from dispatch_planner import dispatch_wave_path_from_task, plan_dispatch_wave
 from doc_autocite import relevant_doc_refs_for_task_type
 from evidence_ledger import EvidenceLedger
 from google.protobuf.json_format import MessageToDict
@@ -1376,7 +1377,11 @@ def run_agent(
     # can mirror the relevant ones into grounding_doc_refs at completion time.
     ledger.register_loaded_docs(sorted(tree_read_paths))
 
-    def _finalize_preflight(cmd: ReportTaskCompletion) -> dict:
+    def _finalize_preflight(
+        cmd: ReportTaskCompletion,
+        *,
+        format_message: bool = True,
+    ) -> dict:
         payment_recovery_review = _review_payment_recovery_state(
             formatter_client,
             cmd,
@@ -1390,19 +1395,20 @@ def run_agent(
             task_text=task_text,
         )
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
-        formatted_message = format_completion_message(
-            formatter_client,
-            task_text=task_text,
-            task_type=cmd.task_type,
-            current_message=cmd.message,
-            outcome=cmd.outcome,
-            completed_steps_laconic=cmd.completed_steps_laconic,
-            grounding_refs=completion_refs,
-            agents_md=agents_md_content,
-            debug=debug,
-            output_lines=None if print_completion else formatter_output_lines,
-        )
-        cmd = cmd.model_copy(update={"message": formatted_message})
+        if format_message:
+            formatted_message = format_completion_message(
+                formatter_client,
+                task_text=task_text,
+                task_type=cmd.task_type,
+                current_message=cmd.message,
+                outcome=cmd.outcome,
+                completed_steps_laconic=cmd.completed_steps_laconic,
+                grounding_refs=completion_refs,
+                agents_md=agents_md_content,
+                debug=debug,
+                output_lines=None if print_completion else formatter_output_lines,
+            )
+            cmd = cmd.model_copy(update={"message": formatted_message})
         dispatch(vm, cmd, task_text=task_text)
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
         result_payload = {
@@ -1421,6 +1427,25 @@ def run_agent(
         if print_completion:
             _print_completion(cmd, completion_refs)
         return result_payload
+
+    dispatch_wave_path = dispatch_wave_path_from_task(task_text)
+    if dispatch_wave_path:
+        dispatch_plan = plan_dispatch_wave(vm, dispatch_wave_path)
+        if dispatch_plan is not None:
+            cmd = ReportTaskCompletion(
+                completed_steps_laconic=[
+                    "Read the dispatch wave manifest.",
+                    f"Parsed {dispatch_plan.package_count} packages and the lane table.",
+                    "Selected connected routes and priorities with a deterministic planner.",
+                ],
+                task_type="other",
+                message=dispatch_plan.message,
+                grounding_doc_refs=["/docs/dispatch.md"],
+                grounding_row_refs=dispatch_plan.refs_to_submit,
+                protected_record_denial=False,
+                outcome="OUTCOME_OK",
+            )
+            return _finalize_preflight(cmd, format_message=False)
 
     denial = security_preflight(vm, classification, task_text=task_text)
     if denial is not None:
