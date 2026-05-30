@@ -75,6 +75,24 @@ def test_format_completion_message_preserves_security_denial() -> None:
     assert client.responses.calls == []
 
 
+def test_format_completion_message_skips_llm_when_agents_token_already_exact() -> None:
+    client = FakeClient()
+
+    result = format_completion_message(
+        client,
+        task_text="Answer yes/no only.",
+        current_message="0",
+        outcome="OUTCOME_OK",
+        completed_steps_laconic=[],
+        grounding_refs=["/docs/availability-checks.md"],
+        agents_md="For yes/no answers, answer exactly `1` or `0`.",
+        debug=False,
+    )
+
+    assert result == "0"
+    assert client.responses.calls == []
+
+
 def test_parsed_response_accepts_top_level_and_nested_structured_output() -> None:
     parsed = _parsed_response(
         SimpleNamespace(

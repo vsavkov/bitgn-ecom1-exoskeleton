@@ -274,7 +274,8 @@ def test_remember_seen_tool_use() -> None:
     assert seen_help == {"/bin/date"}
 
 
-def test_auto_help_timeout_and_error_formatting() -> None:
+def test_auto_help_timeout_and_error_formatting(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_AUTO_HELP_TIMEOUT_MS", raising=False)
     exc = ConnectError(Code.DEADLINE_EXCEEDED, "timed out")
 
     assert _auto_followup_timeout_ms(ReqExec(path="/bin/sql", args=["--help"])) == 300

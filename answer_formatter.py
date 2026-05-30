@@ -44,6 +44,36 @@ class FormattedAnswer(BaseModel):
 ANSWER_FORMATTER_PROMPT = render_prompt("answer_formatter.j2")
 
 
+def _agents_yes_no_tokens(agents_md: str) -> list[str]:
+    tokens: list[str] = []
+    for line in agents_md.splitlines():
+        line_lower = line.lower()
+        if "yes/no" not in line_lower or "answer" not in line_lower:
+            continue
+
+        in_code = False
+        token_chars: list[str] = []
+        for char in line:
+            if char == "`":
+                if in_code:
+                    token = "".join(token_chars).strip()
+                    if token:
+                        tokens.append(token)
+                    token_chars = []
+                in_code = not in_code
+            elif in_code:
+                token_chars.append(char)
+
+    return tokens
+
+
+def _already_matches_agents_exact_format(current_message: str, agents_md: str) -> bool:
+    message = current_message.strip()
+    if not message:
+        return False
+    return message in _agents_yes_no_tokens(agents_md)
+
+
 def _emit(message: str, output_lines: MutableSequence[str] | None) -> None:
     if output_lines is None:
         print(message)
@@ -86,6 +116,8 @@ def format_completion_message(
 ) -> str:
     if outcome == "OUTCOME_DENIED_SECURITY":
         return current_message.strip() or current_message
+    if _already_matches_agents_exact_format(current_message, agents_md):
+        return current_message.strip()
 
     payload = {
         "task_text": task_text,
