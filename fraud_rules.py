@@ -368,6 +368,7 @@ def incidents_summary(incidents: list[FraudIncident]) -> list[dict[str, Any]]:
             "row_ids": list(incident.row_ids),
             "row_details": [
                 {
+                    "index": row.index,
                     "row_id": row.row_id,
                     "created_at": row.created_at.isoformat(),
                     "store_city": row.store_city,

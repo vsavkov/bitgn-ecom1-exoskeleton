@@ -1,7 +1,10 @@
 import csv
 import io
+import json
+import os
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Protocol
 
 from bitgn.vm.ecom.ecom_pb2 import ReadRequest
@@ -455,6 +458,22 @@ def analyze_archive_fraud_content(path: str, content: str) -> dict[str, Any]:
     }
 
 
+def _write_debug_export(path: str, content: str, analysis: dict[str, Any]) -> None:
+    debug_dir = os.getenv("ARCHIVE_FRAUD_DEBUG_DIR")
+    if not debug_dir:
+        return
+
+    target_dir = Path(debug_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(path).name.replace("/", "_")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    prefix = target_dir / f"{stamp}_{safe_name}"
+    prefix.write_text(content)
+    prefix.with_suffix(prefix.suffix + ".analysis.json").write_text(
+        json.dumps(analysis, indent=2, sort_keys=True)
+    )
+
+
 def analyze_archive_fraud_export(
     vm: RuntimeVM,
     cmd: ReqAnalyzeArchiveFraudExport,
@@ -469,7 +488,10 @@ def analyze_archive_fraud_export(
     if getattr(result, "truncated", False):
         raise RuntimeError(f"archive fraud export is too large to read fully: {cmd.path}")
 
-    return analyze_archive_fraud_content(cmd.path, result.content or "")
+    content = result.content or ""
+    analysis = analyze_archive_fraud_content(cmd.path, content)
+    _write_debug_export(cmd.path, content, analysis)
+    return analysis
 
 
 # Re-export private aliases that tests import as part of the existing public surface.

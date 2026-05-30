@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 
 from archive_fraud import (
@@ -996,6 +997,27 @@ def test_analyze_archive_fraud_export_reads_runtime_file() -> None:
     )
 
     assert result["total_message"] == "EUR 6142.00"
+
+
+def test_analyze_archive_fraud_export_can_write_debug_artifacts(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARCHIVE_FRAUD_DEBUG_DIR", str(tmp_path))
+
+    result = analyze_archive_fraud_export(
+        FakeVM(sample_export()),
+        ReqAnalyzeArchiveFraudExport(path="/archive/payments.tsv"),
+    )
+
+    tsv_files = list(tmp_path.glob("*_payments.tsv"))
+    analysis_files = list(tmp_path.glob("*_payments.tsv.analysis.json"))
+    assert len(tsv_files) == 1
+    assert len(analysis_files) == 1
+    assert tsv_files[0].read_text() == sample_export()
+    assert json.loads(analysis_files[0].read_text())["total_message"] == result[
+        "total_message"
+    ]
 
 
 def test_analyze_archive_fraud_total_matches_refs_to_submit() -> None:
