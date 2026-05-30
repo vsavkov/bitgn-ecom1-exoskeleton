@@ -37,6 +37,7 @@ from bitgn.vm.ecom.ecom_pb2 import (
 from catalog_tools import (
     ReqResolveCatalogItems,
     ReqResolveCityAvailability,
+    catalog_quote_table_message_from_result,
     resolve_catalog_items,
     resolve_city_availability,
     resolve_city_availability_from_task_text,
@@ -72,13 +73,16 @@ from pydantic import BaseModel, Field, ValidationError
 from payment_recovery import (
     payment_ids_from_refs_and_text,
     payment_recovery_message_with_retry_timestamp,
+    payment_recovery_outcome_for_terminal_state,
     retry_available_at_from_policy_text,
 )
 from receipt_price import ReqAnalyzeReceiptPriceCheck, analyze_receipt_price_check
 from refund_preflight import amount_refund_clarification_preflight
+from runtime_mutation_guard import raw_file_mutation_allowed
 from submission_refs import (
     availability_count_refs_from_catalog_result,
     availability_lookup_refs_from_catalog_result,
+    catalog_lookup_refs_from_catalog_result,
     catalog_refs_from_refs,
     dedupe_refs,
     is_catalog_ref,
@@ -306,12 +310,19 @@ TOOLS: list[FunctionToolParam] = [
     _responses_function_tool(
         ReqWrite,
         name="write",
-        description="Write a runtime file by absolute path.",
+        description=(
+            "Write a runtime file by absolute path. Use only when the user "
+            "explicitly asks to create, edit, update, or save a file; never "
+            "write temporary analysis files."
+        ),
     ),
     _responses_function_tool(
         ReqDelete,
         name="delete",
-        description="Delete a runtime file by absolute path.",
+        description=(
+            "Delete a runtime file by absolute path. Use only when the user "
+            "explicitly asks to delete or remove a runtime file."
+        ),
     ),
     _responses_function_tool(
         ReqStat,
@@ -711,8 +722,18 @@ def dispatch(vm: EcomRuntimeClientSync, cmd: BaseModel, *, task_text: str = ""):
             )
         )
     if isinstance(cmd, ReqWrite):
+        if not raw_file_mutation_allowed(task_text):
+            raise RuntimeError(
+                "raw file write is not allowed for this task unless the user "
+                "explicitly asks to create, edit, update, delete, or save a file"
+            )
         return vm.write(WriteRequest(path=cmd.path, content=cmd.content))
     if isinstance(cmd, ReqDelete):
+        if not raw_file_mutation_allowed(task_text):
+            raise RuntimeError(
+                "raw file delete is not allowed for this task unless the user "
+                "explicitly asks to create, edit, update, delete, or save a file"
+            )
         return vm.delete(DeleteRequest(path=cmd.path))
     if isinstance(cmd, ReqStat):
         return vm.stat(StatRequest(path=cmd.path))
@@ -1025,6 +1046,48 @@ def _apply_catalog_availability_lookup_refs(
     return cmd.model_copy(update={"grounding_row_refs": row_refs})
 
 
+def _task_requests_catalog_quote_table(task_text: str) -> bool:
+    normalized = " ".join(task_text.lower().split())
+    return "rowid sku in_stock match" in normalized
+
+
+def _apply_catalog_lookup_result(
+    cmd: ReportTaskCompletion,
+    *,
+    table_message: str,
+    refs_to_submit: list[str],
+    task_text: str,
+) -> ReportTaskCompletion:
+    if cmd.task_type != "catalog_lookup":
+        return cmd
+    if not table_message and not refs_to_submit:
+        return cmd
+
+    updates: dict[str, Any] = {}
+    if table_message and _task_requests_catalog_quote_table(task_text):
+        updates["message"] = table_message
+    if refs_to_submit and _task_requests_catalog_quote_table(task_text):
+        updates["grounding_row_refs"] = dedupe_refs(
+            [*cmd.grounding_row_refs, *refs_to_submit]
+        )
+
+    return cmd.model_copy(update=updates) if updates else cmd
+
+
+def _apply_payment_recovery_terminal_outcome(
+    cmd: ReportTaskCompletion,
+) -> ReportTaskCompletion:
+    outcome = payment_recovery_outcome_for_terminal_state(
+        task_type=cmd.task_type,
+        outcome=cmd.outcome,
+        message=cmd.message,
+        completed_steps_laconic=cmd.completed_steps_laconic,
+    )
+    if outcome == cmd.outcome:
+        return cmd
+    return cmd.model_copy(update={"outcome": outcome})
+
+
 def _apply_payment_recovery_retry_timestamp(
     vm: Any,
     cmd: ReportTaskCompletion,
@@ -1203,6 +1266,7 @@ def run_agent(
     ledger.register_loaded_docs(sorted(tree_read_paths))
 
     def _finalize_preflight(cmd: ReportTaskCompletion) -> dict:
+        cmd = _apply_payment_recovery_terminal_outcome(cmd)
         cmd = _apply_payment_recovery_retry_timestamp(vm, cmd, task_text=task_text)
         dispatch(vm, cmd, task_text=task_text)
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
@@ -1425,6 +1489,7 @@ def run_agent(
                 # during the main loop beyond what the must startup pulled in.
                 ledger.register_loaded_docs(sorted(tree_read_paths))
                 cmd = ledger.apply_to_completion(cmd, task_text=task_text)
+                cmd = _apply_payment_recovery_terminal_outcome(cmd)
                 cmd = _apply_payment_recovery_retry_timestamp(
                     vm, cmd, task_text=task_text
                 )
@@ -1475,6 +1540,10 @@ def run_agent(
                 )
                 ledger.merge_catalog_availability_lookup(
                     availability_lookup_refs_from_catalog_result(result)
+                )
+                ledger.merge_catalog_lookup_result(
+                    refs=catalog_lookup_refs_from_catalog_result(result),
+                    table_message=catalog_quote_table_message_from_result(result),
                 )
                 ledger.merge_support_note(
                     support_note_refs_from_catalog_result(result)

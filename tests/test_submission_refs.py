@@ -13,6 +13,7 @@ from submission_refs import (
     availability_lookup_refs_from_catalog_result,
     can_auto_cite_customer_scoped_record,
     candidate_record_ids,
+    catalog_lookup_refs_from_catalog_result,
     canonical_case_file_ref,
     canonical_proc_record_ref,
     dedupe_refs,
@@ -298,6 +299,23 @@ def test_availability_lookup_refs_from_catalog_result_includes_store_and_matches
         "/proc/stores/store_graz_jakomini.json",
         "/proc/catalog/A.json",
         "/proc/catalog/B.json",
+    ]
+
+
+def test_catalog_lookup_refs_from_catalog_result_includes_all_matched_refs() -> None:
+    assert catalog_lookup_refs_from_catalog_result(
+        {
+            "store_ref": "/proc/stores/store_vienna_praterstern.json",
+            "items": [
+                {"matched_refs": ["/proc/catalog/Festool/STO-2ZMSZF6Z.json"]},
+                {"matched_refs": []},
+                {"matched_refs": ["/proc/catalog/Bosch/PWR-2VIRPPWC.json"]},
+            ],
+        }
+    ) == [
+        "/proc/stores/store_vienna_praterstern.json",
+        "/proc/catalog/Festool/STO-2ZMSZF6Z.json",
+        "/proc/catalog/Bosch/PWR-2VIRPPWC.json",
     ]
 
 

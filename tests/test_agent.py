@@ -16,6 +16,8 @@ from agent import (
     _apply_receipt_price_result,
     _apply_city_availability_result,
     _apply_catalog_availability_lookup_refs,
+    _apply_catalog_lookup_result,
+    _apply_payment_recovery_terminal_outcome,
     _apply_payment_recovery_retry_timestamp,
     _apply_verified_manager_refs,
     _format_list_response,
@@ -622,6 +624,78 @@ def test_apply_city_availability_result_replaces_message_and_refs() -> None:
         "/proc/catalog/FST-1KPF96UD.json",
         "/proc/stores/store_vienna_meidling.json",
     ]
+
+
+def test_apply_catalog_lookup_result_fixes_quote_table_message_and_refs() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["resolved quote rows"],
+        task_type="catalog_lookup",
+        message="old",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/proc/catalog/Sika/ADH-2U8ETNHK.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_catalog_lookup_result(
+        cmd,
+        table_message=(
+            "RowID\tSKU\tin_stock\tmatch\n"
+            "bFZ9B\tSTO-2ZMSZF6Z\t0\tfalse"
+        ),
+        refs_to_submit=[
+            "/proc/stores/store_vienna_praterstern.json",
+            "/proc/catalog/Festool/STO-2ZMSZF6Z.json",
+        ],
+        task_text=(
+            "Return exactly this tab-separated output table:\n"
+            "RowID\tSKU\tin_stock\tmatch"
+        ),
+    )
+
+    assert updated.message.endswith("bFZ9B\tSTO-2ZMSZF6Z\t0\tfalse")
+    assert updated.grounding_row_refs == [
+        "/proc/catalog/Sika/ADH-2U8ETNHK.json",
+        "/proc/stores/store_vienna_praterstern.json",
+        "/proc/catalog/Festool/STO-2ZMSZF6Z.json",
+    ]
+
+
+def test_apply_catalog_lookup_result_ignores_non_table_tasks() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["resolved one product"],
+        task_type="catalog_lookup",
+        message="<YES>",
+        grounding_doc_refs=[],
+        grounding_row_refs=[],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_catalog_lookup_result(
+        cmd,
+        table_message="RowID\tSKU\tin_stock\tmatch\nrow\tSKU-1234\t1\ttrue",
+        refs_to_submit=["/proc/catalog/Brand/SKU-1234.json"],
+        task_text="Do you carry this product?",
+    )
+
+    assert updated == cmd
+
+
+def test_apply_payment_recovery_terminal_outcome_changes_paid_clarification() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["Payment status is paid."],
+        task_type="payment_recovery",
+        message="Payment is already paid.",
+        grounding_doc_refs=[],
+        grounding_row_refs=[],
+        protected_record_denial=False,
+        outcome="OUTCOME_NONE_CLARIFICATION",
+    )
+
+    updated = _apply_payment_recovery_terminal_outcome(cmd)
+
+    assert updated.outcome == "OUTCOME_NONE_UNSUPPORTED"
 
 
 def test_apply_catalog_availability_lookup_refs_merges_store_and_catalog_refs() -> None:

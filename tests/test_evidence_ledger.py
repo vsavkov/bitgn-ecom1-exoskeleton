@@ -307,6 +307,36 @@ def test_apply_to_completion_uses_catalog_availability_lookup_refs() -> None:
     ]
 
 
+def test_apply_to_completion_uses_catalog_quote_table_result() -> None:
+    cmd = _completion(
+        task_type="catalog_lookup",
+        row_refs=["/proc/catalog/A.json"],
+        message="old",
+    )
+
+    ledger = EvidenceLedger()
+    ledger.merge_catalog_lookup_result(
+        refs=["/proc/stores/store_vienna_praterstern.json"],
+        table_message="RowID\tSKU\tin_stock\tmatch\nrow\tSTO-2ZMSZF6Z\t0\tfalse",
+    )
+
+    updated = ledger.apply_to_completion(
+        cmd,
+        task_text=(
+            "Return exactly this tab-separated output table:\n"
+            "RowID\tSKU\tin_stock\tmatch"
+        ),
+    )
+
+    assert updated.message == (
+        "RowID\tSKU\tin_stock\tmatch\nrow\tSTO-2ZMSZF6Z\t0\tfalse"
+    )
+    assert updated.grounding_row_refs == [
+        "/proc/catalog/A.json",
+        "/proc/stores/store_vienna_praterstern.json",
+    ]
+
+
 def test_apply_to_completion_autocites_loaded_docs_for_matching_task_type() -> None:
     cmd = _completion(
         task_type="discount",

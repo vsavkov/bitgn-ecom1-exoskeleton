@@ -25,6 +25,13 @@ Subtotal                           EUR 1568.47
 """
 
 
+TABLE_RECEIPT_OCR = """QTY  SKU                 DESCRIPTION        UNIT     TOTAL
+ 1   FST-69283OWE        FISCHER SX              23.00    23.00
+ 2   GRD-36OWMOZT        GARDENA SMART           62.50
+Subtotal EUR                            148.00
+"""
+
+
 PRODUCT_ROWS = {
     "FST-69283OWE": {
         "product_sku": "FST-69283OWE",
@@ -112,6 +119,16 @@ def test_parse_receipt_ocr_extracts_subtotal_items_and_quantities() -> None:
     assert items[-1].quantity == 3
     assert items[-1].receipt_line_cents == 27597
     assert items[-1].receipt_unit_cents == 9199
+
+
+def test_parse_receipt_ocr_extracts_table_rows_without_temp_rewrite() -> None:
+    subtotal_cents, items = parse_receipt_ocr(TABLE_RECEIPT_OCR)
+
+    assert subtotal_cents == 14800
+    assert [item.raw_sku for item in items] == ["FST-69283OWE", "GRD-36OWMOZT"]
+    assert [item.quantity for item in items] == [1, 2]
+    assert items[1].receipt_unit_cents == 6250
+    assert items[1].receipt_line_cents == 12500
 
 
 def test_sku_confusable_variants_include_ocr_digit_repairs() -> None:

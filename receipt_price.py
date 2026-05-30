@@ -42,7 +42,12 @@ SKU_LINE_RE = re.compile(
     r"\bSKU/REF\s+([A-Z0-9]{3}-[A-Z0-9]{4,})\b(?:.*?\bUNIT\s+([0-9]+(?:[.,][0-9]{2})?))?",
     re.IGNORECASE,
 )
+TABLE_SKU_LINE_RE = re.compile(
+    r"^\s*(\d+)\s+([A-Z0-9]{3}-[A-Z0-9]{4,})\b(?P<rest>.*)$",
+    re.IGNORECASE,
+)
 LINE_TOTAL_RE = re.compile(r"\b(\d+)\s+EUR\s+([0-9]+(?:[.,][0-9]{2})?)\b")
+MONEY_RE = re.compile(r"\b([0-9]+(?:[.,][0-9]{2})?)\b")
 SUBTOTAL_RE = re.compile(r"^\s*Subtotal\s+EUR\s+([0-9]+(?:[.,][0-9]{2})?)\s*$", re.IGNORECASE)
 # Receipt OCR often swaps visually similar characters inside SKU suffixes. Keep
 # this narrow and require a unique catalogue match before accepting a repair.
@@ -107,12 +112,40 @@ def _line_quantity_and_total(lines: list[str], sku_line_index: int, unit_cents: 
     return 1, unit_cents
 
 
+def _table_line_prices(rest: str, quantity: int) -> tuple[int, int]:
+    money_values = [_money_to_cents(value) for value in MONEY_RE.findall(rest)]
+    if not money_values:
+        return 0, 0
+    if len(money_values) >= 2:
+        return money_values[-2], money_values[-1]
+    unit_cents = money_values[-1]
+    return unit_cents, unit_cents * quantity
+
+
 def parse_receipt_ocr(content: str) -> tuple[int, list[ReceiptLineItem]]:
     lines = content.splitlines()
     subtotal_cents = _parse_subtotal_cents(content)
     items: list[ReceiptLineItem] = []
 
     for index, line in enumerate(lines):
+        table_match = TABLE_SKU_LINE_RE.match(line)
+        if table_match:
+            quantity = int(table_match.group(1))
+            raw_sku = table_match.group(2).upper()
+            unit_cents, line_cents = _table_line_prices(
+                table_match.group("rest"),
+                quantity,
+            )
+            items.append(
+                ReceiptLineItem(
+                    raw_sku=raw_sku,
+                    quantity=quantity,
+                    receipt_unit_cents=unit_cents,
+                    receipt_line_cents=line_cents,
+                )
+            )
+            continue
+
         match = SKU_LINE_RE.search(line)
         if not match:
             continue

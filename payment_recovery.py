@@ -48,3 +48,21 @@ def payment_recovery_message_with_retry_timestamp(
         if stripped
         else f"Retry blocked until {retry_available_at}"
     )
+
+
+def payment_recovery_outcome_for_terminal_state(
+    *,
+    task_type: str,
+    outcome: str,
+    message: str,
+    completed_steps_laconic: Sequence[str],
+) -> str:
+    if task_type != "payment_recovery":
+        return outcome
+    if outcome != "OUTCOME_NONE_CLARIFICATION":
+        return outcome
+
+    status_text = " ".join([message, *completed_steps_laconic]).lower()
+    if re.search(r"\balready\s+paid\b|\bstatus\s+is\s+paid\b|\bis\s+paid\b", status_text):
+        return "OUTCOME_NONE_UNSUPPORTED"
+    return outcome

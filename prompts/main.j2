@@ -37,10 +37,10 @@ Split evidence into `grounding_doc_refs` (policy/update/incident docs) and `grou
 
 Helper outputs are authoritative — use them as-is:
 
-- `resolve_catalog_items` → use `refs_to_submit_for_availability_count` and `store_ref` for `availability_count`; use `support_note_extra_claim.refs_to_submit` for support-note checks. Do NOT cite `closest_candidates`, ruled-out variants, or zero-availability variants.
+- `resolve_catalog_items` → use `refs_to_submit_for_availability_count` and `store_ref` for `availability_count`; for exact quote tables that ask to reference all matched SKUs, use every item's `matched_refs` even when the store has zero availability; use `support_note_extra_claim.refs_to_submit` for support-note checks. Do NOT cite `closest_candidates` or ruled-out variants.
 - `resolve_city_availability` → use `formatted_message` verbatim and `refs_to_submit`; it already includes the exact product record and every city store record, including zero-availability stores when the task asks for them.
 - `analyze_archive_fraud_export` / `analyze_payment_fraud_history` → use `total_message` verbatim for amount answers, `refs_to_submit` for row refs. Never run ad-hoc SQL fraud heuristics; trust the helper.
-- `analyze_receipt_price_check` → use `formatted_message` verbatim and `refs_to_submit`. Do not recompute receipt totals manually.
+- `analyze_receipt_price_check` → use `formatted_message` verbatim and `refs_to_submit`. Do not recompute receipt totals manually, and do not write normalized receipt copies or temporary files.
 - `verify_store_manager` → use `refs_to_submit` as the role evidence. A positive verification does NOT authorize a customer-requested discount, refund, checkout, payment recovery, or record access unless `/bin/id` and the relevant policy also pass.
 
 The runtime additionally auto-merges some signals into the final submission so you do not need to spend extra turns enumerating them: the basket/payment/return/customer id named in the task is auto-pinned after an ownership check; SKUs you mention in `message` are auto-pinned via `product_variants`; and policy/update/incident docs that the trial actually loaded (`security.md`, `discounts.md`, `checkout.md`, `payments/*`, `returns.md`, dated sql-readme/sql-incident notes) are auto-cited when they match `task_type`. **Still read the docs and apply their policy** — auto-citation only mirrors paths, it does not make the decisions for you.

@@ -25,6 +25,8 @@ class EvidenceLedger:
     city_availability_refs: list[str] = field(default_factory=list)
     city_availability_message: str = ""
     catalog_availability_lookup_refs: list[str] = field(default_factory=list)
+    catalog_lookup_refs: list[str] = field(default_factory=list)
+    catalog_lookup_message: str = ""
     loaded_doc_refs: list[str] = field(default_factory=list)
 
     def merge_availability_count(self, refs: list[str]) -> None:
@@ -87,6 +89,17 @@ class EvidenceLedger:
                 [*self.catalog_availability_lookup_refs, *refs]
             )
 
+    def merge_catalog_lookup_result(
+        self,
+        *,
+        refs: list[str],
+        table_message: str,
+    ) -> None:
+        if refs:
+            self.catalog_lookup_refs = dedupe_refs([*self.catalog_lookup_refs, *refs])
+        if table_message:
+            self.catalog_lookup_message = table_message
+
     def register_loaded_docs(self, paths: list[str]) -> None:
         if paths:
             self.loaded_doc_refs = dedupe_refs([*self.loaded_doc_refs, *paths])
@@ -102,6 +115,7 @@ class EvidenceLedger:
             _apply_availability_count_catalog_refs,
             _apply_city_availability_result,
             _apply_catalog_availability_lookup_refs,
+            _apply_catalog_lookup_result,
             _apply_loaded_doc_refs,
             _apply_receipt_price_result,
             _apply_support_note_catalog_refs,
@@ -137,6 +151,12 @@ class EvidenceLedger:
         cmd = _apply_catalog_availability_lookup_refs(
             cmd,
             refs_to_submit=self.catalog_availability_lookup_refs,
+        )
+        cmd = _apply_catalog_lookup_result(
+            cmd,
+            table_message=self.catalog_lookup_message,
+            refs_to_submit=self.catalog_lookup_refs,
+            task_text=task_text,
         )
         if not explicit_archive_fraud:
             cmd = _apply_loaded_doc_refs(

@@ -5,6 +5,7 @@ from catalog_tools import (
     ParsedCatalogConstraint,
     ParsedCatalogItems,
     ReqResolveCityAvailability,
+    catalog_quote_table_message_from_result,
     _extract_city_availability_request,
     _format_count_message,
     _availability_qualifies,
@@ -79,6 +80,30 @@ def test_catalog_text_normalization_and_numbers() -> None:
     assert _norm_words("Disc-Diameter: 180 mm") == "disc diameter 180 mm"
     assert _norm_words("2500ml 38cm 36V 3XL 10W-40") == (
         "2500 ml 38 cm 36 v 3 xl 10 w 40"
+    )
+
+
+def test_catalog_quote_table_message_uses_exact_match_and_availability() -> None:
+    result = {
+        "items": [
+            {
+                "item_id": "row1",
+                "exact_matches": [
+                    {
+                        "sku": "STO-2ZMSZF6Z",
+                        "available_today_quantity": 0,
+                        "availability_qualifies": False,
+                    }
+                ],
+            },
+            {"item_id": "row2", "exact_matches": []},
+        ]
+    }
+
+    assert catalog_quote_table_message_from_result(result) == (
+        "RowID\tSKU\tin_stock\tmatch\n"
+        "row1\tSTO-2ZMSZF6Z\t0\tfalse\n"
+        "row2\t\t\tfalse"
     )
     assert _norm_words("2 pcs 3pc pieces") == "2 pc 3 pc pc"
     assert _property_label_candidates("disc_diameter_mm") == [

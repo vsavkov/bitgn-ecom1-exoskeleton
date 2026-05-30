@@ -1,5 +1,6 @@
 from payment_recovery import (
     payment_ids_from_refs_and_text,
+    payment_recovery_outcome_for_terminal_state,
     payment_recovery_message_with_retry_timestamp,
     retry_available_at_from_policy_text,
 )
@@ -39,4 +40,25 @@ def test_payment_recovery_message_with_retry_timestamp_appends_once() -> None:
             retry_available_at="2024-07-18T14:49:48Z",
         )
         == "retry blocked until 2024-07-18T14:49:48Z"
+    )
+
+
+def test_payment_recovery_terminal_paid_state_is_unsupported() -> None:
+    assert (
+        payment_recovery_outcome_for_terminal_state(
+            task_type="payment_recovery",
+            outcome="OUTCOME_NONE_CLARIFICATION",
+            message="Payment pay_069 is already paid.",
+            completed_steps_laconic=[],
+        )
+        == "OUTCOME_NONE_UNSUPPORTED"
+    )
+    assert (
+        payment_recovery_outcome_for_terminal_state(
+            task_type="payment_recovery",
+            outcome="OUTCOME_NONE_CLARIFICATION",
+            message="Which payment?",
+            completed_steps_laconic=[],
+        )
+        == "OUTCOME_NONE_CLARIFICATION"
     )

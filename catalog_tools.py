@@ -967,6 +967,41 @@ def _refs_to_submit_for_availability_count(
     return refs
 
 
+def catalog_quote_table_message_from_result(result: Any) -> str:
+    if not isinstance(result, dict):
+        return ""
+
+    items = result.get("items")
+    if not isinstance(items, list) or not items:
+        return ""
+
+    rows = ["RowID\tSKU\tin_stock\tmatch"]
+    for item in items:
+        if not isinstance(item, dict):
+            return ""
+        item_id = str(item.get("item_id") or "")
+        exact_matches = item.get("exact_matches")
+        if not isinstance(exact_matches, list) or len(exact_matches) != 1:
+            rows.append(f"{item_id}\t\t\tfalse")
+            continue
+
+        match = exact_matches[0]
+        if not isinstance(match, dict):
+            rows.append(f"{item_id}\t\t\tfalse")
+            continue
+
+        sku = str(match.get("sku") or "")
+        available_today = match.get("available_today_quantity")
+        in_stock = "" if available_today is None else str(available_today)
+        qualifies = "true" if match.get("availability_qualifies") is True else "false"
+        rows.append(f"{item_id}\t{sku}\t{in_stock}\t{qualifies}")
+
+    # Quote-list tasks require this exact TSV shape. Building it from the
+    # resolver output keeps the answer aligned with the same canonical matching
+    # and availability decisions used for refs.
+    return "\n".join(rows)
+
+
 def resolve_catalog_items(
     vm: RuntimeVM,
     cmd: ReqResolveCatalogItems,
