@@ -232,6 +232,30 @@ def test_detect_archive_fraud_keeps_shared_store_kiosk_device() -> None:
     assert {incident.rule for incident in incidents} == {"high_value_device_multicity"}
 
 
+def test_detect_archive_fraud_keeps_three_row_high_value_device_cluster() -> None:
+    cities = ["Graz", "Salzburg", "Bratislava"]
+    rows = [
+        tsv_row(
+            f"HV{index}",
+            f"2023-11-12T08:{index * 10:02d}:00Z",
+            f"arch_cust_high_value_{index}",
+            cities[index - 1],
+            55_000,
+            f"pm_high_value_{index}",
+            "dev_high_value",
+            "web",
+        )
+        for index in range(1, 4)
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert [row.row_id for row in fraud_rows] == [f"HV{index}" for index in range(1, 4)]
+    assert {incident.rule for incident in incidents} == {"high_value_device_multicity"}
+
+
 def test_detect_archive_fraud_ignores_service_desk_customer_without_reused_payment() -> None:
     cities = [
         "Graz",
