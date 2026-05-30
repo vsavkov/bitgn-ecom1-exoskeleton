@@ -1,4 +1,8 @@
+import json
 from dataclasses import dataclass
+from types import SimpleNamespace
+
+from bitgn.vm.ecom.ecom_pb2 import NodeKind
 
 from checkout_preflight import (
     active_customer_baskets,
@@ -17,16 +21,50 @@ class ExecResult:
 
 
 class FakeVM:
-    def __init__(self, *, id_stdout: str, basket_rows: str) -> None:
+    def __init__(
+        self,
+        *,
+        id_stdout: str,
+        files: dict[str, dict[str, object]] | None = None,
+    ) -> None:
         self.id_stdout = id_stdout
-        self.basket_rows = basket_rows
+        self.files = files or {}
 
     def exec(self, request) -> ExecResult:
         if request.path == "/bin/id":
             return ExecResult(stdout=self.id_stdout)
-        if request.path == "/bin/sql":
-            return ExecResult(stdout=self.basket_rows)
         raise AssertionError(f"unexpected exec path: {request.path}")
+
+    def list(self, request) -> object:
+        prefix = request.path.rstrip("/") + "/"
+        child_names: set[str] = set()
+        file_names: set[str] = set()
+        for path in self.files:
+            if not path.startswith(prefix):
+                continue
+            rest = path.removeprefix(prefix)
+            first, sep, _tail = rest.partition("/")
+            if sep:
+                child_names.add(first)
+            else:
+                file_names.add(first)
+        entries = [
+            SimpleNamespace(name=name, kind=NodeKind.NODE_KIND_DIR)
+            for name in sorted(child_names)
+        ]
+        entries.extend(
+            SimpleNamespace(name=name, kind=NodeKind.NODE_KIND_FILE)
+            for name in sorted(file_names)
+        )
+        return SimpleNamespace(entries=entries)
+
+    def read(self, request) -> object:
+        return SimpleNamespace(content=json.dumps(self.files[request.path]))
+
+    def stat(self, request) -> object:
+        if request.path in self.files:
+            return object()
+        raise AssertionError(f"missing path: {request.path}")
 
 
 def _checkout(
@@ -59,48 +97,71 @@ def test_checkout_request_without_explicit_basket_uses_classification() -> None:
 def test_active_customer_baskets_reads_customer_active_baskets() -> None:
     vm = FakeVM(
         id_stdout="",
-        basket_rows=(
-            "basket_id,record_path,basket_created_at\n"
-            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
-        ),
+        files={
+            "/proc/carts/cust-0072/basket-0145.json": {
+                "id": "basket-0145",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-08-03T15:09:43Z",
+            },
+            "/proc/carts/cust-0072/basket-0146.json": {
+                "id": "basket-0146",
+                "customer_id": "cust-0072",
+                "status": "checked_out",
+                "created_at": "2026-08-04T15:09:43Z",
+            },
+        },
     )
 
-    assert active_customer_baskets(vm, "cust_072") == [
+    assert active_customer_baskets(vm, "cust-0072") == [
         {
-            "basket_id": "basket_145",
-            "record_path": "/proc/baskets/basket_145.json",
-            "basket_created_at": "2021-08-03T15:09:43Z",
+            "basket_id": "basket-0145",
+            "record_path": "/proc/carts/cust-0072/basket-0145.json",
+            "basket_created_at": "2026-08-03T15:09:43Z",
         }
     ]
 
 
 def test_ambiguous_checkout_preflight_returns_candidates_for_multiple_baskets() -> None:
     vm = FakeVM(
-        id_stdout="user: cust_072\nroles: customer\n",
-        basket_rows=(
-            "basket_id,record_path,basket_created_at\n"
-            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
-            "basket_053,/proc/baskets/basket_053.json,2021-07-23T07:46:43Z\n"
-        ),
+        id_stdout="user: cust-0072\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0072/basket-0145.json": {
+                "id": "basket-0145",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-08-03T15:09:43Z",
+            },
+            "/proc/carts/cust-0072/basket-0053.json": {
+                "id": "basket-0053",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-07-23T07:46:43Z",
+            },
+        },
     )
 
     result = ambiguous_checkout_preflight(vm, _checkout())
 
     assert result is not None
-    assert result.basket_ids == ["basket_145", "basket_053"]
+    assert result.basket_ids == ["basket-0145", "basket-0053"]
     assert result.basket_refs == [
-        "/proc/baskets/basket_145.json",
-        "/proc/baskets/basket_053.json",
+        "/proc/carts/cust-0072/basket-0145.json",
+        "/proc/carts/cust-0072/basket-0053.json",
     ]
 
 
 def test_ambiguous_checkout_preflight_ignores_single_or_explicit_basket() -> None:
     vm = FakeVM(
-        id_stdout="user: cust_072\nroles: customer\n",
-        basket_rows=(
-            "basket_id,record_path,basket_created_at\n"
-            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
-        ),
+        id_stdout="user: cust-0072\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0072/basket-0145.json": {
+                "id": "basket-0145",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-08-03T15:09:43Z",
+            }
+        },
     )
 
     assert ambiguous_checkout_preflight(vm, _checkout()) is None
@@ -112,12 +173,21 @@ def test_ambiguous_checkout_preflight_ignores_single_or_explicit_basket() -> Non
 
 def test_ambiguous_checkout_preflight_ignores_deterministic_selector() -> None:
     vm = FakeVM(
-        id_stdout="user: cust_072\nroles: customer\n",
-        basket_rows=(
-            "basket_id,record_path,basket_created_at\n"
-            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
-            "basket_053,/proc/baskets/basket_053.json,2021-07-23T07:46:43Z\n"
-        ),
+        id_stdout="user: cust-0072\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0072/basket-0145.json": {
+                "id": "basket-0145",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-08-03T15:09:43Z",
+            },
+            "/proc/carts/cust-0072/basket-0053.json": {
+                "id": "basket-0053",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-07-23T07:46:43Z",
+            },
+        },
     )
 
     assert (
@@ -127,47 +197,69 @@ def test_ambiguous_checkout_preflight_ignores_deterministic_selector() -> None:
 
 def test_selected_basket_preflight_returns_newest_for_newest_selector() -> None:
     vm = FakeVM(
-        id_stdout="user: cust_072\nroles: customer\n",
-        basket_rows=(
-            "basket_id,record_path,basket_created_at\n"
-            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
-            "basket_053,/proc/baskets/basket_053.json,2021-07-23T07:46:43Z\n"
-        ),
+        id_stdout="user: cust-0072\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0072/basket-0145.json": {
+                "id": "basket-0145",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-08-03T15:09:43Z",
+            },
+            "/proc/carts/cust-0072/basket-0053.json": {
+                "id": "basket-0053",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-07-23T07:46:43Z",
+            },
+        },
     )
 
     result = selected_basket_preflight(vm, _checkout(basket_selector="newest"))
 
     assert result is not None
     assert result.selector == "newest"
-    assert result.basket_id == "basket_145"
-    assert result.basket_ref == "/proc/baskets/basket_145.json"
+    assert result.basket_id == "basket-0145"
+    assert result.basket_ref == "/proc/carts/cust-0072/basket-0145.json"
 
 
 def test_selected_basket_preflight_returns_oldest_for_oldest_selector() -> None:
     vm = FakeVM(
-        id_stdout="user: cust_072\nroles: customer\n",
-        basket_rows=(
-            "basket_id,record_path,basket_created_at\n"
-            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
-            "basket_053,/proc/baskets/basket_053.json,2021-07-23T07:46:43Z\n"
-        ),
+        id_stdout="user: cust-0072\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0072/basket-0145.json": {
+                "id": "basket-0145",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-08-03T15:09:43Z",
+            },
+            "/proc/carts/cust-0072/basket-0053.json": {
+                "id": "basket-0053",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-07-23T07:46:43Z",
+            },
+        },
     )
 
     result = selected_basket_preflight(vm, _checkout(basket_selector="oldest"))
 
     assert result is not None
     assert result.selector == "oldest"
-    assert result.basket_id == "basket_053"
-    assert result.basket_ref == "/proc/baskets/basket_053.json"
+    assert result.basket_id == "basket-0053"
+    assert result.basket_ref == "/proc/carts/cust-0072/basket-0053.json"
 
 
 def test_selected_basket_preflight_skips_without_selector_or_intent() -> None:
     vm = FakeVM(
-        id_stdout="user: cust_072\nroles: customer\n",
-        basket_rows=(
-            "basket_id,record_path,basket_created_at\n"
-            "basket_145,/proc/baskets/basket_145.json,2021-08-03T15:09:43Z\n"
-        ),
+        id_stdout="user: cust-0072\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0072/basket-0145.json": {
+                "id": "basket-0145",
+                "customer_id": "cust-0072",
+                "status": "active",
+                "created_at": "2026-08-03T15:09:43Z",
+            }
+        },
     )
 
     assert selected_basket_preflight(vm, _checkout()) is None
@@ -185,7 +277,6 @@ def test_selected_basket_preflight_skips_without_selector_or_intent() -> None:
 def test_selected_basket_preflight_skips_for_guest_identity() -> None:
     vm = FakeVM(
         id_stdout="user: guest_xyz\nroles: guest\n",
-        basket_rows="",
     )
 
     assert (

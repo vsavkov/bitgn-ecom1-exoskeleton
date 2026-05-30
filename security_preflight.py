@@ -1,16 +1,14 @@
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Any, Literal, Protocol
 
-from bitgn.vm.ecom.ecom_pb2 import ExecRequest
+from bitgn.vm.ecom.ecom_pb2 import ExecRequest, ListRequest, ReadRequest, StatRequest
 
 from manager_verification import ReqVerifyStoreManager, verify_store_manager
 from runtime_calls import runtime_exec
+from runtime_state import CART_ROOTS, find_record_by_id
 from submission_refs import (
-    RuntimeVM,
     is_customer_identity,
     parse_runtime_identity,
-    sql_quote,
-    sql_rows,
 )
 from task_classifier import TaskClassification
 
@@ -20,6 +18,16 @@ SecurityReason = Literal[
     "employee_contact_disclosure",
     "system_override_attempt",
 ]
+
+
+class RuntimeVM(Protocol):
+    def exec(self, request: ExecRequest) -> Any: ...
+
+    def list(self, request: ListRequest) -> Any: ...
+
+    def read(self, request: ReadRequest) -> Any: ...
+
+    def stat(self, request: StatRequest) -> Any: ...
 
 
 @dataclass(frozen=True)
@@ -45,19 +53,10 @@ def _customer_basket_ref(
     basket_id: str,
     customer_id: str,
 ) -> str | None:
-    try:
-        rows = sql_rows(
-            vm,
-            "select record_path from shopping_baskets "
-            f"where basket_id = {sql_quote(basket_id)} "
-            f"and customer_id = {sql_quote(customer_id)} limit 1;",
-        )
-    except Exception:
+    record = find_record_by_id(vm, CART_ROOTS, basket_id, customer_id=customer_id)
+    if record is None:
         return None
-    if not rows:
-        return None
-    path = rows[0].get("record_path") or ""
-    return path if path.startswith("/") else None
+    return record.path
 
 
 def customer_discount_security_preflight(

@@ -4,10 +4,20 @@ import re
 from collections.abc import Sequence
 from typing import Any, NamedTuple, Protocol
 
-from bitgn.vm.ecom.ecom_pb2 import ExecRequest, ListRequest, NodeKind, StatRequest
+from bitgn.vm.ecom.ecom_pb2 import ExecRequest, ListRequest, NodeKind, ReadRequest, StatRequest
 from connectrpc.errors import ConnectError
 
 from runtime_calls import runtime_exec, runtime_list, runtime_stat
+from runtime_state import (
+    CART_ROOTS,
+    PAYMENT_ROOTS,
+    RETURN_ROOTS,
+    STAFF_ROOTS,
+    STORE_ROOTS,
+    find_record_by_id,
+    read_json_record,
+    record_customer_id,
+)
 
 
 class CompletionLike(Protocol):
@@ -31,6 +41,8 @@ class RuntimeVM(Protocol):
     def exec(self, request: ExecRequest) -> Any: ...
 
     def list(self, request: ListRequest) -> Any: ...
+
+    def read(self, request: ReadRequest) -> Any: ...
 
     def stat(self, request: StatRequest) -> Any: ...
 
@@ -70,6 +82,19 @@ PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
     "payments": ("payment_transactions", "payment_id", re.compile(r"^pay_\d+$")),
     "returns": ("return_requests", "return_id", re.compile(r"^ret_\d+$")),
     "stores": ("stores", "store_id", re.compile(r"^store_[a-z0-9_]+$")),
+}
+
+PROC_RECORD_ROOTS: dict[str, tuple[str, ...]] = {
+    "baskets": CART_ROOTS,
+    "carts": CART_ROOTS,
+    "payments": PAYMENT_ROOTS,
+    "payment-ledger": PAYMENT_ROOTS,
+    "returns": RETURN_ROOTS,
+    "return-workflows": RETURN_ROOTS,
+    "stores": STORE_ROOTS,
+    "locations": STORE_ROOTS,
+    "employees": STAFF_ROOTS,
+    "staff": STAFF_ROOTS,
 }
 
 EXPLICIT_RECORD_SPECS: tuple[ExplicitRecordSpec, ...] = (
@@ -271,6 +296,12 @@ def canonical_proc_record_ref(vm: RuntimeVM, path: str) -> str | None:
         if path_from_sql and try_stat(vm, path_from_sql):
             return path_from_sql
         return None
+
+    roots = PROC_RECORD_ROOTS.get(parts[1])
+    if roots:
+        record = find_record_by_id(vm, roots, name)
+        if record and try_stat(vm, record.path):
+            return record.path
 
     table_spec = PROC_RECORD_TABLES.get(parts[1])
     if table_spec is None:
@@ -501,6 +532,14 @@ def customer_scoped_ref_owner(
     ):
         return parts[2]
 
+    record = read_json_record(vm, path)
+    if record is None and not path.endswith(".json"):
+        record = read_json_record(vm, f"{path}.json")
+    if record is not None:
+        owner = record_customer_id(record)
+        if owner:
+            return owner
+
     spec_by_folder = {
         "baskets": ("shopping_baskets", "basket_id"),
         "payments": ("payment_transactions", "payment_id"),
@@ -555,6 +594,23 @@ def explicit_record_path_if_allowed(
     user_id: str | None,
     roles: set[str],
 ) -> str | None:
+    roots = _roots_for_explicit_record_spec(spec)
+    if roots:
+        record = find_record_by_id(
+            vm,
+            roots,
+            record_id,
+            customer_id=user_id if is_customer_identity(user_id) else None,
+        )
+        if record is not None:
+            owner = record_customer_id(record)
+            if can_auto_cite_customer_scoped_record(
+                user_id=user_id,
+                roles=roles,
+                record_customer_id=owner,
+            ):
+                return record.path
+
     rows = sql_rows(
         vm,
         f"select record_path, {spec.customer_column} as customer_id "
@@ -579,6 +635,16 @@ def explicit_record_path_if_allowed(
         return None
 
     return path
+
+
+def _roots_for_explicit_record_spec(spec: ExplicitRecordSpec) -> tuple[str, ...]:
+    if spec.table == "shopping_baskets":
+        return CART_ROOTS
+    if spec.table == "payment_transactions":
+        return PAYMENT_ROOTS
+    if spec.table == "return_requests":
+        return RETURN_ROOTS
+    return ()
 
 
 def explicit_target_refs_from_task(
@@ -648,15 +714,57 @@ def return_id_from_ref(ref: str) -> str | None:
     path, _fragment = split_ref_fragment(ref)
     normalized = normalize_runtime_path(path)
     parts = [part for part in normalized.split("/") if part]
+    if len(parts) >= 4 and parts[:2] == ["proc", "return-workflows"]:
+        return_id = parts[-1].removesuffix(".json")
+        return (
+            return_id
+            if return_id.startswith(("return-", "return_", "ret-", "ret_"))
+            else None
+        )
+
     if len(parts) != 3 or parts[:2] != ["proc", "returns"]:
         return None
 
     return_id = parts[2].removesuffix(".json")
-    return return_id if re.match(r"^ret_\d+$", return_id) else None
+    return (
+        return_id
+        if return_id.startswith(("return-", "return_", "ret-", "ret_"))
+        else None
+    )
 
 
 def linked_payment_refs_for_returns(vm: RuntimeVM, refs: list[str]) -> list[str]:
-    return_ids = [return_id for ref in refs if (return_id := return_id_from_ref(ref))]
+    linked_refs: list[str] = []
+    unresolved_return_ids: list[str] = []
+    for ref in refs:
+        return_id = return_id_from_ref(ref)
+        if not return_id:
+            continue
+
+        path = normalize_runtime_path(split_ref_fragment(ref)[0])
+        return_record = read_json_record(vm, path)
+        if return_record is None and not path.endswith(".json"):
+            return_record = read_json_record(vm, f"{path}.json")
+        if return_record is None:
+            unresolved_return_ids.append(return_id)
+            continue
+
+        payment_id = str(return_record.data.get("payment_id") or "")
+        if not payment_id:
+            continue
+        payment_record = find_record_by_id(
+            vm,
+            PAYMENT_ROOTS,
+            payment_id,
+            customer_id=record_customer_id(return_record) or None,
+        )
+        if payment_record:
+            linked_refs.append(payment_record.path)
+
+    if linked_refs:
+        return dedupe_refs(linked_refs)
+
+    return_ids = unresolved_return_ids
     if not return_ids:
         return []
 
@@ -679,6 +787,13 @@ def linked_payment_refs_for_returns(vm: RuntimeVM, refs: list[str]) -> list[str]
 
 
 def store_ref_for_employee(vm: RuntimeVM, employee_id: str) -> str | None:
+    employee_record = find_record_by_id(vm, STAFF_ROOTS, employee_id)
+    if employee_record is not None:
+        store_id = str(employee_record.data.get("store_id") or "")
+        store_record = find_record_by_id(vm, STORE_ROOTS, store_id)
+        if store_record is not None:
+            return store_record.path
+
     rows = sql_rows(
         vm,
         "select s.record_path as store_record_path "

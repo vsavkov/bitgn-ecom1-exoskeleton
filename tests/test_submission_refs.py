@@ -1,3 +1,4 @@
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
@@ -65,11 +66,13 @@ class FakeVM:
         sql_outputs: dict[str, ExecResult] | None = None,
         list_outputs: dict[str, Sequence[str]] | None = None,
         existing_paths: set[str] | None = None,
+        files: dict[str, dict[str, object]] | None = None,
     ) -> None:
         self.id_stdout = id_stdout
         self.sql_outputs = sql_outputs or {}
         self.list_outputs = list_outputs or {}
         self.existing_paths = existing_paths or set()
+        self.files = files or {}
 
     def exec(self, request) -> ExecResult:
         if request.path == "/bin/id":
@@ -83,11 +86,15 @@ class FakeVM:
         raise AssertionError(f"unexpected exec path: {request.path}")
 
     def stat(self, request) -> object:
-        if request.path in self.existing_paths:
+        if request.path in self.existing_paths or request.path in self.files:
             return object()
         raise ConnectError(Code.NOT_FOUND, f"{request.path} not found")
 
     def list(self, request) -> object:
+        file_entries = self._file_list_entries(request.path)
+        if file_entries:
+            return SimpleNamespace(entries=file_entries)
+
         names = self.list_outputs.get(request.path)
         if names is None:
             raise ConnectError(Code.NOT_FOUND, f"{request.path} not found")
@@ -97,6 +104,34 @@ class FakeVM:
                 for name in names
             ]
         )
+
+    def read(self, request) -> object:
+        if request.path in self.files:
+            return SimpleNamespace(content=json.dumps(self.files[request.path]))
+        raise ConnectError(Code.NOT_FOUND, f"{request.path} not found")
+
+    def _file_list_entries(self, root: str) -> Sequence[object]:
+        prefix = root.rstrip("/") + "/"
+        child_names: set[str] = set()
+        file_names: set[str] = set()
+        for path in self.files:
+            if not path.startswith(prefix):
+                continue
+            rest = path.removeprefix(prefix)
+            first, sep, _tail = rest.partition("/")
+            if sep:
+                child_names.add(first)
+            else:
+                file_names.add(first)
+        entries = [
+            SimpleNamespace(name=name, kind=NodeKind.NODE_KIND_DIR)
+            for name in sorted(child_names)
+        ]
+        entries.extend(
+            SimpleNamespace(name=name, kind=NodeKind.NODE_KIND_FILE)
+            for name in sorted(file_names)
+        )
+        return entries
 
 
 def csv_rows(*rows: str) -> ExecResult:
@@ -451,6 +486,30 @@ def test_replace_customer_facing_employee_refs_uses_store_record() -> None:
     ]
 
 
+def test_replace_customer_facing_employee_refs_uses_prod_staff_filesystem() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/staff/store-graz-liebenau/emp-0003.json": {
+                "id": "emp-0003",
+                "display_name": "Romy Koster",
+                "store_id": "store-graz-liebenau",
+                "roles": ["employee", "store_manager"],
+            },
+            "/proc/locations/Graz/store-graz-liebenau.json": {
+                "id": "store-graz-liebenau",
+                "name": "PowerTools Graz Liebenau",
+            },
+        }
+    )
+
+    assert replace_customer_facing_employee_refs(
+        vm,
+        ["/proc/staff/store-graz-liebenau/emp-0003.json"],
+        user_id="cust-0070",
+        roles={"customer"},
+    ) == ["/proc/locations/Graz/store-graz-liebenau.json"]
+
+
 def test_replace_customer_facing_employee_refs_keeps_employee_identity_refs() -> None:
     vm = FakeVM()
 
@@ -482,6 +541,29 @@ def test_linked_payment_refs_for_returns_adds_refund_evidence() -> None:
         vm,
         ["/proc/returns/ret_012.json"],
     ) == ["/proc/payments/pay_023.json"]
+
+
+def test_linked_payment_refs_for_prod_returns_adds_payment_evidence() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/return-workflows/cust-0114/return-0014.json": {
+                "id": "return-0014",
+                "customer_id": "cust-0114",
+                "payment_id": "pay-0014",
+                "status": "refund_pending",
+            },
+            "/proc/payment-ledger/cust-0114/pay-0014.json": {
+                "id": "pay-0014",
+                "customer_id": "cust-0114",
+                "status": "paid",
+            },
+        }
+    )
+
+    assert linked_payment_refs_for_returns(
+        vm,
+        ["/proc/return-workflows/cust-0114/return-0014.json"],
+    ) == ["/proc/payment-ledger/cust-0114/pay-0014.json"]
 
 
 def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:

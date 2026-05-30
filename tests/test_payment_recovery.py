@@ -12,6 +12,13 @@ def test_payment_ids_from_refs_and_text_merges_sources() -> None:
     ) == {"pay_002", "pay_034"}
 
 
+def test_payment_ids_from_prod_refs_and_text_merges_sources() -> None:
+    assert payment_ids_from_refs_and_text(
+        ["/proc/payment-ledger/cust-0114/pay-0014.json"],
+        "Recover pay-0034 safely.",
+    ) == {"pay-0014", "pay-0034"}
+
+
 def test_retry_available_at_from_policy_text_matches_payment() -> None:
     content = """
     - payment_id: pay_002
@@ -40,4 +47,3 @@ def test_payment_recovery_message_with_retry_timestamp_appends_once() -> None:
         )
         == "retry blocked until 2024-07-18T14:49:48Z"
     )
-

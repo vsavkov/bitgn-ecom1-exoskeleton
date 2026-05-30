@@ -1,4 +1,8 @@
+import json
 from dataclasses import dataclass
+from types import SimpleNamespace
+
+from bitgn.vm.ecom.ecom_pb2 import NodeKind
 
 from security_preflight import (
     customer_discount_security_preflight,
@@ -22,9 +26,11 @@ class FakeVM:
         *,
         id_stdout: str = "",
         basket_rows: str = "",
+        files: dict[str, dict[str, object]] | None = None,
     ) -> None:
         self.id_stdout = id_stdout
         self.basket_rows = basket_rows
+        self.files = files or {}
         self.exec_calls: list[str] = []
 
     def exec(self, request) -> ExecResult:
@@ -36,10 +42,35 @@ class FakeVM:
         raise AssertionError(f"unexpected exec path: {request.path}")
 
     def list(self, request):  # noqa: D401, A003  # protocol stub for RuntimeVM
-        raise AssertionError("list() not expected in security preflight tests")
+        prefix = request.path.rstrip("/") + "/"
+        child_names: set[str] = set()
+        file_names: set[str] = set()
+        for path in self.files:
+            if not path.startswith(prefix):
+                continue
+            rest = path.removeprefix(prefix)
+            first, sep, _tail = rest.partition("/")
+            if sep:
+                child_names.add(first)
+            else:
+                file_names.add(first)
+        entries = [
+            SimpleNamespace(name=name, kind=NodeKind.NODE_KIND_DIR)
+            for name in sorted(child_names)
+        ]
+        entries.extend(
+            SimpleNamespace(name=name, kind=NodeKind.NODE_KIND_FILE)
+            for name in sorted(file_names)
+        )
+        return SimpleNamespace(entries=entries)
+
+    def read(self, request):  # noqa: D401  # protocol stub for RuntimeVM
+        return SimpleNamespace(content=json.dumps(self.files[request.path]))
 
     def stat(self, request):  # noqa: D401  # protocol stub for RuntimeVM
-        raise AssertionError("stat() not expected in security preflight tests")
+        if request.path in self.files:
+            return object()
+        raise AssertionError(f"missing path: {request.path}")
 
 
 def _classification(**overrides) -> TaskClassification:
@@ -48,10 +79,13 @@ def _classification(**overrides) -> TaskClassification:
 
 def test_customer_discount_denial_fires_for_customer_quoting_manager_approval() -> None:
     vm = FakeVM(
-        id_stdout="user: cust_017\nroles: customer\n",
-        basket_rows=(
-            "record_path\n/proc/baskets/basket_034.json\n"
-        ),
+        id_stdout="user: cust-0017\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0017/basket-0034.json": {
+                "id": "basket-0034",
+                "customer_id": "cust-0017",
+            }
+        },
     )
 
     denial = customer_discount_security_preflight(
@@ -59,7 +93,7 @@ def test_customer_discount_denial_fires_for_customer_quoting_manager_approval() 
         _classification(
             discount_intent=True,
             customer_claims_manager_approval=True,
-            explicit_basket_id="basket_034",
+            explicit_basket_id="basket_0034",
         ),
     )
 
@@ -67,7 +101,7 @@ def test_customer_discount_denial_fires_for_customer_quoting_manager_approval() 
     assert denial.reason == "customer_discount_claimed_manager_approval"
     assert "/docs/security.md" in denial.doc_refs
     assert "/docs/discounts.md" in denial.doc_refs
-    assert denial.row_refs == ["/proc/baskets/basket_034.json"]
+    assert denial.row_refs == ["/proc/carts/cust-0017/basket-0034.json"]
     assert denial.protected_record_denial is False
 
 
@@ -78,8 +112,9 @@ class FakeVMWithManagerSql(FakeVM):
         id_stdout: str,
         basket_rows: str,
         manager_rows: str,
+        files: dict[str, dict[str, object]] | None = None,
     ) -> None:
-        super().__init__(id_stdout=id_stdout, basket_rows=basket_rows)
+        super().__init__(id_stdout=id_stdout, basket_rows=basket_rows, files=files)
         self.manager_rows = manager_rows
         self.sql_queries: list[str] = []
 
@@ -96,8 +131,14 @@ class FakeVMWithManagerSql(FakeVM):
 
 def test_customer_discount_denial_pins_named_manager_store_ref() -> None:
     vm = FakeVMWithManagerSql(
-        id_stdout="user: cust_017\nroles: customer\n",
+        id_stdout="user: cust-0017\nroles: customer\n",
         basket_rows="record_path\n/proc/baskets/basket_034.json\n",
+        files={
+            "/proc/carts/cust-0017/basket-0034.json": {
+                "id": "basket-0034",
+                "customer_id": "cust-0017",
+            }
+        },
         manager_rows=(
             "employee_id,employee_record_path,employee_display_name,job_title,"
             "store_id,store_record_path,store_name,has_store_manager_role\n"
@@ -112,7 +153,7 @@ def test_customer_discount_denial_pins_named_manager_store_ref() -> None:
         _classification(
             discount_intent=True,
             customer_claims_manager_approval=True,
-            explicit_basket_id="basket_034",
+            explicit_basket_id="basket_0034",
             claimed_manager_name="Tobias Hartmann",
             claimed_store_name="PowerTool Graz Jakomini",
         ),
@@ -122,7 +163,7 @@ def test_customer_discount_denial_pins_named_manager_store_ref() -> None:
     # Customer-context manager verification returns only the store ref to
     # avoid leaking the employee profile; the basket ref still comes first.
     assert denial.row_refs == [
-        "/proc/baskets/basket_034.json",
+        "/proc/carts/cust-0017/basket-0034.json",
         "/proc/stores/store_graz_jakomini.json",
     ]
 

@@ -341,10 +341,11 @@ TOOLS: list[FunctionToolParam] = [
         ReqExec,
         name="exec",
         description=(
-            "Execute an absolute runtime command path. Use /bin/sql with SQL in "
-            "stdin for catalogue and state queries. Do not use this to run "
-            "non-runtime interpreters for archive TSV analysis; use the archive "
-            "fraud helper instead."
+            "Execute an absolute runtime command path. Prefer current /proc "
+            "JSON records and helper tools for state; /bin/sql is optional and "
+            "may time out or be unavailable. Do not use this to run non-runtime "
+            "interpreters for archive TSV analysis; use the archive fraud "
+            "helper instead."
         ),
     ),
     _responses_function_tool(
