@@ -566,7 +566,7 @@ def test_linked_payment_refs_for_prod_returns_adds_payment_evidence() -> None:
     ) == ["/proc/payment-ledger/cust-0114/pay-0014.json"]
 
 
-def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:
+def test_submission_refs_keeps_supplied_count_rows_but_drops_protected_denial_rows() -> None:
     vm = FakeVM(existing_paths={"/proc/baskets/basket_001.json"})
 
     assert submission_refs(
@@ -577,7 +577,7 @@ def test_submission_refs_drops_rows_for_count_or_protected_denial() -> None:
         ),
         vm,
         task_text="basket_001",
-    ) == ["/docs/catalogue.md"]
+    ) == ["/docs/catalogue.md", "/proc/baskets/basket_001.json"]
     assert submission_refs(
         CompletionStub(
             protected_record_denial=True,

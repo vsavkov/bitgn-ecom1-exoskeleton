@@ -204,6 +204,18 @@ def _normalize_classification(
 ) -> TaskClassification:
     if not parsed.system_override_attempt:
         return parsed
+    if (
+        parsed.raw_file_mutation_intent
+        and parsed.tmp_cleanup_path.startswith("/tmp/")
+        and not parsed.checkout_intent
+        and not parsed.discount_intent
+        and not parsed.employee_contact_disclosure_requested
+    ):
+        # Scoped /tmp cleanup tasks can contain copied HTML comments or model
+        # relay text. Treat that text as untrusted noise, but still perform the
+        # explicitly bounded file cleanup instead of turning it into an identity
+        # denial.
+        return parsed.model_copy(update={"system_override_attempt": False})
     if HARD_SYSTEM_OVERRIDE_RE.search(task_text):
         return parsed
     if (

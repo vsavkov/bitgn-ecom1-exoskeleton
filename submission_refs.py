@@ -888,7 +888,7 @@ def submission_refs(
             user_id=user_id,
         )
 
-    if cmd.task_type == "count" or protected_record_denial:
+    if protected_record_denial:
         refs = doc_refs
     else:
         if vm is not None and user_id is None and not roles:
@@ -897,7 +897,7 @@ def submission_refs(
         # The final answer is graded on refs separately from the text. When the
         # user names an exact basket/payment/return/customer id, preserve that
         # target evidence even if the model forgets to echo it in grounding refs.
-        if vm is not None and task_text:
+        if vm is not None and task_text and cmd.task_type != "count":
             row_refs = dedupe_refs(
                 [
                     *row_refs,
@@ -913,7 +913,7 @@ def submission_refs(
         # treats any SKU we surfaced to the user as evidence that must be
         # cited, and quote/table answers routinely list more SKUs than the
         # model remembers to mirror into grounding_row_refs.
-        if vm is not None:
+        if vm is not None and cmd.task_type != "count":
             row_refs = dedupe_refs(
                 [*row_refs, *message_sku_refs(vm, cmd.message)]
             )
