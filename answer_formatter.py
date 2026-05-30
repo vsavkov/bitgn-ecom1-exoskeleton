@@ -42,6 +42,11 @@ class FormattedAnswer(BaseModel):
 
 
 ANSWER_FORMATTER_PROMPT = render_prompt("answer_formatter.j2")
+FORMATTER_PRESERVE_OUTCOMES = {
+    "OUTCOME_DENIED_SECURITY",
+    "OUTCOME_NONE_CLARIFICATION",
+    "OUTCOME_NONE_UNSUPPORTED",
+}
 
 
 def _agents_yes_no_tokens(agents_md: str) -> list[str]:
@@ -93,6 +98,16 @@ def _drop_added_outcome_prefix(
     return formatted
 
 
+def _preserve_non_ok_message(current_message: str, outcome: str) -> str:
+    current = current_message.strip()
+    if outcome != "OUTCOME_NONE_CLARIFICATION":
+        return current or current_message
+    if not current.startswith(outcome):
+        return current or current_message
+    remainder = current.removeprefix(outcome).lstrip(" \t\r\n:.-—")
+    return remainder or current
+
+
 def _emit(message: str, output_lines: MutableSequence[str] | None) -> None:
     if output_lines is None:
         print(message)
@@ -133,8 +148,8 @@ def format_completion_message(
     debug: bool,
     output_lines: MutableSequence[str] | None = None,
 ) -> str:
-    if outcome == "OUTCOME_DENIED_SECURITY":
-        return current_message.strip() or current_message
+    if outcome in FORMATTER_PRESERVE_OUTCOMES:
+        return _preserve_non_ok_message(current_message, outcome)
     if _already_matches_agents_exact_format(current_message, agents_md):
         return current_message.strip()
 

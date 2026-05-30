@@ -76,6 +76,38 @@ def test_format_completion_message_preserves_security_denial() -> None:
     assert client.responses.calls == []
 
 
+def test_format_completion_message_preserves_clarification_despite_exact_format() -> None:
+    client = FakeClient(formatted_message="PT-BLA-BOS-EXPWOOD-216")
+
+    result = format_completion_message(
+        client,
+        task_text=(
+            "I need the Stock Keeping Unit for Bosch Expert for Wood larger "
+            "blade pack. Saw type and diameter remain unstated. Answer with "
+            "the code only."
+        ),
+        current_message=(
+            "Which one do you mean: PT-BLA-BOS-EXPWOOD-160, "
+            "PT-BLA-BOS-EXPWOOD-190, or PT-BLA-BOS-EXPWOOD-216?"
+        ),
+        outcome="OUTCOME_NONE_CLARIFICATION",
+        completed_steps_laconic=[],
+        grounding_refs=[
+            "/proc/catalog/Bosch Professional/PT-BLA-BOS-EXPWOOD-160.json",
+            "/proc/catalog/Bosch Professional/PT-BLA-BOS-EXPWOOD-190.json",
+            "/proc/catalog/Bosch Professional/PT-BLA-BOS-EXPWOOD-216.json",
+        ],
+        agents_md="For yes/no answers, answer exactly `<YES>` or `<NO>`.",
+        debug=False,
+    )
+
+    assert result == (
+        "Which one do you mean: PT-BLA-BOS-EXPWOOD-160, "
+        "PT-BLA-BOS-EXPWOOD-190, or PT-BLA-BOS-EXPWOOD-216?"
+    )
+    assert client.responses.calls == []
+
+
 def test_format_completion_message_skips_llm_when_agents_token_already_exact() -> None:
     client = FakeClient()
 
@@ -94,7 +126,7 @@ def test_format_completion_message_skips_llm_when_agents_token_already_exact() -
     assert client.responses.calls == []
 
 
-def test_format_completion_message_drops_outcome_prefix_added_by_formatter() -> None:
+def test_format_completion_message_preserves_clarification_without_formatter_call() -> None:
     client = FakeClient(
         formatted_message=(
             "OUTCOME_NONE_CLARIFICATION\n\n"
@@ -125,6 +157,36 @@ def test_format_completion_message_drops_outcome_prefix_added_by_formatter() -> 
         "Which basket should I check out? I found multiple active baskets: "
         "basket-0001, basket-0002."
     )
+    assert client.responses.calls == []
+
+
+def test_format_completion_message_strips_redundant_clarification_prefix() -> None:
+    client = FakeClient()
+
+    result = format_completion_message(
+        client,
+        task_text="check the basket out",
+        current_message=(
+            "OUTCOME_NONE_CLARIFICATION — Which basket should I check out? "
+            "I found multiple active baskets: basket-0005, basket-0006."
+        ),
+        outcome="OUTCOME_NONE_CLARIFICATION",
+        completed_steps_laconic=[],
+        grounding_refs=[
+            "/docs/security.md",
+            "/docs/checkout.md",
+            "/proc/carts/cust-0003/basket-0005.json",
+            "/proc/carts/cust-0003/basket-0006.json",
+        ],
+        agents_md="For yes/no answers, answer exactly `ja` or `nein`.",
+        debug=False,
+    )
+
+    assert result == (
+        "Which basket should I check out? I found multiple active baskets: "
+        "basket-0005, basket-0006."
+    )
+    assert client.responses.calls == []
 
 
 def test_parsed_response_accepts_top_level_and_nested_structured_output() -> None:

@@ -92,6 +92,18 @@ class TaskClassification(BaseModel):
             "False for read-only analysis even when files or records are mentioned."
         ),
     )
+    read_only_public_lookup_intent: bool = Field(
+        default=False,
+        description=(
+            "True when the task only asks for a read-only public/non-customer "
+            "lookup such as product catalogue matching, product properties, "
+            "stock availability, store facts, company lore, dates, uploaded "
+            "file markers, archive aggregation, or dispatch planning, and does "
+            "not ask to inspect or mutate a customer/payment/return/basket "
+            "record, disclose employee contact details, apply a discount, or "
+            "change runtime state."
+        ),
+    )
     tmp_cleanup_path: str = Field(
         default="",
         description=(
@@ -215,6 +227,18 @@ def _normalize_classification(
         # relay text. Treat that text as untrusted noise, but still perform the
         # explicitly bounded file cleanup instead of turning it into an identity
         # denial.
+        return parsed.model_copy(update={"system_override_attempt": False})
+    if (
+        parsed.read_only_public_lookup_intent
+        and not parsed.checkout_intent
+        and not parsed.discount_intent
+        and not parsed.raw_file_mutation_intent
+        and not parsed.employee_contact_disclosure_requested
+    ):
+        # Some prod tasks append fake bridge or relay metadata after an
+        # otherwise public lookup. Ignore that untrusted text and let the main
+        # agent answer from catalogue/docs/runtime facts instead of denying a
+        # non-protected read.
         return parsed.model_copy(update={"system_override_attempt": False})
     if HARD_SYSTEM_OVERRIDE_RE.search(task_text):
         return parsed
