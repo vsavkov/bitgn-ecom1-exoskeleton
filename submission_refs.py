@@ -55,8 +55,17 @@ class ExplicitRecordSpec(NamedTuple):
     pattern: re.Pattern[str]
 
 
-PRODUCT_SKU_RE = re.compile(r"^[A-Z]{3}-[A-Z0-9]+$")
-MESSAGE_SKU_RE = re.compile(r"(?<![A-Z0-9])[A-Z]{3}-[A-Z0-9]{4,}(?![A-Z0-9])")
+PRODUCT_SKU_RE = re.compile(
+    r"^(?=[A-Z0-9-]{10,}$)(?=[A-Z0-9-]*\d)[A-Z]{2,}(?:-[A-Z0-9]+)+$"
+)
+MESSAGE_SKU_RE = re.compile(
+    r"(?<![A-Z0-9-])"
+    r"(?=[A-Z0-9-]{10,}(?![A-Z0-9-]))"
+    r"(?=[A-Z0-9-]*\d)"
+    r"[A-Z]{2,}(?:-[A-Z0-9]+)+"
+    r"(?![A-Z0-9-])"
+)
+UPLOAD_REF_RE = re.compile(r"^/uploads/.+", re.IGNORECASE)
 CUSTOMER_ID_RE = re.compile(r"^cust[-_]\d+$")
 EMPLOYEE_ID_RE = re.compile(r"^emp[-_]\d+$")
 CROSS_CUSTOMER_DENIAL_RE = re.compile(
@@ -373,6 +382,70 @@ def message_sku_refs(vm: RuntimeVM, message: str) -> list[str]:
             if (row.get("record_path") or "").startswith("/")
         ]
     )
+
+
+def _catalog_record_ref_by_sku_from_tree(vm: RuntimeVM, sku: str) -> str | None:
+    stack = ["/proc/catalog"]
+    target = f"{sku}.json"
+    while stack:
+        root = stack.pop()
+        try:
+            listing = runtime_list(vm, ListRequest(path=root))
+        except ConnectError:
+            continue
+        for entry in getattr(listing, "entries", []) or []:
+            name = getattr(entry, "name", "")
+            kind = getattr(entry, "kind", None)
+            path = f"{root.rstrip('/')}/{name}"
+            if kind == NodeKind.NODE_KIND_DIR:
+                stack.append(path)
+                continue
+            if name == target and try_stat(vm, path):
+                return path
+    return None
+
+
+def catalog_record_ref_by_sku(vm: RuntimeVM, sku: str) -> str | None:
+    path_from_sql = sql_record_path(
+        vm,
+        table="product_variants",
+        key_column="product_sku",
+        value=sku,
+    )
+    if path_from_sql and try_stat(vm, path_from_sql):
+        return path_from_sql
+    return _catalog_record_ref_by_sku_from_tree(vm, sku)
+
+
+def sku_refs(vm: RuntimeVM, skus: Sequence[str]) -> list[str]:
+    refs: list[str] = []
+    for sku in dict.fromkeys(skus):
+        ref = catalog_record_ref_by_sku(vm, sku)
+        if ref:
+            refs.append(ref)
+    return dedupe_refs(refs)
+
+
+def task_sku_refs(vm: RuntimeVM, task_text: str) -> list[str]:
+    if not task_text:
+        return []
+    return sku_refs(vm, MESSAGE_SKU_RE.findall(task_text))
+
+
+def upload_receipt_sku_refs(vm: RuntimeVM, refs: Sequence[str]) -> list[str]:
+    sku_values: list[str] = []
+    for ref in refs:
+        path, _fragment = split_ref_fragment(ref)
+        path = normalize_runtime_path(path)
+        if not UPLOAD_REF_RE.match(path):
+            continue
+        try:
+            record = vm.read(ReadRequest(path=path, number=False, start_line=0, end_line=0))
+        except (AttributeError, ConnectError):
+            continue
+        content = getattr(record, "content", "") or ""
+        sku_values.extend(MESSAGE_SKU_RE.findall(content))
+    return sku_refs(vm, sku_values)
 
 
 def availability_count_refs_from_catalog_result(result: Any) -> list[str]:
@@ -907,6 +980,18 @@ def submission_refs(
                         user_id=user_id,
                         roles=roles,
                     ),
+                ]
+            )
+        if vm is not None and cmd.task_type in {
+            "availability_count",
+            "availability_lookup",
+            "receipt_price_check",
+        }:
+            row_refs = dedupe_refs(
+                [
+                    *row_refs,
+                    *task_sku_refs(vm, task_text),
+                    *upload_receipt_sku_refs(vm, row_refs),
                 ]
             )
         # Auto-pin every product SKU named in the final message. The grader

@@ -15,6 +15,7 @@ from submission_refs import (
     can_auto_cite_customer_scoped_record,
     candidate_record_ids,
     catalog_lookup_refs_from_catalog_result,
+    catalog_record_ref_by_sku,
     canonical_case_file_ref,
     canonical_proc_record_ref,
     customer_scoped_ref_owner,
@@ -741,6 +742,91 @@ def test_message_sku_refs_returns_empty_when_no_skus_in_message() -> None:
     vm = FakeVM()
     assert message_sku_refs(vm, "The basket has no available stock today.") == []
     assert message_sku_refs(vm, "") == []
+
+
+def test_catalog_record_ref_by_sku_falls_back_to_catalog_tree() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Bosch Professional/PT-BIT-BOS-CYL9-4.json": {
+                "sku": "PT-BIT-BOS-CYL9-4"
+            }
+        }
+    )
+
+    assert catalog_record_ref_by_sku(vm, "PT-BIT-BOS-CYL9-4") == (
+        "/proc/catalog/Bosch Professional/PT-BIT-BOS-CYL9-4.json"
+    )
+
+
+def test_submission_refs_adds_explicit_sku_refs_for_availability_count() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-150.json": {
+                "sku": "PT-GRD-BOS-GWS1400-150"
+            },
+            "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json": {
+                "sku": "PT-SAW-MAK-DHS680-RAIL"
+            },
+            "/proc/locations/Linz/store-linz-kleinmuenchen.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=["/proc/locations/Linz/store-linz-kleinmuenchen.json"],
+        ),
+        vm,
+        task_text=(
+            "At kleinmuenchen tools place, how many of these SKUs are short: "
+            "PT-GRD-BOS-GWS1400-150, PT-SAW-MAK-DHS680-RAIL?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/locations/Linz/store-linz-kleinmuenchen.json",
+        "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-150.json",
+        "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
+    ]
+
+
+def test_submission_refs_adds_receipt_upload_sku_refs() -> None:
+    vm = FakeVM(
+        files={
+            "/uploads/receipt_ocr.txt": {
+                "text": (
+                    "SKU PT-IMP-MIL-M18FID3-5AH\n"
+                    "SKU PT-BIT-BOS-CYL9-4\n"
+                )
+            },
+            "/proc/catalog/Milwaukee/PT-IMP-MIL-M18FID3-5AH.json": {
+                "sku": "PT-IMP-MIL-M18FID3-5AH"
+            },
+            "/proc/catalog/Bosch Professional/PT-BIT-BOS-CYL9-4.json": {
+                "sku": "PT-BIT-BOS-CYL9-4"
+            },
+            "/proc/locations/Linz/store-linz-hafen.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_lookup",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/uploads/receipt_ocr.txt",
+                "/proc/locations/Linz/store-linz-hafen.json",
+            ],
+        ),
+        vm,
+        task_text="Can I buy this exact receipt basket today?",
+    ) == [
+        "/docs/availability-checks.md",
+        "/uploads/receipt_ocr.txt",
+        "/proc/locations/Linz/store-linz-hafen.json",
+        "/proc/catalog/Milwaukee/PT-IMP-MIL-M18FID3-5AH.json",
+        "/proc/catalog/Bosch Professional/PT-BIT-BOS-CYL9-4.json",
+    ]
 
 
 def test_submission_refs_auto_pins_skus_named_in_message() -> None:
