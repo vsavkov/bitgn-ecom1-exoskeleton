@@ -74,6 +74,25 @@ def _already_matches_agents_exact_format(current_message: str, agents_md: str) -
     return message in _agents_yes_no_tokens(agents_md)
 
 
+def _drop_added_outcome_prefix(
+    *,
+    current_message: str,
+    formatted_message: str,
+    outcome: str,
+) -> str:
+    current = current_message.strip()
+    formatted = formatted_message.strip()
+    if not current or not outcome.startswith("OUTCOME_"):
+        return formatted
+    if current.startswith(outcome) or not formatted.startswith(outcome):
+        return formatted
+
+    remainder = formatted.removeprefix(outcome).lstrip(" \t\r\n:.-")
+    if remainder == current:
+        return current
+    return formatted
+
+
 def _emit(message: str, output_lines: MutableSequence[str] | None) -> None:
     if output_lines is None:
         print(message)
@@ -159,6 +178,11 @@ def format_completion_message(
         if debug:
             print(f"{CLI_RED}ERR formatter: empty formatted message{CLI_CLR}")
         return current_message
+    formatted_message = _drop_added_outcome_prefix(
+        current_message=current_message,
+        formatted_message=formatted_message,
+        outcome=outcome,
+    )
 
     if parsed.missed_elements:
         _emit(f"{CLI_YELLOW}FORMAT MISSED{CLI_CLR}: {parsed.missed_elements}", output_lines)

@@ -1589,7 +1589,7 @@ def run_agent(
             ],
             task_type="checkout",
             message=f"Which basket should I check out? I found multiple active baskets: {basket_list}.",
-            grounding_doc_refs=[],
+            grounding_doc_refs=["/docs/security.md", "/docs/checkout.md"],
             protected_record_denial=False,
             grounding_row_refs=ambiguous_checkout.basket_refs,
             outcome="OUTCOME_NONE_CLARIFICATION",

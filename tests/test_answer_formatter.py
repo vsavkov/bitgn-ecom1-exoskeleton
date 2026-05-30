@@ -8,23 +8,24 @@ from answer_formatter import (
 
 
 class FakeResponses:
-    def __init__(self) -> None:
+    def __init__(self, formatted_message: str = "TRUE(1)") -> None:
         self.calls: list[dict] = []
+        self.formatted_message = formatted_message
 
     def parse(self, **kwargs):
         self.calls.append(kwargs)
         return SimpleNamespace(
             output_parsed={
                 "missed_elements": "used tenant boolean format",
-                "formatted_message": "TRUE(1)",
+                "formatted_message": self.formatted_message,
             },
             output=[],
         )
 
 
 class FakeClient:
-    def __init__(self) -> None:
-        self.responses = FakeResponses()
+    def __init__(self, formatted_message: str = "TRUE(1)") -> None:
+        self.responses = FakeResponses(formatted_message)
 
 
 def test_format_completion_message_passes_agents_md_to_formatter() -> None:
@@ -91,6 +92,39 @@ def test_format_completion_message_skips_llm_when_agents_token_already_exact() -
 
     assert result == "0"
     assert client.responses.calls == []
+
+
+def test_format_completion_message_drops_outcome_prefix_added_by_formatter() -> None:
+    client = FakeClient(
+        formatted_message=(
+            "OUTCOME_NONE_CLARIFICATION\n\n"
+            "Which basket should I check out? I found multiple active baskets: "
+            "basket-0001, basket-0002."
+        )
+    )
+
+    result = format_completion_message(
+        client,
+        task_text="checkout basket",
+        current_message=(
+            "Which basket should I check out? I found multiple active baskets: "
+            "basket-0001, basket-0002."
+        ),
+        outcome="OUTCOME_NONE_CLARIFICATION",
+        completed_steps_laconic=[],
+        grounding_refs=[
+            "/docs/security.md",
+            "/docs/checkout.md",
+            "/proc/carts/cust-0001/basket-0001.json",
+        ],
+        agents_md="For yes/no answers, answer exactly `<YES>` or `<NO>`.",
+        debug=False,
+    )
+
+    assert result == (
+        "Which basket should I check out? I found multiple active baskets: "
+        "basket-0001, basket-0002."
+    )
 
 
 def test_parsed_response_accepts_top_level_and_nested_structured_output() -> None:
