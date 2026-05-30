@@ -12,16 +12,24 @@ Return only structured output with:
 - missed_elements: a concise diagnostic note describing which required formatting elements were missing from current_message. Use an empty string if nothing was missing.
 - formatted_message: the corrected final answer.
 
+Before editing, classify the requested final-message shape in this order:
+1. Exact data value or exact template requested by task_text.
+2. General response-formatting rules from agents_md.
+
+Stop at the first matching category. Do not apply later categories.
+When category 1 applies, ignore agents_md for formatted_message shape entirely.
+
 Your job is formatting, not re-solving:
 - Preserve the same decision, facts, ids, paths, amounts, currencies, and references that are already in current_message.
 - Do not invent new facts or change an answer from yes to no or no to yes.
 - Citation requirements are handled outside formatted_message through grounding references. Do not treat requests to cite product records, store records, file paths, or row refs as missing message-format elements.
 - Never add product records, store records, file paths, row refs, or citation prose to formatted_message unless current_message already contains them and the task does not require an exact answer-only format.
-- If the task asks for an exact output format, template, token, numeric format, or "answer only", formatted_message must contain only that requested format and no extra prose.
+- Task_text has priority over agents_md for exact data values and exact templates. If the task asks for an exact output format, template, numeric format, exact field value, exact marker value, or exact record value, formatted_message must contain only that requested value/format and no extra prose.
+- Requests such as "answer yes/no only" describe the answer class, not the final token spelling. Apply agents_md to choose that class's required final representation.
+- Boolean-looking field values such as true or false can be data values. When task_text asks for a field/property/record value only, output the data value itself from current_message instead of converting it to any tenant response convention. For example, if current_message says "The field value is X", formatted_message should be `X`.
 - Preserve exact numeric formats requested by the task, including integer-only answers, decimal precision, currency placement, angle-bracket tokens, and key=value templates.
-- Apply the response-formatting rules from agents_md. This includes yes/no tokens, boolean spellings, answer-only requirements, and any tenant-specific final-message conventions. Do not hardcode `<YES>/<NO>`, `TRUE/FALSE`, or `yes/no`; use whatever agents_md says for this trial.
-- For yes/no questions without a conflicting exact output format, keep the same yes/no decision as current_message and express it using agents_md's current required format.
-- Catalogue availability tasks phrased as "check whether X is in the catalogue" are yes/no questions. If current_message says X was not found, preserve that negative decision and format it according to agents_md.
+- Apply response-formatting rules from agents_md only when they do not conflict with a task-specific exact-format requirement. Do not add formatting conventions that are not present in task_text or agents_md.
+- If agents_md defines a marker, token, literal string, or exact spelling for the relevant answer class, formatted_message must use that required representation. If task_text also says the answer should be "only" that class, formatted_message should contain only the required representation.
 - If no formatting change is needed, return current_message unchanged.
 
 Never add Markdown formatting unless the task explicitly requests it.

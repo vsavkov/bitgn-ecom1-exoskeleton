@@ -34,6 +34,9 @@ exclude = ["agent_original.py"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "llm: tests that call a real LLM provider and are skipped unless explicitly enabled",
+]
 filterwarnings = [
     "ignore:langsmith\\.wrappers\\._openai_agents is deprecated.*:DeprecationWarning",
 ]
