@@ -80,7 +80,10 @@ from payment_recovery_review import (
     review_payment_recovery_state,
 )
 from receipt_price import ReqAnalyzeReceiptPriceCheck, analyze_receipt_price_check
-from refund_preflight import amount_refund_clarification_preflight
+from refund_preflight import (
+    amount_refund_clarification_preflight,
+    rejected_return_clarification_preflight,
+)
 from runtime_mutation_guard import raw_file_mutation_allowed
 from submission_refs import (
     availability_count_refs_from_catalog_result,
@@ -1338,6 +1341,11 @@ def run_agent(
         vm,
         task_text=task_text,
     )
+    if refund_clarification is None:
+        refund_clarification = rejected_return_clarification_preflight(
+            vm,
+            task_text=task_text,
+        )
     if refund_clarification is not None:
         cmd = ReportTaskCompletion(
             completed_steps_laconic=refund_clarification.completed_steps_laconic,
