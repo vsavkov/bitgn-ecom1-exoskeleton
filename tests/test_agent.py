@@ -932,6 +932,16 @@ def test_tomorrow_date_preflight_respects_requested_format() -> None:
     assert cmd.message == "01-01-2027"
 
 
+def test_tomorrow_date_preflight_supports_month_name_format() -> None:
+    cmd = _tomorrow_date_preflight(
+        "calculate tomorrow. Format the answer as Month DD, YYYY only.",
+        "2026-05-30\n",
+    )
+
+    assert cmd is not None
+    assert cmd.message == "May 31, 2026"
+
+
 def test_parse_tool_call() -> None:
     parsed = _parse_tool_call(
         SimpleNamespace(name="read", arguments='{"path":"/AGENTS.MD","number":true}')

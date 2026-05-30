@@ -1257,7 +1257,11 @@ def _tomorrow_date_preflight(
     date_stdout: str,
 ) -> ReportTaskCompletion | None:
     normalized = " ".join(task_text.lower().split())
-    if "tomorrow" not in normalized or "date" not in normalized:
+    requested_date_format = any(
+        marker in normalized
+        for marker in ("date", "yyyy", "dd", "month")
+    )
+    if "tomorrow" not in normalized or not requested_date_format:
         return None
 
     match = DATE_RE.search(date_stdout)
@@ -1272,6 +1276,8 @@ def _tomorrow_date_preflight(
         message = tomorrow.strftime("%d-%m-%Y")
     elif "yyyy-mm-dd" in normalized:
         message = tomorrow.strftime("%Y-%m-%d")
+    elif "month dd, yyyy" in normalized:
+        message = tomorrow.strftime("%B %d, %Y")
     else:
         return None
 

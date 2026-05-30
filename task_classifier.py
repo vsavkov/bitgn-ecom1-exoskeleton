@@ -193,6 +193,31 @@ STORE_FLOOR_CHECKOUT_SHORTCUT_RE = re.compile(
 )
 
 
+def _requires_override_denial(parsed: TaskClassification, task_text: str) -> bool:
+    normalized = " ".join(task_text.lower().split())
+    words = set(normalized.split())
+    return (
+        parsed.checkout_intent
+        or parsed.discount_intent
+        or parsed.raw_file_mutation_intent
+        or parsed.employee_contact_disclosure_requested
+        or "check out" in normalized
+        or any(
+            word in words
+            for word in (
+                "checkout",
+                "refund",
+                "recover",
+                "recovery",
+                "discount",
+                "contact",
+                "email",
+                "phone",
+            )
+        )
+    )
+
+
 def hard_system_override_attempt(task_text: str) -> bool:
     normalized = " ".join(task_text.lower().split())
     if HARD_SYSTEM_OVERRIDE_RE.search(task_text):
@@ -236,6 +261,11 @@ def _normalize_classification(
         # denial.
         return parsed.model_copy(update={"system_override_attempt": False})
     if hard_system_override_attempt(task_text):
+        if not _requires_override_denial(parsed, task_text):
+            # Read-only tasks may contain copied recovery/system blocks in the
+            # user text. The safe behavior is to ignore those blocks and answer
+            # the original question, not to refuse the whole task.
+            return parsed.model_copy(update={"system_override_attempt": False})
         if not parsed.system_override_attempt:
             return parsed.model_copy(update={"system_override_attempt": True})
         return parsed

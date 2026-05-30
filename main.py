@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import textwrap
+import importlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
@@ -106,6 +107,20 @@ def _flush_langsmith() -> None:
         LangSmithClient().flush(timeout=10)
     except Exception as exc:
         print(f"{CLI_RED}LangSmith flush failed: {exc}{CLI_CLR}")
+
+
+def _warm_openai_lazy_imports() -> None:
+    # OpenAI's client exposes some resources through lazy module imports. In a
+    # multi-threaded first batch those imports can race inside Python's module
+    # lock, so make the known resources materialize once on the main thread.
+    for module_name in (
+        "openai.resources",
+        "openai.resources.responses",
+        "openai.resources.completions",
+        "openai.resources.chat",
+        "openai.resources.chat.completions",
+    ):
+        importlib.import_module(module_name)
 
 
 def _enum_name(enum_type, value: int) -> str:
@@ -299,6 +314,7 @@ def main() -> None:
     trial_outputs: dict[str, dict] = {}
 
     try:
+        _warm_openai_lazy_imports()
         client = HarnessServiceClientSync(BITGN_URL)
         print("Connecting to BitGN", client.status(StatusRequest()))
         res = client.get_benchmark(GetBenchmarkRequest(benchmark_id=BENCH_ID))
