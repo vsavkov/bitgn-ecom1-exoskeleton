@@ -14,7 +14,6 @@ from fraud_rules import (
     FraudIncident,
     FraudRule,
     candidate_incidents as _candidate_incidents,
-    detect_fraud_rows,
     detect_incidents as _detect_incidents,
     drop_subset_incidents as _drop_subset_incidents,
     format_eur as _format_eur,
@@ -50,6 +49,13 @@ class ArchivePaymentRow:
     payment_method_fingerprint: str
     device_fingerprint: str
     archive_channel: str
+
+
+ARCHIVE_CITY_HOP_WINDOW_SECONDS = 10 * 60
+ARCHIVE_CITY_HOP_BATCH_WINDOW_SECONDS = 60 * 60
+ARCHIVE_CITY_HOP_BATCH_MIN_INCIDENTS = 3
+ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS = 4
+ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS = 10_000
 
 
 __all__ = [
@@ -104,21 +110,158 @@ def _parse_archive_tsv(content: str) -> list[ArchivePaymentRow]:
 def detect_archive_fraud(
     rows: list[ArchivePaymentRow],
 ) -> tuple[list[ArchivePaymentRow], list[FraudIncident]]:
-    fraud_rows, incidents, _candidates = detect_fraud_rows(
-        list(rows)  # type: ignore[arg-type]
-    )
-    return [row for row in fraud_rows if isinstance(row, ArchivePaymentRow)], incidents
+    incidents, _candidates = _detect_archive_incidents(rows)
+    return _fraud_rows_from_incidents(incidents), incidents
 
 
 def _row_ref(path: str, row: ArchivePaymentRow) -> str:
     return f"{path}#row={row.row_id}"
 
 
+def _incident_start(incident: FraudIncident) -> datetime:
+    return min(row.created_at for row in incident.rows)
+
+
+def _dedupe_incidents_by_rows(incidents: list[FraudIncident]) -> list[FraudIncident]:
+    by_rows: dict[tuple[str, ...], FraudIncident] = {}
+    for incident in incidents:
+        by_rows.setdefault(tuple(sorted(incident.row_ids)), incident)
+    return list(by_rows.values())
+
+
+def _archive_city_hop_incidents(
+    rows: list[ArchivePaymentRow],
+) -> list[FraudIncident]:
+    grouped: dict[tuple[str, str], list[ArchivePaymentRow]] = {}
+    for row in rows:
+        if row.archive_channel not in CUSTOMER_CONTROLLED_CHANNELS:
+            continue
+        if not row.customer_ref:
+            continue
+        for signal in (row.payment_method_fingerprint, row.device_fingerprint):
+            if not signal:
+                continue
+            grouped.setdefault((row.customer_ref, signal), []).append(row)
+
+    incidents: list[FraudIncident] = []
+    for (customer_ref, _signal), group_rows in grouped.items():
+        ordered = sorted(group_rows, key=lambda row: (row.created_at, row.row_id))
+        chain: list[ArchivePaymentRow] = []
+
+        def flush_chain() -> None:
+            if len(chain) < 2:
+                return
+            if len({row.store_city for row in chain}) < 2:
+                return
+            incidents.append(
+                FraudIncident(
+                    rule="archive_customer_city_hop",
+                    key="customer_ref",
+                    key_value=customer_ref,
+                    rows=tuple(chain),
+                )
+            )
+
+        for row in ordered:
+            if not chain:
+                chain = [row]
+                continue
+
+            previous = chain[-1]
+            delta_seconds = (row.created_at - previous.created_at).total_seconds()
+            if 0 <= delta_seconds <= ARCHIVE_CITY_HOP_WINDOW_SECONDS:
+                chain.append(row)
+                continue
+
+            # Archive exports can contain short card/device city-hop chains
+            # that are too small for the high-volume rules but still impossible
+            # customer travel. Finalize a chain when the timing gap breaks.
+            flush_chain()
+            chain = [row]
+
+        flush_chain()
+
+    return incidents
+
+
+def _batched_short_city_hop_incidents(
+    incidents: list[FraudIncident],
+) -> list[FraudIncident]:
+    batched_by_rows: dict[tuple[str, ...], FraudIncident] = {}
+    ordered = sorted(incidents, key=_incident_start)
+
+    for index, incident in enumerate(ordered):
+        window_start = _incident_start(incident)
+        window_incidents = [
+            other
+            for other in ordered[index:]
+            if (
+                _incident_start(other) - window_start
+            ).total_seconds()
+            <= ARCHIVE_CITY_HOP_BATCH_WINDOW_SECONDS
+        ]
+        if len(window_incidents) < ARCHIVE_CITY_HOP_BATCH_MIN_INCIDENTS:
+            continue
+
+        for batched in window_incidents:
+            batched_by_rows[tuple(sorted(batched.row_ids))] = batched
+
+    return list(batched_by_rows.values())
+
+
+def _filter_archive_city_hop_incidents(
+    city_hop_incidents: list[FraudIncident],
+    strong_incidents: list[FraudIncident],
+) -> list[FraudIncident]:
+    unique_incidents = _dedupe_incidents_by_rows(city_hop_incidents)
+    strong_row_sets = [set(incident.row_ids) for incident in strong_incidents]
+    large_chains: list[FraudIncident] = []
+    short_chains: list[FraudIncident] = []
+
+    for incident in unique_incidents:
+        if any(set(incident.row_ids) <= row_set for row_set in strong_row_sets):
+            continue
+        if len(incident.rows) >= ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS:
+            large_chains.append(incident)
+            continue
+        if incident.total_cents < ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS:
+            continue
+        short_chains.append(incident)
+
+    # A single two-row archive city-hop can be normal edge noise. Keep short
+    # chains only when several appear close together, which points to a shared
+    # campaign rather than one customer typo or travel-adjacent purchase.
+    return [*large_chains, *_batched_short_city_hop_incidents(short_chains)]
+
+
+def _detect_archive_incidents(
+    rows: list[ArchivePaymentRow],
+) -> tuple[list[FraudIncident], list[FraudIncident]]:
+    strong_incidents = _candidate_incidents(list(rows))  # type: ignore[arg-type]
+    city_hop_incidents = _filter_archive_city_hop_incidents(
+        _archive_city_hop_incidents(rows),
+        strong_incidents,
+    )
+    candidates = _drop_subset_incidents([*strong_incidents, *city_hop_incidents])
+    incidents = _select_non_overlapping_incidents(candidates)
+    return incidents, candidates
+
+
+def _fraud_rows_from_incidents(
+    incidents: list[FraudIncident],
+) -> list[ArchivePaymentRow]:
+    fraud_by_id: dict[str, ArchivePaymentRow] = {}
+    for incident in incidents:
+        for row in incident.rows:
+            if isinstance(row, ArchivePaymentRow):
+                fraud_by_id[row.row_id] = row
+    return sorted(fraud_by_id.values(), key=lambda row: row.index)
+
+
 def analyze_archive_fraud_content(path: str, content: str) -> dict[str, Any]:
     rows = _parse_archive_tsv(content)
-    fraud_rows, incidents, candidates = detect_fraud_rows(
-        list(rows)  # type: ignore[arg-type]
-    )
+    incidents, candidates = _detect_archive_incidents(rows)
+    fraud_rows = _fraud_rows_from_incidents(incidents)
     archive_fraud_rows = [
         row for row in fraud_rows if isinstance(row, ArchivePaymentRow)
     ]

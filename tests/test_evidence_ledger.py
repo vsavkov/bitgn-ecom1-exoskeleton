@@ -180,6 +180,36 @@ def test_apply_to_completion_uses_accumulated_archive_fraud_total() -> None:
     ]
 
 
+def test_apply_to_completion_omits_docs_for_explicit_archive_fraud_export() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["did work"],
+        task_type="fraud_review",
+        message="placeholder",
+        grounding_doc_refs=["/docs/security.md"],
+        grounding_row_refs=[],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    ledger = EvidenceLedger()
+    ledger.register_loaded_docs(["/docs/payments/3ds.md"])
+    ledger.merge_fraud_result(
+        refs=["/archive/payments.tsv#row=R1"],
+        total_message="EUR 12.34",
+    )
+
+    updated = ledger.apply_to_completion(
+        cmd,
+        task_text=(
+            "Read /archive/payments.tsv and cite every fraud row using exactly "
+            "/archive/payments.tsv#row=<RowID>."
+        ),
+    )
+
+    assert updated.grounding_doc_refs == []
+    assert updated.grounding_row_refs == ["/archive/payments.tsv#row=R1"]
+
+
 def test_apply_to_completion_keeps_live_fraud_record_message() -> None:
     cmd = _completion(
         task_type="fraud_review",

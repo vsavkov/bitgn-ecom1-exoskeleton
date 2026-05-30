@@ -181,7 +181,7 @@ def test_detect_archive_fraud_selects_one_overlapping_window() -> None:
     )
 
     assert len(incidents) == 1
-    assert [row.row_id for row in fraud_rows] == [f"O{index}" for index in range(1, 13)]
+    assert [row.row_id for row in fraud_rows] == [f"O{index}" for index in range(1, 14)]
 
 
 def test_detect_archive_fraud_ignores_shared_service_desk_device() -> None:
@@ -262,6 +262,177 @@ def test_detect_archive_fraud_keeps_service_desk_reused_payment_signal() -> None
 
     assert [row.row_id for row in fraud_rows] == [f"P{index}" for index in range(6)]
     assert {incident.rule for incident in incidents} == {"rapid_payment_multicity"}
+
+
+def test_detect_archive_fraud_keeps_standalone_city_hop_chain() -> None:
+    cities = ["Graz", "Salzburg", "Bratislava", "Vienna"]
+    rows = [
+        tsv_row(
+            f"CH{index}",
+            f"2023-11-12T08:0{index}:00Z",
+            "arch_cust_city_hop",
+            cities[index - 1],
+            900,
+            "pm_city_hop",
+            "dev_city_hop",
+            "mobile_app",
+        )
+        for index in range(1, 5)
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert [row.row_id for row in fraud_rows] == [f"CH{index}" for index in range(1, 5)]
+    assert {incident.rule for incident in incidents} == {"archive_customer_city_hop"}
+
+
+def test_detect_archive_fraud_ignores_isolated_short_city_hop() -> None:
+    rows = [
+        tsv_row(
+            "CH1",
+            "2023-11-12T08:01:00Z",
+            "arch_cust_city_hop",
+            "Graz",
+            900,
+            "pm_city_hop",
+            "dev_city_hop",
+            "web",
+        ),
+        tsv_row(
+            "CH2",
+            "2023-11-12T08:05:00Z",
+            "arch_cust_city_hop",
+            "Vienna",
+            900,
+            "pm_city_hop",
+            "dev_city_hop",
+            "web",
+        ),
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert fraud_rows == []
+    assert incidents == []
+
+
+def test_detect_archive_fraud_keeps_batched_short_city_hops() -> None:
+    rows = []
+    for incident_index, (hour, minute) in enumerate([(8, 0), (8, 30), (9, 0)], start=1):
+        rows.extend(
+            [
+                tsv_row(
+                    f"BH{incident_index}A",
+                    f"2023-11-12T{hour:02d}:{minute:02d}:00Z",
+                    f"arch_cust_batched_{incident_index}",
+                    "Graz",
+                    20000,
+                    f"pm_batched_{incident_index}",
+                    f"dev_batched_{incident_index}",
+                    "web",
+                ),
+                tsv_row(
+                    f"BH{incident_index}B",
+                    f"2023-11-12T{hour:02d}:{minute + 4:02d}:00Z",
+                    f"arch_cust_batched_{incident_index}",
+                    "Vienna",
+                    20000,
+                    f"pm_batched_{incident_index}",
+                    f"dev_batched_{incident_index}",
+                    "web",
+                ),
+            ]
+        )
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert [row.row_id for row in fraud_rows] == [
+        "BH1A",
+        "BH1B",
+        "BH2A",
+        "BH2B",
+        "BH3A",
+        "BH3B",
+    ]
+    assert {incident.rule for incident in incidents} == {"archive_customer_city_hop"}
+
+
+def test_detect_archive_fraud_ignores_loose_short_city_hop_batch() -> None:
+    rows = []
+    for incident_index, (hour, minute) in enumerate([(8, 0), (9, 30), (11, 0)], start=1):
+        rows.extend(
+            [
+                tsv_row(
+                    f"LB{incident_index}A",
+                    f"2023-11-12T{hour:02d}:{minute:02d}:00Z",
+                    f"arch_cust_loose_{incident_index}",
+                    "Graz",
+                    20000,
+                    f"pm_loose_{incident_index}",
+                    f"dev_loose_{incident_index}",
+                    "web",
+                ),
+                tsv_row(
+                    f"LB{incident_index}B",
+                    f"2023-11-12T{hour:02d}:{minute + 4:02d}:00Z",
+                    f"arch_cust_loose_{incident_index}",
+                    "Vienna",
+                    20000,
+                    f"pm_loose_{incident_index}",
+                    f"dev_loose_{incident_index}",
+                    "web",
+                ),
+            ]
+        )
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert fraud_rows == []
+    assert incidents == []
+
+
+def test_detect_archive_fraud_ignores_tiny_batched_short_city_hops() -> None:
+    rows = []
+    for incident_index, (hour, minute) in enumerate([(8, 0), (8, 20), (8, 40)], start=1):
+        rows.extend(
+            [
+                tsv_row(
+                    f"TB{incident_index}A",
+                    f"2023-11-12T{hour:02d}:{minute:02d}:00Z",
+                    f"arch_cust_tiny_{incident_index}",
+                    "Graz",
+                    900,
+                    f"pm_tiny_{incident_index}",
+                    f"dev_tiny_{incident_index}",
+                    "web",
+                ),
+                tsv_row(
+                    f"TB{incident_index}B",
+                    f"2023-11-12T{hour:02d}:{minute + 4:02d}:00Z",
+                    f"arch_cust_tiny_{incident_index}",
+                    "Vienna",
+                    900,
+                    f"pm_tiny_{incident_index}",
+                    f"dev_tiny_{incident_index}",
+                    "web",
+                ),
+            ]
+        )
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert fraud_rows == []
+    assert incidents == []
 
 
 def test_analyze_archive_fraud_content_returns_message_and_refs() -> None:

@@ -98,6 +98,7 @@ class EvidenceLedger:
             _apply_receipt_price_result,
             _apply_support_note_catalog_refs,
             _apply_verified_manager_refs,
+            _task_has_explicit_archive_export,
         )
 
         cmd = _apply_availability_count_catalog_refs(cmd, self.availability_count_refs)
@@ -109,6 +110,12 @@ class EvidenceLedger:
             refs_to_submit=self.fraud_refs,
             task_text=task_text,
         )
+        explicit_archive_fraud = (
+            cmd.task_type == "fraud_review"
+            and _task_has_explicit_archive_export(task_text)
+        )
+        if explicit_archive_fraud:
+            cmd.grounding_doc_refs = []
         cmd = _apply_receipt_price_result(
             cmd,
             formatted_message=self.receipt_message,
@@ -119,8 +126,9 @@ class EvidenceLedger:
             formatted_message=self.city_availability_message,
             refs_to_submit=self.city_availability_refs,
         )
-        cmd = _apply_loaded_doc_refs(
-            cmd,
-            relevant_doc_refs_for_task_type(self.loaded_doc_refs, cmd.task_type),
-        )
+        if not explicit_archive_fraud:
+            cmd = _apply_loaded_doc_refs(
+                cmd,
+                relevant_doc_refs_for_task_type(self.loaded_doc_refs, cmd.task_type),
+            )
         return cmd
