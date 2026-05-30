@@ -263,7 +263,7 @@ def test_detect_archive_fraud_keeps_customer_city_hop_with_changed_signals() -> 
             "2023-11-12T08:01:00Z",
             "arch_cust_city_hop",
             "Graz",
-            75_000,
+            5_000,
             "pm_city_hop_a",
             "dev_city_hop_a",
             "web",
@@ -273,7 +273,7 @@ def test_detect_archive_fraud_keeps_customer_city_hop_with_changed_signals() -> 
             "2023-11-12T08:05:00Z",
             "arch_cust_city_hop",
             "Vienna",
-            30_000,
+            6_000,
             "pm_city_hop_b",
             "dev_city_hop_b",
             "web",
@@ -539,6 +539,38 @@ def test_detect_archive_fraud_ignores_isolated_low_value_signal_city_hop() -> No
     assert incidents == []
 
 
+def test_detect_archive_fraud_ignores_isolated_mid_value_signal_city_hop() -> None:
+    rows = [
+        tsv_row(
+            "IS1",
+            "2023-11-12T08:01:00Z",
+            "arch_cust_signal_a",
+            "Graz",
+            40_000,
+            "pm_signal_isolated",
+            "dev_signal_a",
+            "web",
+        ),
+        tsv_row(
+            "IS2",
+            "2023-11-12T08:05:00Z",
+            "arch_cust_signal_b",
+            "Vienna",
+            20_000,
+            "pm_signal_isolated",
+            "dev_signal_b",
+            "web",
+        ),
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert fraud_rows == []
+    assert incidents == []
+
+
 def test_detect_archive_fraud_ignores_staff_terminal_signal_city_hop() -> None:
     rows = [
         tsv_row(
@@ -678,7 +710,7 @@ def test_detect_archive_fraud_keeps_batched_short_city_hops() -> None:
     assert {incident.rule for incident in incidents} == {"archive_customer_city_hop"}
 
 
-def test_detect_archive_fraud_ignores_loose_short_city_hop_batch() -> None:
+def test_detect_archive_fraud_keeps_loose_customer_city_hops_above_threshold() -> None:
     rows = []
     for incident_index, (hour, minute) in enumerate([(8, 0), (9, 30), (11, 0)], start=1):
         rows.extend(
@@ -710,8 +742,15 @@ def test_detect_archive_fraud_ignores_loose_short_city_hop_batch() -> None:
         _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
     )
 
-    assert fraud_rows == []
-    assert incidents == []
+    assert [row.row_id for row in fraud_rows] == [
+        "LB1A",
+        "LB1B",
+        "LB2A",
+        "LB2B",
+        "LB3A",
+        "LB3B",
+    ]
+    assert {incident.rule for incident in incidents} == {"archive_customer_city_hop"}
 
 
 def test_detect_archive_fraud_ignores_tiny_batched_short_city_hops() -> None:

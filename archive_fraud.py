@@ -55,8 +55,11 @@ ARCHIVE_CITY_HOP_WINDOW_SECONDS = 10 * 60
 ARCHIVE_CITY_HOP_BATCH_WINDOW_SECONDS = 60 * 60
 ARCHIVE_CITY_HOP_BATCH_MIN_INCIDENTS = 3
 ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS = 4
-ARCHIVE_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = 100_000
 ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS = 10_000
+ARCHIVE_CUSTOMER_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = (
+    ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS
+)
+ARCHIVE_SIGNAL_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = 100_000
 
 
 __all__ = [
@@ -275,16 +278,22 @@ def _filter_archive_city_hop_incidents(
         if len(incident.rows) >= ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS:
             large_chains.append(incident)
             continue
-        if incident.total_cents >= ARCHIVE_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS:
+        standalone_min_total = (
+            ARCHIVE_CUSTOMER_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS
+            if incident.rule == "archive_customer_city_hop"
+            else ARCHIVE_SIGNAL_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS
+        )
+        if incident.total_cents >= standalone_min_total:
             large_chains.append(incident)
             continue
         if incident.total_cents < ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS:
             continue
         short_chains.append(incident)
 
-    # A single two-row archive city-hop can be normal edge noise. Keep short
-    # chains only when several appear close together, which points to a shared
-    # campaign rather than one customer typo or travel-adjacent purchase.
+    # Same-customer hops in customer-owned channels are strong impossible-travel
+    # evidence even when cards/devices change. Cross-account signal hops are
+    # noisier, so below the high-value threshold they still need a close batch
+    # to point to a shared campaign rather than a reused card/device artifact.
     return [*large_chains, *_batched_short_city_hop_incidents(short_chains)]
 
 
