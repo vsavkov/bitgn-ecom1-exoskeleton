@@ -74,6 +74,7 @@ from openai.types.responses import (
 from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field, ValidationError
 from payment_recovery import (
+    ISO_TIMESTAMP_RE,
     payment_ids_from_refs_and_text,
     payment_recovery_message_with_retry_timestamp,
     retry_available_at_from_policy_text,
@@ -1169,6 +1170,54 @@ def _apply_payment_recovery_review(
     return cmd.model_copy(update=updates) if updates else cmd
 
 
+def _apply_payment_recovery_closed_retry_outcome(
+    cmd: ReportTaskCompletion,
+) -> ReportTaskCompletion:
+    if cmd.task_type != "payment_recovery" or cmd.outcome != "OUTCOME_OK":
+        return cmd
+
+    evidence = "\n".join([cmd.message, *cmd.completed_steps_laconic]).lower()
+    closed_markers = (
+        "retry window still closed",
+        "retry window is closed",
+        "window still closed",
+        "retry window opens",
+        "retry window is not open",
+        "retry blocked",
+        "retry_after",
+        "retry available at",
+        "current time is before retry",
+    )
+    success_markers = (
+        "recovery started",
+        "3ds recovery started",
+        "restart started",
+        "retry started",
+    )
+    if not any(marker in evidence for marker in closed_markers):
+        return cmd
+    if any(marker in evidence for marker in success_markers):
+        return cmd
+
+    timestamp_match = ISO_TIMESTAMP_RE.search(cmd.message) or ISO_TIMESTAMP_RE.search(
+        "\n".join(cmd.completed_steps_laconic)
+    )
+    if timestamp_match:
+        message = (
+            "OUTCOME_NONE_UNSUPPORTED: retry blocked until "
+            f"{timestamp_match.group(0)}"
+        )
+    else:
+        message = "OUTCOME_NONE_UNSUPPORTED: retry window is not open yet"
+
+    return cmd.model_copy(
+        update={
+            "outcome": "OUTCOME_NONE_UNSUPPORTED",
+            "message": message,
+        }
+    )
+
+
 DISCOUNT_CAP_RE = re.compile(
     r"\b(?:max(?:imum)?(?:\s+allowed)?(?:\s+discount)?|cap)\s+"
     r"(?:is|=)\s*(?P<percent>\d{1,2})\s*%",
@@ -1464,6 +1513,7 @@ def run_agent(
             cmd,
             task_text=task_text,
         )
+        cmd = _apply_payment_recovery_closed_retry_outcome(cmd)
         cmd = _apply_payment_recovery_review(cmd, payment_recovery_review)
         cmd = _apply_payment_recovery_retry_timestamp(
             vm,
@@ -1767,6 +1817,7 @@ def run_agent(
                     cmd,
                     task_text=task_text,
                 )
+                cmd = _apply_payment_recovery_closed_retry_outcome(cmd)
                 cmd = _apply_payment_recovery_review(cmd, payment_recovery_review)
                 cmd = _apply_payment_recovery_retry_timestamp(
                     vm,

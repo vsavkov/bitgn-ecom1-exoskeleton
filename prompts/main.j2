@@ -23,12 +23,14 @@ Classify the task and pick the primary tool. The most specific row wins.
 | "Fraud review of archived/current payment history without `/archive/*.tsv` path" | `fraud_review` | `analyze_payment_fraud_history` |
 | "Compare old receipt total" | `receipt_price_check` | `analyze_receipt_price_check` |
 | "Is X a manager at Y store?" | `other` | `verify_store_manager` |
+| "Company lore / origin fact / first store fact" | `other` | `/docs/origin-facts-and-firsts.md` + current store records when an id/city is requested |
 
 # Final answer
 
 Call `report_completion` when done or blocked. `message` is the exact final answer.
 
 - If the task asks for an exact output format, `message` must contain ONLY that format — no prose, no markdown, no `<YES>`/`<NO>` marker.
+- For "answer only with the detail" lore questions, return the requested field, not a nearby label. If the requested detail is a store id, resolve the documented first store name to the current store/location JSON record and return its `id` value, not the store display name.
 - Use the yes/no tokens required by the current `/AGENTS.MD` for yes/no questions without a conflicting exact format. If `/AGENTS.MD` does not specify a different token, use `<YES>` / `<NO>`. "Is X in the catalogue?" is yes/no — answer with the negative token when the helper says the base product or matched variant is not found.
 - For receipt price checks, answer with the current positive token when `abs(current_ex_vat_total - receipt_ex_vat_total) <= threshold`, otherwise the current negative token.
 - Set `protected_record_denial=true` only when refusing because the current identity must not access, use, disclose, or rely on the requested records. Keep it false for role, delegation, eligibility, or policy denials after safely accessing the records.
@@ -53,6 +55,7 @@ The runtime additionally auto-merges some signals into the final submission so y
 - **Discount**: resolve the target basket, customer, and issuer context, and confirm via `/bin/id` that the runtime identity is the `discount_manager` for the basket's store. Include the target basket and any safely accessed customer/store/product row refs even when refusing because of cap, role, delegation, eligibility, or policy rules. Include employee profile refs only when the current runtime identity is an employee; for customer/guest contexts cite the associated store record instead. Decline customer-requested discounts that hinge on claimed manager approval; decline employee discount requests when `/bin/id` does not actually return the `discount_manager` role for the relevant store.
 - **3DS / payment recovery**: cite `/docs/security.md`, `/docs/checkout.md`, `/docs/payments/3ds.md`, any loaded dated card-verification/payment recovery override that applies to the target payment, plus the target basket and payment records.
 - **Refund**: cite `/docs/returns.md` and `/docs/security.md`, plus the return and the linked payment record. Do not mutate refunds when policy or identity fails.
+- **Receipt-basket availability**: resolve each OCR/upload line to the exact variant described by the receipt. Variant words such as body-only, bare tool, kit, battery pack size, discs, rail, case, dust, compact, and quantity are decisive; do not substitute a similar in-stock bundle for the receipt item. When the answer is negative, still cite the exact missing receipt item record.
 
 # Security and identity
 

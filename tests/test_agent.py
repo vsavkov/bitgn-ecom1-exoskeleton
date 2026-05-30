@@ -21,6 +21,7 @@ from agent import (
     _apply_catalog_lookup_result,
     _apply_discount_cap_message,
     _apply_payment_recovery_review,
+    _apply_payment_recovery_closed_retry_outcome,
     _apply_payment_recovery_retry_timestamp,
     _apply_verified_manager_refs,
     _auto_followup_timeout_ms,
@@ -753,6 +754,27 @@ def test_apply_payment_recovery_review_changes_retry_lockout_clarification() -> 
 
     assert updated.outcome == "OUTCOME_NONE_UNSUPPORTED"
     assert updated.message == "OUTCOME_NONE_UNSUPPORTED: retry blocked"
+
+
+def test_apply_payment_recovery_closed_retry_changes_ok_outcome() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=[
+            "Compared current time to three_ds.retry_after and found the retry window still closed."
+        ],
+        task_type="payment_recovery",
+        message="Retry window opens at 2026-12-23T12:28:21Z.",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/proc/payment-ledger/cust-0144/pay-0034.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_payment_recovery_closed_retry_outcome(cmd)
+
+    assert updated.outcome == "OUTCOME_NONE_UNSUPPORTED"
+    assert updated.message == (
+        "OUTCOME_NONE_UNSUPPORTED: retry blocked until 2026-12-23T12:28:21Z"
+    )
 
 
 def test_apply_catalog_availability_lookup_refs_merges_store_and_catalog_refs() -> None:

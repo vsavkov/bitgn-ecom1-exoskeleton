@@ -819,7 +819,7 @@ def test_submission_refs_adds_sku_refs_without_digits() -> None:
     ]
 
 
-def test_submission_refs_removes_explicitly_excluded_sku_refs() -> None:
+def test_submission_refs_keeps_explicitly_excluded_sku_refs_for_availability() -> None:
     vm = FakeVM(
         files={
             "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json": {
@@ -851,6 +851,40 @@ def test_submission_refs_removes_explicitly_excluded_sku_refs() -> None:
     ) == [
         "/docs/availability-checks.md",
         "/proc/locations/Salzburg/store-salzburg-maxglan.json",
+        "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
+        "/proc/catalog/Makita/PT-SAW-MAK-DHS680-BLADE.json",
+    ]
+
+
+def test_submission_refs_removes_explicitly_excluded_sku_refs_for_counts() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json": {
+                "sku": "PT-SAW-MAK-DHS680-RAIL"
+            },
+            "/proc/catalog/Makita/PT-SAW-MAK-DHS680-BLADE.json": {
+                "sku": "PT-SAW-MAK-DHS680-BLADE"
+            },
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="count",
+            grounding_doc_refs=["/docs/catalogue-lookup.md"],
+            grounding_row_refs=[
+                "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
+                "/proc/catalog/Makita/PT-SAW-MAK-DHS680-BLADE.json",
+            ],
+            message="1",
+        ),
+        vm,
+        task_text=(
+            "How many Makita DHS680 accessory variants match, excluding "
+            "PT-SAW-MAK-DHS680-BLADE?"
+        ),
+    ) == [
+        "/docs/catalogue-lookup.md",
         "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
     ]
 

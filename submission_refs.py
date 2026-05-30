@@ -1141,7 +1141,7 @@ def submission_refs(
             and explicit_sku_inventory_count_task(task_text)
         ):
             row_refs = dedupe_refs([*row_refs, *task_sku_refs(vm, task_text)])
-        if vm is not None and task_text:
+        if vm is not None and task_text and cmd.task_type == "count":
             excluded_refs = set(negated_task_sku_refs(vm, task_text))
             if excluded_refs:
                 row_refs = [
