@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,8 +15,8 @@ from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_RUNS_DIR = PROJECT_ROOT / "runs"
-DEFAULT_OUTPUT = PROJECT_ROOT / "runs.html"
+DEFAULT_RUNS_ROOT = PROJECT_ROOT / "runs"
+DEFAULT_BENCHMARK_ID = os.getenv("BENCH_ID") or os.getenv("BENCHMARK_ID") or "bitgn/ecom1-dev"
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class TestCase:
 class RunRecord:
     path: Path
     started_at: str
+    benchmark_id: str
     model_id: str
     score: float | None
     cases: dict[str, TestCase]
@@ -47,6 +49,18 @@ def _parse_datetime(value: str) -> datetime | None:
         return datetime.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _benchmark_runs_name(benchmark_id: str) -> str:
+    return (benchmark_id.strip() or "unknown").replace("/", "__")
+
+
+def _default_runs_dir(runs_root: Path, benchmark_id: str) -> Path:
+    return runs_root / _benchmark_runs_name(benchmark_id)
+
+
+def _default_output_path(runs_root: Path, runs_dir: Path) -> Path:
+    return runs_root / f"{runs_dir.name}.html"
 
 
 def _coerce_score(value: Any) -> float | None:
@@ -103,6 +117,7 @@ def _load_run(path: Path) -> RunRecord:
     return RunRecord(
         path=path,
         started_at=started_at,
+        benchmark_id=str(payload.get("benchmark_id") or ""),
         model_id=str(payload.get("model_id") or ""),
         score=_coerce_score(payload.get("score")),
         cases=cases,
@@ -177,8 +192,20 @@ def _cell_title(task_id: str, record: RunRecord, case: TestCase | None) -> str:
     return "\n".join(lines)
 
 
-def _render_html(records: list[RunRecord]) -> str:
+def _benchmark_id_for_html(records: list[RunRecord], fallback: str = "") -> str:
+    benchmark_ids = sorted(
+        {record.benchmark_id for record in records if record.benchmark_id}
+    )
+    if len(benchmark_ids) == 1:
+        return benchmark_ids[0]
+    if benchmark_ids:
+        return "mixed: " + ", ".join(benchmark_ids)
+    return fallback
+
+
+def _render_html(records: list[RunRecord], benchmark_id: str = "") -> str:
     generated_at = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    benchmark_id = _benchmark_id_for_html(records, benchmark_id)
     task_ids = sorted({task_id for record in records for task_id in record.cases}, key=_natural_key)
     totals = [sum(case.score or 0 for case in record.cases.values()) for record in records]
 
@@ -218,14 +245,14 @@ def _render_html(records: list[RunRecord]) -> str:
         footer_cells.append(f"<td class=\"sum-cell\">{escape(_format_score(total))}</td>")
 
     if not records:
-        body_rows.append("<tr><td class=\"empty\">No run_*.json files found in runs/.</td></tr>")
+        body_rows.append("<tr><td class=\"empty\">No run_*.json files found in this benchmark runs folder.</td></tr>")
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ECOM run scores</title>
+<title>ECOM run scores - {escape(benchmark_id)}</title>
 <style>
 :root {{
   color-scheme: light;
@@ -333,6 +360,7 @@ tfoot .task-id {{
 </head>
 <body>
 <h1>ECOM run scores</h1>
+<p class="meta">Benchmark: <strong>{escape(benchmark_id)}</strong></p>
 <p class="meta">Generated {escape(generated_at)} from {len(records)} run file(s), {len(task_ids)} task(s).</p>
 <div class="table-wrap">
 <table>
@@ -351,15 +379,19 @@ tfoot .task-id {{
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runs-dir", type=Path, default=DEFAULT_RUNS_DIR)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--benchmark-id", default=DEFAULT_BENCHMARK_ID)
+    parser.add_argument("--runs-root", type=Path, default=DEFAULT_RUNS_ROOT)
+    parser.add_argument("--runs-dir", type=Path)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
-    records = _load_runs(args.runs_dir)
-    html = _render_html(records)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(html)
-    print(f"wrote {args.output} from {len(records)} run file(s)")
+    runs_dir = args.runs_dir or _default_runs_dir(args.runs_root, args.benchmark_id)
+    output = args.output or _default_output_path(args.runs_root, runs_dir)
+    records = _load_runs(runs_dir)
+    html = _render_html(records, benchmark_id=args.benchmark_id)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(html)
+    print(f"wrote {output} from {len(records)} run file(s)")
 
 
 if __name__ == "__main__":

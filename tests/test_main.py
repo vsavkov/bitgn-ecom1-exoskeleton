@@ -6,6 +6,8 @@ import main as benchmark_main
 from config import CLI_CLR
 from main import (
     RUNS_DIR,
+    _benchmark_runs_dir,
+    _benchmark_runs_name,
     _chunks,
     _color,
     _enum_name,
@@ -51,12 +53,23 @@ def test_enum_name_uses_proto_name_or_raw_value() -> None:
 
 def test_run_artifact_path_avoids_collisions(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(benchmark_main, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(benchmark_main, "BENCH_ID", "bitgn/ecom1-dev")
     started = datetime(2026, 5, 29, 10, 0, 0)
 
     first = _run_artifact_path(started)
-    assert first == tmp_path / "run_20260529_100000.json"
+    assert first == tmp_path / "bitgn__ecom1-dev" / "run_20260529_100000.json"
     first.write_text("{}")
-    assert _run_artifact_path(started) == tmp_path / "run_20260529_100000_02.json"
+    assert _run_artifact_path(started) == (
+        tmp_path / "bitgn__ecom1-dev" / "run_20260529_100000_02.json"
+    )
+
+
+def test_benchmark_runs_dir_uses_sanitized_bench_id(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(benchmark_main, "RUNS_DIR", tmp_path)
+    monkeypatch.setattr(benchmark_main, "BENCH_ID", "bitgn/ecom1-prod")
+
+    assert _benchmark_runs_name("bitgn/ecom1-prod") == "bitgn__ecom1-prod"
+    assert _benchmark_runs_dir() == tmp_path / "bitgn__ecom1-prod"
 
 
 def test_write_run_artifact(monkeypatch, tmp_path: Path) -> None:
@@ -95,7 +108,7 @@ def test_write_run_artifact(monkeypatch, tmp_path: Path) -> None:
     )
 
     text = path.read_text()
-    assert path.parent == tmp_path
+    assert path.parent == tmp_path / "bench"
     assert '"task_text": "Task text"' in text
     assert '"grader_comment": "missing ref"' in text
     assert '"langsmith_trace_id": "trace-1"' in text

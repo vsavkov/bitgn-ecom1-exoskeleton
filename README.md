@@ -26,8 +26,10 @@ You will need to provide your own `BITGN_API_KEY` and `OPENAI_API_KEY`, or swap 
 - Run selected tasks via Make: `make task TASKS="t01 t04"`
 - Generate a local run score heatmap: `make runs-html`
 
-Full benchmark runs save ignored local artifacts to `runs/run_<date>_<time>.json`.
-`make run` regenerates ignored `runs.html` after the benchmark completes. The heatmap
+Full benchmark runs save ignored local artifacts to
+`runs/<bench-id-with-__-for-slashes>/run_<date>_<time>.json`.
+`make run` regenerates the ignored benchmark heatmap at
+`runs/<bench-id-with-__-for-slashes>.html` after the benchmark completes. The heatmap
 command can also render those artifacts manually.
 
 Useful environment overrides:

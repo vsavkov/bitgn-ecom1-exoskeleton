@@ -8,5 +8,7 @@ __pycache__/
 .env.*
 !.env.example
 dumps/
-runs/*.json
+runs/run_*.json
+runs/*/run_*.json
+runs/*.html
 runs.html

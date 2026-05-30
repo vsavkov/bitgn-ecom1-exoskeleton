@@ -115,14 +115,23 @@ def _enum_name(enum_type, value: int) -> str:
         return str(value)
 
 
+def _benchmark_runs_name(benchmark_id: str) -> str:
+    return (benchmark_id.strip() or "unknown").replace("/", "__")
+
+
+def _benchmark_runs_dir(benchmark_id: str | None = None) -> Path:
+    return RUNS_DIR / _benchmark_runs_name(benchmark_id or BENCH_ID)
+
+
 def _run_artifact_path(started_at: datetime) -> Path:
-    RUNS_DIR.mkdir(parents=True, exist_ok=True)
-    base = RUNS_DIR / f"run_{started_at:%Y%m%d_%H%M%S}.json"
+    runs_dir = _benchmark_runs_dir()
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    base = runs_dir / f"run_{started_at:%Y%m%d_%H%M%S}.json"
     if not base.exists():
         return base
 
     for index in range(2, 100):
-        candidate = RUNS_DIR / f"run_{started_at:%Y%m%d_%H%M%S}_{index:02d}.json"
+        candidate = runs_dir / f"run_{started_at:%Y%m%d_%H%M%S}_{index:02d}.json"
         if not candidate.exists():
             return candidate
     raise RuntimeError(f"could not choose a free run artifact path for {base}")

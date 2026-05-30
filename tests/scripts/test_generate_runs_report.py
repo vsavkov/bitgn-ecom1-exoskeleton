@@ -3,9 +3,12 @@ from pathlib import Path
 from scripts.generate_runs_report import (
     RunRecord,
     TestCase as RunTestCase,
+    _benchmark_runs_name,
     _case_items,
     _cell_title,
     _coerce_score,
+    _default_output_path,
+    _default_runs_dir,
     _format_score,
     _interpolate,
     _load_run,
@@ -19,6 +22,13 @@ from scripts.generate_runs_report import (
 
 
 def test_runs_report_helpers(tmp_path: Path) -> None:
+    assert _benchmark_runs_name("bitgn/ecom1-dev") == "bitgn__ecom1-dev"
+    assert _default_runs_dir(tmp_path, "bitgn/ecom1-dev") == (
+        tmp_path / "bitgn__ecom1-dev"
+    )
+    assert _default_output_path(tmp_path, tmp_path / "bitgn__ecom1-dev") == (
+        tmp_path / "bitgn__ecom1-dev.html"
+    )
     assert _natural_key("t10") > _natural_key("t2")
     assert _parse_datetime("2026-05-29T10:00:00+00:00") is not None
     assert _parse_datetime("bad") is None
@@ -40,6 +50,7 @@ def test_runs_report_helpers(tmp_path: Path) -> None:
         """
         {
           "started_at": "2026-05-29T10:00:00+00:00",
+          "benchmark_id": "bitgn/ecom1-dev",
           "model_id": "gpt-test",
           "score": "0.5",
           "test_cases": [
@@ -56,6 +67,7 @@ def test_runs_report_helpers(tmp_path: Path) -> None:
     )
 
     record = _load_run(path)
+    assert record.benchmark_id == "bitgn/ecom1-dev"
     assert record.model_id == "gpt-test"
     assert record.cases["t01"] == RunTestCase(
         task_id="t01",
@@ -69,6 +81,7 @@ def test_runs_report_helpers(tmp_path: Path) -> None:
     fallback = RunRecord(
         path=tmp_path / "run_custom.json",
         started_at="",
+        benchmark_id="",
         model_id="",
         score=None,
         cases={},
@@ -88,8 +101,9 @@ def test_load_runs_sorts_by_started_at_and_render_html(tmp_path: Path) -> None:
 
     records = _load_runs(tmp_path)
     assert [record.path.name for record in records] == ["run_old.json", "run_new.json"]
-    html = _render_html(records)
+    html = _render_html(records, benchmark_id="bitgn/ecom1-dev")
     assert "ECOM run scores" in html
+    assert "bitgn/ecom1-dev" in html
     assert "t01" in html
     assert "sum" in html
-    assert "No run_*.json" in _render_html([])
+    assert "No run_*.json" in _render_html([], benchmark_id="bitgn/ecom1-dev")
