@@ -176,7 +176,7 @@ def _parse_catalog_descriptions(items: list[CatalogLookupItem]) -> list[ParsedCa
             raise RuntimeError(
                 f"catalog parser returned incomplete item_index={index}: {item}"
             )
-        ordered.append(item)
+        ordered.append(_repair_parsed_catalog_item(item, items[index].description))
     return ordered
 
 
@@ -284,6 +284,7 @@ _GENERIC_CONSTRAINT_WORDS = {
     "power",
     "product",
     "protection",
+    "season",
     "sealant",
     "screw",
     "source",
@@ -324,6 +325,7 @@ _STRUCTURED_PROPERTY_LABEL_WORDS = {
     "protection",
     "rating",
     "screw",
+    "season",
     "size",
     "source",
     "storage",
@@ -340,6 +342,21 @@ _THAT_HAS_RE = re.compile(r"\bthat\s+has\b", re.IGNORECASE)
 _EXTRA_CLAIM_BOUNDARY_RE = re.compile(
     r"\band\s+(?:has|supports|is)\b",
     re.IGNORECASE,
+)
+_LINE_THAT_HAS_RE = re.compile(r"\s+line\s+that\s+has\s+", re.IGNORECASE)
+_CONSTRAINT_THAT_HAS_RE = re.compile(r"\s+that\s+has\s+", re.IGNORECASE)
+_CONSTRAINT_SPLIT_RE = re.compile(
+    r"\s*,\s*|\s+\band\s+has\s+|\s+\band\s+(?="
+    r"(?:adapter|adhesive|anchor|bar|battery|cleaner|color|connection|connector|"
+    r"cutting|diameter|disc|drive|fastener|finish|fitting|kit|length|luminous|"
+    r"machine|material|pack|power|product|protection|screw|sealant|size|source|"
+    r"storage|thread|tool|type|vehicle|viscosity|voltage|volume|wattage|width)\b)",
+    re.IGNORECASE,
+)
+_CATALOG_DESCRIPTION_RE = re.compile(
+    r"\bthe\s+(?P<kind>.*?)\s+from\s+(?P<brand>.*?)\s+in\s+the\s+"
+    r"(?P<family>.*?)\s+line\b",
+    re.IGNORECASE | re.DOTALL,
 )
 _CITY_AVAILABILITY_RE = re.compile(
     r"Across\s+every\s+(?P<city>[A-Za-z][A-Za-z\s-]*?)\s+branch\b.*?"
@@ -412,6 +429,103 @@ def _extract_city_availability_request(task_text: str) -> ReqResolveCityAvailabi
 
 def _format_count_message(answer_format: str, total: int) -> str:
     return answer_format.replace("%d", str(total), 1)
+
+
+def _constraint_segments(text: str) -> list[str]:
+    return [
+        segment.strip(" ,.;")
+        for segment in _CONSTRAINT_SPLIT_RE.split(text)
+        if segment.strip(" ,.;")
+    ]
+
+
+def _constraint_from_text(text: str) -> ParsedCatalogConstraint:
+    words = text.split()
+    normalized_words = _norm_words(text).split()
+    label = ""
+    value = text.strip()
+
+    if len(normalized_words) >= 3 and normalized_words[1] in {
+        "class",
+        "contents",
+        "count",
+        "diameter",
+        "family",
+        "length",
+        "platform",
+        "source",
+        "type",
+        "volume",
+        "width",
+    }:
+        label = " ".join(words[:2])
+        value = " ".join(words[2:])
+    elif normalized_words and normalized_words[0] in _STRUCTURED_PROPERTY_LABEL_WORDS:
+        label = words[0]
+        value = " ".join(words[1:]) if len(words) > 1 else ""
+
+    return ParsedCatalogConstraint(text=text.strip(), label=label, value=value.strip())
+
+
+def _constraints_from_text(text: str) -> list[ParsedCatalogConstraint]:
+    return [_constraint_from_text(segment) for segment in _constraint_segments(text)]
+
+
+def _repair_parsed_catalog_item(
+    parsed: ParsedCatalogItem,
+    source_description: str,
+) -> ParsedCatalogItem:
+    source_match = _CATALOG_DESCRIPTION_RE.search(source_description)
+    product_family = parsed.product_family.strip()
+    product_kind = parsed.product_kind.strip()
+    brand = parsed.brand.strip()
+    constraints = list(parsed.constraints)
+    extra_constraints_text = ""
+
+    if source_match:
+        # The source task text follows a stable catalogue phrase. Prefer that
+        # exact family boundary over helper output that may absorb variant
+        # suffixes such as "Green XL" into product_family.
+        product_kind = " ".join(source_match.group("kind").split())
+        brand = " ".join(source_match.group("brand").split())
+        product_family = " ".join(source_match.group("family").split())
+
+    # Helper-model parsing occasionally leaves the "line that has ..." suffix
+    # inside product_family. That makes the SQL family equality miss every row,
+    # so repair the canonical split deterministically before querying.
+    if match := _LINE_THAT_HAS_RE.search(product_family):
+        extra_constraints_text = product_family[match.end() :]
+        product_family = product_family[: match.start()].strip()
+    elif match := _CONSTRAINT_THAT_HAS_RE.search(product_family):
+        extra_constraints_text = product_family[match.end() :]
+        product_family = product_family[: match.start()].strip()
+
+    if extra_constraints_text:
+        constraints.extend(_constraints_from_text(extra_constraints_text))
+
+    if not constraints and (match := _THAT_HAS_RE.search(source_description)):
+        constraints = _constraints_from_text(source_description[match.end() :])
+
+    if not product_family:
+        product_family = parsed.product_family.strip()
+
+    seen_constraints: set[str] = set()
+    deduped_constraints: list[ParsedCatalogConstraint] = []
+    for constraint in constraints:
+        key = _norm_words(constraint.text or f"{constraint.label} {constraint.value}")
+        if not key or key in seen_constraints:
+            continue
+        seen_constraints.add(key)
+        deduped_constraints.append(constraint)
+
+    return parsed.model_copy(
+        update={
+            "brand": brand,
+            "product_kind": product_kind,
+            "product_family": product_family,
+            "constraints": deduped_constraints,
+        }
+    )
 
 
 def _property_label_candidates(key: str) -> list[str]:

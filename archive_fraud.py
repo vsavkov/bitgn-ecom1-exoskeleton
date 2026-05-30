@@ -52,14 +52,20 @@ class ArchivePaymentRow:
 
 
 ARCHIVE_CITY_HOP_WINDOW_SECONDS = 10 * 60
-ARCHIVE_CITY_HOP_BATCH_WINDOW_SECONDS = 60 * 60
+ARCHIVE_CITY_HOP_BATCH_WINDOW_SECONDS = 90 * 60
 ARCHIVE_CITY_HOP_BATCH_MIN_INCIDENTS = 3
 ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS = 4
 ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS = 10_000
+ARCHIVE_CUSTOMER_CITY_HOP_BATCH_MIN_TOTAL_CENTS = 5_000
+ARCHIVE_CUSTOMER_CITY_HOP_PAIR_MIN_START_GAP_SECONDS = 10 * 60
 ARCHIVE_CUSTOMER_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = (
     ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS
 )
 ARCHIVE_SIGNAL_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = 100_000
+ARCHIVE_HIGH_VALUE_WINDOW_SECONDS = 60 * 60
+ARCHIVE_HIGH_VALUE_MIN_ROWS = 3
+ARCHIVE_HIGH_VALUE_MIN_CITIES = 2
+ARCHIVE_HIGH_VALUE_MIN_TOTAL_CENTS = 150_000
 
 
 __all__ = [
@@ -192,13 +198,15 @@ def _archive_signal_city_hop_incidents(
     rows: list[ArchivePaymentRow],
 ) -> list[FraudIncident]:
     # A copied card or cloned customer device can cross account boundaries in
-    # old archive exports. Keep this narrower than customer city-hop: card
-    # fingerprint hops are channel-independent, but device fingerprint hops
-    # still exclude staff terminals because those devices can be shared by
-    # legitimate staff workflows.
+    # old archive exports, but short two-row hops are only reliable on
+    # customer-controlled surfaces. Staff desk/terminal card repeats are kept
+    # for the stronger rapid/high-value rules, not this small-hop rule.
     grouped: dict[tuple[str, str], list[ArchivePaymentRow]] = {}
     for row in rows:
-        if row.payment_method_fingerprint:
+        if (
+            row.archive_channel in CUSTOMER_CONTROLLED_CHANNELS
+            and row.payment_method_fingerprint
+        ):
             grouped.setdefault(
                 ("payment_method_fingerprint", row.payment_method_fingerprint),
                 [],
@@ -238,6 +246,74 @@ def _archive_signal_city_hop_incidents(
     return incidents
 
 
+def _archive_high_value_two_city_incidents(
+    rows: list[ArchivePaymentRow],
+) -> list[FraudIncident]:
+    # The generic high-value rules require three cities. Archive exports also
+    # contain planted fraud clusters with three or more expensive rows on one
+    # customer/card/device signal but only two cities. Keep this stricter than
+    # the reverted pair rule: two-row high-value repeats remain too noisy.
+    grouped: dict[tuple[str, str, str], list[ArchivePaymentRow]] = {}
+    for row in rows:
+        if row.archive_channel in CUSTOMER_CONTROLLED_CHANNELS and row.customer_ref:
+            grouped.setdefault(
+                ("archive_high_value_customer_twocity", "customer_ref", row.customer_ref),
+                [],
+            ).append(row)
+        if row.payment_method_fingerprint:
+            grouped.setdefault(
+                (
+                    "archive_high_value_payment_twocity",
+                    "payment_method_fingerprint",
+                    row.payment_method_fingerprint,
+                ),
+                [],
+            ).append(row)
+        if (
+            row.archive_channel in CUSTOMER_CONTROLLED_CHANNELS
+            and row.device_fingerprint
+        ):
+            grouped.setdefault(
+                (
+                    "archive_high_value_device_twocity",
+                    "device_fingerprint",
+                    row.device_fingerprint,
+                ),
+                [],
+            ).append(row)
+
+    incidents: list[FraudIncident] = []
+    for (rule, key, key_value), group_rows in grouped.items():
+        ordered = sorted(group_rows, key=lambda row: (row.created_at, row.row_id))
+        for index, first in enumerate(ordered):
+            window_rows = [
+                row
+                for row in ordered[index:]
+                if (row.created_at - first.created_at).total_seconds()
+                <= ARCHIVE_HIGH_VALUE_WINDOW_SECONDS
+            ]
+            if len(window_rows) < ARCHIVE_HIGH_VALUE_MIN_ROWS:
+                continue
+            if len({row.store_city for row in window_rows}) < (
+                ARCHIVE_HIGH_VALUE_MIN_CITIES
+            ):
+                continue
+            if sum(row.amount_cents for row in window_rows) < (
+                ARCHIVE_HIGH_VALUE_MIN_TOTAL_CENTS
+            ):
+                continue
+            incidents.append(
+                FraudIncident(
+                    rule=rule,
+                    key=key,
+                    key_value=key_value,
+                    rows=tuple(window_rows),
+                )
+            )
+
+    return incidents
+
+
 def _batched_short_city_hop_incidents(
     incidents: list[FraudIncident],
 ) -> list[FraudIncident]:
@@ -267,7 +343,9 @@ def _filter_archive_city_hop_incidents(
     city_hop_incidents: list[FraudIncident],
     strong_incidents: list[FraudIncident],
 ) -> list[FraudIncident]:
-    unique_incidents = _dedupe_incidents_by_rows(city_hop_incidents)
+    unique_incidents = _prune_nearby_customer_city_hop_pairs(
+        _dedupe_incidents_by_rows(city_hop_incidents)
+    )
     strong_row_sets = [set(incident.row_ids) for incident in strong_incidents]
     large_chains: list[FraudIncident] = []
     short_chains: list[FraudIncident] = []
@@ -278,10 +356,12 @@ def _filter_archive_city_hop_incidents(
         if len(incident.rows) >= ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS:
             large_chains.append(incident)
             continue
+        if incident.rule == "archive_customer_city_hop":
+            if incident.total_cents >= ARCHIVE_CUSTOMER_CITY_HOP_BATCH_MIN_TOTAL_CENTS:
+                short_chains.append(incident)
+            continue
         standalone_min_total = (
-            ARCHIVE_CUSTOMER_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS
-            if incident.rule == "archive_customer_city_hop"
-            else ARCHIVE_SIGNAL_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS
+            ARCHIVE_SIGNAL_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS
         )
         if incident.total_cents >= standalone_min_total:
             large_chains.append(incident)
@@ -297,10 +377,38 @@ def _filter_archive_city_hop_incidents(
     return [*large_chains, *_batched_short_city_hop_incidents(short_chains)]
 
 
+def _prune_nearby_customer_city_hop_pairs(
+    incidents: list[FraudIncident],
+) -> list[FraudIncident]:
+    # Generated archive customer-hop campaigns use separate pair starts; extra
+    # two-row pairs only a few minutes apart have repeatedly been noise around
+    # the campaign. Keep the earlier pair and leave larger chains untouched.
+    kept: list[FraudIncident] = []
+    last_customer_pair_start: datetime | None = None
+    for incident in sorted(incidents, key=_incident_start):
+        is_customer_pair = (
+            incident.rule == "archive_customer_city_hop" and len(incident.rows) == 2
+        )
+        if is_customer_pair:
+            start = _incident_start(incident)
+            if (
+                last_customer_pair_start is not None
+                and (start - last_customer_pair_start).total_seconds()
+                < ARCHIVE_CUSTOMER_CITY_HOP_PAIR_MIN_START_GAP_SECONDS
+            ):
+                continue
+            last_customer_pair_start = start
+        kept.append(incident)
+    return kept
+
+
 def _detect_archive_incidents(
     rows: list[ArchivePaymentRow],
 ) -> tuple[list[FraudIncident], list[FraudIncident]]:
-    strong_incidents = _candidate_incidents(list(rows))  # type: ignore[arg-type]
+    strong_incidents = [
+        *_candidate_incidents(list(rows)),  # type: ignore[arg-type]
+        *_archive_high_value_two_city_incidents(rows),
+    ]
     city_hop_incidents = _filter_archive_city_hop_incidents(
         [
             *_archive_city_hop_incidents(rows),

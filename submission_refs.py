@@ -357,6 +357,27 @@ def availability_count_refs_from_catalog_result(result: Any) -> list[str]:
     return dedupe_refs(refs)
 
 
+def availability_lookup_refs_from_catalog_result(result: Any) -> list[str]:
+    if not isinstance(result, dict):
+        return []
+
+    refs: list[str] = []
+    store_ref = result.get("store_ref")
+    if isinstance(store_ref, str) and store_ref:
+        refs.append(store_ref)
+
+    items = result.get("items")
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item_refs = item.get("matched_refs")
+            if isinstance(item_refs, list):
+                refs.extend(ref for ref in item_refs if isinstance(ref, str) and ref)
+
+    return dedupe_refs(refs)
+
+
 def support_note_refs_from_catalog_result(result: Any) -> list[str]:
     if not isinstance(result, dict):
         return []

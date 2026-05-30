@@ -15,6 +15,8 @@ from agent import (
     _apply_archive_fraud_result,
     _apply_receipt_price_result,
     _apply_city_availability_result,
+    _apply_catalog_availability_lookup_refs,
+    _apply_payment_recovery_retry_timestamp,
     _apply_verified_manager_refs,
     _format_list_response,
     _format_exec_response,
@@ -52,6 +54,14 @@ from agent import (
     _tree_followup_commands,
 )
 from catalog_tools import CatalogLookupItem
+
+
+class ReadOnlyVM:
+    def __init__(self, files: dict[str, str]) -> None:
+        self.files = files
+
+    def read(self, request):
+        return SimpleNamespace(content=self.files.get(request.path, ""))
 
 
 def test_path_helpers() -> None:
@@ -612,6 +622,66 @@ def test_apply_city_availability_result_replaces_message_and_refs() -> None:
         "/proc/catalog/FST-1KPF96UD.json",
         "/proc/stores/store_vienna_meidling.json",
     ]
+
+
+def test_apply_catalog_availability_lookup_refs_merges_store_and_catalog_refs() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["checked pasted rows"],
+        task_type="availability_lookup",
+        message="table",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/proc/catalog/A.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_catalog_availability_lookup_refs(
+        cmd,
+        [
+            "/proc/stores/store_graz_jakomini.json",
+            "/proc/catalog/B.json",
+        ],
+    )
+
+    assert updated.grounding_row_refs == [
+        "/proc/catalog/A.json",
+        "/proc/stores/store_graz_jakomini.json",
+        "/proc/catalog/B.json",
+    ]
+
+
+def test_apply_payment_recovery_retry_timestamp_reads_policy_doc() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=[
+            "Current UTC time is before retry_available_at for pay_002."
+        ],
+        task_type="payment_recovery",
+        message="OUTCOME_NONE_UNSUPPORTED",
+        grounding_doc_refs=["/docs/policy-updates/3ds-retry-lockout-2024-07-17.md"],
+        grounding_row_refs=["/proc/payments/pay_002.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_NONE_UNSUPPORTED",
+    )
+
+    updated = _apply_payment_recovery_retry_timestamp(
+        ReadOnlyVM(
+            {
+                "/docs/policy-updates/3ds-retry-lockout-2024-07-17.md": (
+                    "- payment_id: pay_002\n"
+                    "- retry_available_at: 2024-07-18T14:49:48Z\n"
+                )
+            }
+        ),
+        cmd,
+        task_text="Can you recover basket basket_202?",
+    )
+
+    assert updated.message == (
+        "OUTCOME_NONE_UNSUPPORTED: retry blocked until 2024-07-18T14:49:48Z"
+    )
+    assert updated.completed_steps_laconic[-1] == (
+        "Retry is blocked until 2024-07-18T14:49:48Z."
+    )
 
 
 def test_parse_tool_call() -> None:

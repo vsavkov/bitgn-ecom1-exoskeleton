@@ -18,6 +18,7 @@ from catalog_tools import (
     _property_label_candidates,
     _property_matches_constraint,
     _refs_to_submit_for_availability_count,
+    _repair_parsed_catalog_item,
     _split_support_note_constraints,
     _variant_tail_text,
     resolve_city_availability,
@@ -111,6 +112,98 @@ def test_catalog_text_normalization_and_numbers() -> None:
     ]
     assert _number_from_text("about 12,5 mm") == 12.5
     assert _number_from_text("none") is None
+
+
+def test_repair_parsed_catalog_item_splits_family_suffix_constraints() -> None:
+    parsed = _repair_parsed_catalog_item(
+        ParsedCatalogItems.model_validate(
+            {
+                "items": [
+                    {
+                        "item_index": 0,
+                        "brand": "Gorilla",
+                        "product_kind": "Adhesive and Glue",
+                        "product_family": (
+                            "Gorilla Crystal Grip 2ZQ-D83 Adhesive and Glue line "
+                            "that has adhesive type wood glue"
+                        ),
+                        "constraints": [],
+                    }
+                ]
+            }
+        ).items[0],
+        (
+            "the Adhesive and Glue from Gorilla in the Gorilla Crystal Grip "
+            "2ZQ-D83 Adhesive and Glue line that has adhesive type wood glue"
+        ),
+    )
+
+    assert parsed.product_family == "Gorilla Crystal Grip 2ZQ-D83 Adhesive and Glue"
+    assert parsed.constraints == [
+        ParsedCatalogConstraint(
+            text="adhesive type wood glue",
+            label="adhesive type",
+            value="wood glue",
+        )
+    ]
+
+
+def test_repair_parsed_catalog_item_backfills_missing_constraints_from_source() -> None:
+    parsed = _repair_parsed_catalog_item(
+        ParsedCatalogItems.model_validate(
+            {
+                "items": [
+                    {
+                        "item_index": 0,
+                        "brand": "Philips",
+                        "product_kind": "LED Bulb",
+                        "product_family": "Philips Professional Hue 3JS-MSN LED Bulb",
+                        "constraints": [],
+                    }
+                ]
+            }
+        ).items[0],
+        (
+            "the LED Bulb from Philips in the Philips Professional Hue "
+            "3JS-MSN LED Bulb line that has wattage 12 W"
+        ),
+    )
+
+    assert parsed.constraints == [
+        ParsedCatalogConstraint(text="wattage 12 W", label="wattage", value="12 W")
+    ]
+
+
+def test_repair_parsed_catalog_item_prefers_source_family_boundary() -> None:
+    parsed = _repair_parsed_catalog_item(
+        ParsedCatalogItems.model_validate(
+            {
+                "items": [
+                    {
+                        "item_index": 0,
+                        "brand": "Uvex",
+                        "product_kind": "Work Jacket",
+                        "product_family": "Uvex Bionic x-fit Y59-F8N Work Jacket Green XL",
+                        "constraints": [],
+                    }
+                ]
+            }
+        ).items[0],
+        (
+            "the Work Jacket from Uvex in the Uvex Bionic x-fit "
+            "Y59-F8N Work Jacket line that has color family Green and size XL"
+        ),
+    )
+
+    assert parsed.product_family == "Uvex Bionic x-fit Y59-F8N Work Jacket"
+    assert parsed.constraints == [
+        ParsedCatalogConstraint(
+            text="color family Green",
+            label="color family",
+            value="Green",
+        ),
+        ParsedCatalogConstraint(text="size XL", label="size", value="XL"),
+    ]
 
 
 def test_property_rows_from_json_adds_variant_properties() -> None:
@@ -262,6 +355,18 @@ def test_structured_constraints_can_match_variant_name_tail() -> None:
 
     assert matched == ["color family Yellow", "size XL"]
     assert missing == []
+
+
+def test_season_constraint_does_not_match_family_name() -> None:
+    matched, missing = _candidate_constraint_matches(
+        [ParsedCatalogConstraint(text="season all season", label="season", value="all season")],
+        [],
+        "Sonax All Season PRO 17W-WGH Automotive Cleaner fuel additive 500ml winter",
+        product_family_name="Sonax All Season PRO 17W-WGH Automotive Cleaner",
+    )
+
+    assert matched == []
+    assert missing == ["season all season"]
 
 
 def test_structured_constraints_match_compact_unit_variant_tail() -> None:

@@ -279,6 +279,34 @@ def test_apply_to_completion_uses_city_availability_result() -> None:
     ]
 
 
+def test_apply_to_completion_uses_catalog_availability_lookup_refs() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["checked pasted rows"],
+        task_type="availability_lookup",
+        message="table",
+        grounding_doc_refs=[],
+        grounding_row_refs=["/proc/catalog/A.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    ledger = EvidenceLedger()
+    ledger.merge_catalog_availability_lookup(
+        [
+            "/proc/stores/store_graz_jakomini.json",
+            "/proc/catalog/B.json",
+        ]
+    )
+
+    updated = ledger.apply_to_completion(cmd)
+
+    assert updated.grounding_row_refs == [
+        "/proc/catalog/A.json",
+        "/proc/stores/store_graz_jakomini.json",
+        "/proc/catalog/B.json",
+    ]
+
+
 def test_apply_to_completion_autocites_loaded_docs_for_matching_task_type() -> None:
     cmd = _completion(
         task_type="discount",

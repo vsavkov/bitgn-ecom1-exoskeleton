@@ -69,9 +69,16 @@ from openai.types.responses import (
 )
 from openai.types.shared_params import Reasoning
 from pydantic import BaseModel, Field, ValidationError
+from payment_recovery import (
+    payment_ids_from_refs_and_text,
+    payment_recovery_message_with_retry_timestamp,
+    retry_available_at_from_policy_text,
+)
 from receipt_price import ReqAnalyzeReceiptPriceCheck, analyze_receipt_price_check
+from refund_preflight import amount_refund_clarification_preflight
 from submission_refs import (
     availability_count_refs_from_catalog_result,
+    availability_lookup_refs_from_catalog_result,
     catalog_refs_from_refs,
     dedupe_refs,
     is_catalog_ref,
@@ -1008,6 +1015,79 @@ def _apply_city_availability_result(
     return cmd.model_copy(update=updates)
 
 
+def _apply_catalog_availability_lookup_refs(
+    cmd: ReportTaskCompletion,
+    refs_to_submit: list[str],
+) -> ReportTaskCompletion:
+    if cmd.task_type != "availability_lookup" or not refs_to_submit:
+        return cmd
+    row_refs = dedupe_refs([*cmd.grounding_row_refs, *refs_to_submit])
+    return cmd.model_copy(update={"grounding_row_refs": row_refs})
+
+
+def _apply_payment_recovery_retry_timestamp(
+    vm: Any,
+    cmd: ReportTaskCompletion,
+    *,
+    task_text: str,
+) -> ReportTaskCompletion:
+    if cmd.task_type != "payment_recovery" or cmd.outcome != "OUTCOME_NONE_UNSUPPORTED":
+        return cmd
+
+    step_text = " ".join(cmd.completed_steps_laconic)
+    if not any(
+        marker in step_text.lower()
+        for marker in ("retry_available_at", "retry lockout", "lockout")
+    ):
+        return cmd
+
+    payment_ids = payment_ids_from_refs_and_text(
+        cmd.grounding_row_refs,
+        f"{task_text} {step_text}",
+    )
+    if not payment_ids:
+        return cmd
+
+    timestamp = ""
+    for ref in cmd.grounding_doc_refs:
+        normalized = ref.lower()
+        if not ref.endswith(".md") or not any(
+            marker in normalized for marker in ("3ds", "verification", "lockout")
+        ):
+            continue
+        try:
+            result = dispatch(vm, ReqRead(path=ref), task_text=task_text)
+        except ConnectError:
+            continue
+        content = getattr(result, "content", "") or ""
+        timestamp = retry_available_at_from_policy_text(
+            content,
+            payment_ids=payment_ids,
+        )
+        if timestamp:
+            break
+
+    if not timestamp:
+        return cmd
+
+    message = payment_recovery_message_with_retry_timestamp(
+        cmd.message,
+        retry_available_at=timestamp,
+    )
+    if message == cmd.message:
+        return cmd
+
+    return cmd.model_copy(
+        update={
+            "message": message,
+            "completed_steps_laconic": [
+                *cmd.completed_steps_laconic,
+                f"Retry is blocked until {timestamp}.",
+            ],
+        }
+    )
+
+
 def _apply_loaded_doc_refs(
     cmd: ReportTaskCompletion,
     matched_refs: list[str],
@@ -1123,6 +1203,7 @@ def run_agent(
     ledger.register_loaded_docs(sorted(tree_read_paths))
 
     def _finalize_preflight(cmd: ReportTaskCompletion) -> dict:
+        cmd = _apply_payment_recovery_retry_timestamp(vm, cmd, task_text=task_text)
         dispatch(vm, cmd, task_text=task_text)
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
         result_payload = {
@@ -1153,6 +1234,22 @@ def run_agent(
             grounding_row_refs=denial.row_refs,
             protected_record_denial=denial.protected_record_denial,
             outcome="OUTCOME_DENIED_SECURITY",
+        )
+        return _finalize_preflight(cmd)
+
+    refund_clarification = amount_refund_clarification_preflight(
+        vm,
+        task_text=task_text,
+    )
+    if refund_clarification is not None:
+        cmd = ReportTaskCompletion(
+            completed_steps_laconic=refund_clarification.completed_steps_laconic,
+            task_type="refund",
+            message=refund_clarification.message,
+            grounding_doc_refs=refund_clarification.doc_refs,
+            grounding_row_refs=refund_clarification.row_refs,
+            protected_record_denial=False,
+            outcome="OUTCOME_NONE_CLARIFICATION",
         )
         return _finalize_preflight(cmd)
 
@@ -1328,6 +1425,9 @@ def run_agent(
                 # during the main loop beyond what the must startup pulled in.
                 ledger.register_loaded_docs(sorted(tree_read_paths))
                 cmd = ledger.apply_to_completion(cmd, task_text=task_text)
+                cmd = _apply_payment_recovery_retry_timestamp(
+                    vm, cmd, task_text=task_text
+                )
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,
@@ -1372,6 +1472,9 @@ def run_agent(
             if isinstance(cmd, ReqResolveCatalogItems):
                 ledger.merge_availability_count(
                     availability_count_refs_from_catalog_result(result)
+                )
+                ledger.merge_catalog_availability_lookup(
+                    availability_lookup_refs_from_catalog_result(result)
                 )
                 ledger.merge_support_note(
                     support_note_refs_from_catalog_result(result)

@@ -10,6 +10,7 @@ from submission_refs import (
     EXPLICIT_RECORD_SPECS,
     MESSAGE_SKU_RE,
     availability_count_refs_from_catalog_result,
+    availability_lookup_refs_from_catalog_result,
     can_auto_cite_customer_scoped_record,
     candidate_record_ids,
     canonical_case_file_ref,
@@ -277,6 +278,27 @@ def test_catalog_refs_from_helper_can_be_empty_when_only_store_ref_returned() ->
     assert availability_count_refs_from_catalog_result(
         {"store_ref": "/proc/stores/store_graz_lend.json"}
     ) == ["/proc/stores/store_graz_lend.json"]
+
+
+def test_availability_lookup_refs_from_catalog_result_includes_store_and_matches() -> None:
+    assert availability_lookup_refs_from_catalog_result(
+        {
+            "store_ref": "/proc/stores/store_graz_jakomini.json",
+            "items": [
+                {
+                    "matched_refs": [
+                        "/proc/catalog/A.json",
+                        "/proc/catalog/B.json",
+                    ]
+                },
+                {"matched_refs": ["/proc/catalog/A.json"]},
+            ],
+        }
+    ) == [
+        "/proc/stores/store_graz_jakomini.json",
+        "/proc/catalog/A.json",
+        "/proc/catalog/B.json",
+    ]
 
 
 def test_support_note_refs_from_catalog_result_reads_checked_base_refs() -> None:

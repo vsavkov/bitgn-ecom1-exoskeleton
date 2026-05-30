@@ -24,6 +24,7 @@ class EvidenceLedger:
     receipt_message: str = ""
     city_availability_refs: list[str] = field(default_factory=list)
     city_availability_message: str = ""
+    catalog_availability_lookup_refs: list[str] = field(default_factory=list)
     loaded_doc_refs: list[str] = field(default_factory=list)
 
     def merge_availability_count(self, refs: list[str]) -> None:
@@ -80,6 +81,12 @@ class EvidenceLedger:
         if formatted_message:
             self.city_availability_message = formatted_message
 
+    def merge_catalog_availability_lookup(self, refs: list[str]) -> None:
+        if refs:
+            self.catalog_availability_lookup_refs = dedupe_refs(
+                [*self.catalog_availability_lookup_refs, *refs]
+            )
+
     def register_loaded_docs(self, paths: list[str]) -> None:
         if paths:
             self.loaded_doc_refs = dedupe_refs([*self.loaded_doc_refs, *paths])
@@ -94,6 +101,7 @@ class EvidenceLedger:
             _apply_archive_fraud_result,
             _apply_availability_count_catalog_refs,
             _apply_city_availability_result,
+            _apply_catalog_availability_lookup_refs,
             _apply_loaded_doc_refs,
             _apply_receipt_price_result,
             _apply_support_note_catalog_refs,
@@ -125,6 +133,10 @@ class EvidenceLedger:
             cmd,
             formatted_message=self.city_availability_message,
             refs_to_submit=self.city_availability_refs,
+        )
+        cmd = _apply_catalog_availability_lookup_refs(
+            cmd,
+            refs_to_submit=self.catalog_availability_lookup_refs,
         )
         if not explicit_archive_fraud:
             cmd = _apply_loaded_doc_refs(
