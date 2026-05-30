@@ -6,6 +6,7 @@ from bitgn.vm.ecom.ecom_pb2 import NodeKind
 from agent import (
     ReportTaskCompletion,
     ReqList,
+    ReqResolveCatalogItems,
     ReqExec,
     ReqRead,
     ReqSearch,
@@ -37,6 +38,7 @@ from agent import (
     _output_text,
     _parse_tool_call,
     _remember_seen_tool_use,
+    _normalize_catalog_resolution_for_task,
     _render_command,
     _should_preflight_payment_fraud_history,
     _synthetic_function_call,
@@ -49,6 +51,7 @@ from agent import (
     _trace_dispatch_outputs,
     _tree_followup_commands,
 )
+from catalog_tools import CatalogLookupItem
 
 
 def test_path_helpers() -> None:
@@ -72,6 +75,46 @@ def test_payment_fraud_history_preflight_detection() -> None:
     assert _task_has_explicit_archive_export(
         "Read /archive/payment_batch_export.tsv and identify fraud rows."
     )
+
+
+def test_catalog_resolution_predicate_normalizes_unavailable_count_task() -> None:
+    cmd = ReqResolveCatalogItems(
+        items=[
+            CatalogLookupItem(
+                description="the Cleaning Machine from Karcher",
+                requested_quantity=1,
+            )
+        ],
+        store_id="store_brno_veveri",
+        availability_predicate="at_least",
+    )
+
+    updated = _normalize_catalog_resolution_for_task(
+        cmd,
+        task_text="how many of these just are not available today?",
+    )
+
+    assert updated.availability_predicate == "below"
+
+
+def test_catalog_resolution_predicate_keeps_positive_availability_task() -> None:
+    cmd = ReqResolveCatalogItems(
+        items=[
+            CatalogLookupItem(
+                description="the Cleaning Machine from Karcher",
+                requested_quantity=1,
+            )
+        ],
+        store_id="store_brno_veveri",
+        availability_predicate="at_least",
+    )
+
+    updated = _normalize_catalog_resolution_for_task(
+        cmd,
+        task_text="how many of these have at least 1 available today?",
+    )
+
+    assert updated.availability_predicate == "at_least"
 
 
 def test_render_and_truncation_helpers() -> None:

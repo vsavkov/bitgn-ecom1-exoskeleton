@@ -920,6 +920,34 @@ def _should_preflight_payment_fraud_history(task_text: str) -> bool:
     )
 
 
+def _task_requests_below_availability_count(task_text: str) -> bool:
+    normalized = task_text.lower()
+    return any(
+        marker in normalized
+        for marker in (
+            "not available",
+            "fewer than",
+            "less than",
+            "below",
+            "under",
+        )
+    )
+
+
+def _normalize_catalog_resolution_for_task(
+    cmd: ReqResolveCatalogItems,
+    *,
+    task_text: str,
+) -> ReqResolveCatalogItems:
+    if (
+        cmd.store_id
+        and cmd.availability_predicate != "below"
+        and _task_requests_below_availability_count(task_text)
+    ):
+        return cmd.model_copy(update={"availability_predicate": "below"})
+    return cmd
+
+
 def _apply_archive_fraud_result(
     cmd: ReportTaskCompletion,
     *,
@@ -1313,6 +1341,8 @@ def run_agent(
                     output_lines=None if print_completion else formatter_output_lines,
                 )
                 cmd = cmd.model_copy(update={"message": formatted_message})
+            elif isinstance(cmd, ReqResolveCatalogItems):
+                cmd = _normalize_catalog_resolution_for_task(cmd, task_text=task_text)
 
             result: Any | None = None
             try:
