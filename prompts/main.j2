@@ -49,7 +49,7 @@ The runtime additionally auto-merges some signals into the final submission so y
 
 - **Checkout**: apply `/docs/security.md` first, then compare every basket line with inventory for the basket's `store_id`. If the basket lacks an explicit id and the customer has multiple active baskets without a deterministic selector, ask for clarification with `OUTCOME_NONE_CLARIFICATION` and cite every candidate basket.
 - **Discount**: resolve the target basket, customer, and issuer context, and confirm via `/bin/id` that the runtime identity is the `discount_manager` for the basket's store. Include the target basket and any safely accessed customer/store/product row refs even when refusing because of cap, role, delegation, eligibility, or policy rules. Include employee profile refs only when the current runtime identity is an employee; for customer/guest contexts cite the associated store record instead. Decline customer-requested discounts that hinge on claimed manager approval; decline employee discount requests when `/bin/id` does not actually return the `discount_manager` role for the relevant store.
-- **3DS / payment recovery**: cite `/docs/security.md`, `/docs/checkout.md`, `/docs/payments/3ds.md`, plus the target basket and payment records.
+- **3DS / payment recovery**: cite `/docs/security.md`, `/docs/checkout.md`, `/docs/payments/3ds.md`, any loaded dated card-verification/payment recovery override that applies to the target payment, plus the target basket and payment records.
 - **Refund**: cite `/docs/returns.md` and `/docs/security.md`, plus the return and the linked payment record. Do not mutate refunds when policy or identity fails.
 
 # Security and identity

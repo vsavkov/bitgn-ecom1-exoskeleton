@@ -38,6 +38,10 @@ DOC_INTENT_PATTERNS: tuple[tuple[str, frozenset[str]], ...] = (
     ("discount", frozenset({"discount"})),
     ("checkout", frozenset({"checkout", "discount"})),
     ("3ds", frozenset({"payment_recovery"})),
+    # Dated verification notes can override the regular 3DS recovery window
+    # for a named payment and must be cited when they apply.
+    ("card-verification", frozenset({"payment_recovery"})),
+    ("payment-verification", frozenset({"payment_recovery"})),
     ("payments", frozenset({"payment_recovery", "refund", "fraud_review"})),
     ("returns", frozenset({"refund"})),
     # SQL / count tasks rely on dated incident notes that explain why the

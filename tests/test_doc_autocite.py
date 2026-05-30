@@ -38,6 +38,14 @@ def test_payments_doc_matches_payment_recovery_and_refund() -> None:
     assert "/docs/payments/refunds-policy.md" in matched
 
 
+def test_dated_verification_updates_match_payment_recovery() -> None:
+    docs = [
+        "/docs/ops-policy-notes/card-verification-2024-07-17.md",
+        "/docs/current-updates/2024-07-17-payment-verification.md",
+    ]
+    assert relevant_doc_refs_for_task_type(docs, "payment_recovery") == docs
+
+
 def test_docs_without_matching_intent_are_skipped() -> None:
     docs = ["/docs/powertools-agentic-os-origin-story.md", "/AGENTS.MD"]
     assert relevant_doc_refs_for_task_type(docs, "discount") == []
