@@ -55,7 +55,8 @@ ARCHIVE_CITY_HOP_WINDOW_SECONDS = 10 * 60
 ARCHIVE_CITY_HOP_BATCH_WINDOW_SECONDS = 60 * 60
 ARCHIVE_CITY_HOP_BATCH_MIN_INCIDENTS = 3
 ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS = 4
-ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS = 10_000
+ARCHIVE_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS = 150_000
+ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS = 40_000
 
 
 __all__ = [
@@ -222,6 +223,9 @@ def _filter_archive_city_hop_incidents(
         if any(set(incident.row_ids) <= row_set for row_set in strong_row_sets):
             continue
         if len(incident.rows) >= ARCHIVE_CITY_HOP_STANDALONE_MIN_ROWS:
+            large_chains.append(incident)
+            continue
+        if incident.total_cents >= ARCHIVE_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS:
             large_chains.append(incident)
             continue
         if incident.total_cents < ARCHIVE_CITY_HOP_SHORT_MIN_TOTAL_CENTS:

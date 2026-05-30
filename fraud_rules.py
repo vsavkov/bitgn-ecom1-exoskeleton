@@ -65,7 +65,12 @@ RULE_SCORE_WEIGHT: dict[str, int] = {
 # Live /proc/payments transactions arrive from real customer devices; the
 # archive TSV exports have a populated archive_channel string we have to
 # constrain because service-desk terminals can reuse a device fingerprint.
-CUSTOMER_CONTROLLED_CHANNELS: set[str] = {"mobile_app", "web", "customer_terminal"}
+CUSTOMER_CONTROLLED_CHANNELS: set[str] = {
+    "customer_terminal",
+    "mobile_app",
+    "store_kiosk",
+    "web",
+}
 
 
 FRAUD_RULES: tuple[FraudRule, ...] = (
