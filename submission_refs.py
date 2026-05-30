@@ -45,7 +45,8 @@ class ExplicitRecordSpec(NamedTuple):
 
 PRODUCT_SKU_RE = re.compile(r"^[A-Z]{3}-[A-Z0-9]+$")
 MESSAGE_SKU_RE = re.compile(r"(?<![A-Z0-9])[A-Z]{3}-[A-Z0-9]{4,}(?![A-Z0-9])")
-EMPLOYEE_ID_RE = re.compile(r"^emp_\d+$")
+CUSTOMER_ID_RE = re.compile(r"^cust[-_]\d+$")
+EMPLOYEE_ID_RE = re.compile(r"^emp[-_]\d+$")
 CROSS_CUSTOMER_DENIAL_RE = re.compile(
     r"\b(?:"
     r"another customer|other customer|different customer|"
@@ -58,13 +59,13 @@ CROSS_CUSTOMER_DENIAL_RE = re.compile(
     re.IGNORECASE,
 )
 CUSTOMER_SCOPED_REF_RE = re.compile(
-    r"^/proc/(?:baskets|customers|payments|returns)/",
+    r"^/proc/(?:baskets|customers|payments|returns|carts|payment-ledger|return-workflows)/",
     re.IGNORECASE,
 )
 CATALOG_REF_RE = re.compile(r"^/proc/catalog(?:/|$)", re.IGNORECASE)
 PROC_RECORD_TABLES: dict[str, tuple[str, str, re.Pattern[str]]] = {
     "baskets": ("shopping_baskets", "basket_id", re.compile(r"^basket_\d+$")),
-    "customers": ("customer_accounts", "customer_id", re.compile(r"^cust_\d+$")),
+    "customers": ("customer_accounts", "customer_id", CUSTOMER_ID_RE),
     "employees": ("employee_accounts", "employee_id", re.compile(r"^emp_\d+$")),
     "payments": ("payment_transactions", "payment_id", re.compile(r"^pay_\d+$")),
     "returns": ("return_requests", "return_id", re.compile(r"^ret_\d+$")),
@@ -452,6 +453,10 @@ def parse_runtime_identity(stdout: str) -> tuple[str | None, set[str]]:
     return user_id, roles
 
 
+def is_customer_identity(user_id: str | None) -> bool:
+    return bool(user_id) and bool(CUSTOMER_ID_RE.match(user_id))
+
+
 def runtime_identity(vm: RuntimeVM) -> tuple[str | None, set[str]]:
     try:
         result = runtime_exec(vm, ExecRequest(path="/bin/id"))
@@ -468,7 +473,7 @@ def can_auto_cite_customer_scoped_record(
 ) -> bool:
     if not user_id:
         return False
-    if user_id.startswith("cust_"):
+    if is_customer_identity(user_id):
         return record_customer_id == user_id
     if roles <= {"guest"}:
         return False
@@ -481,13 +486,20 @@ def customer_scoped_ref_owner(
 ) -> str | None:
     path = normalize_runtime_path(split_ref_fragment(ref)[0])
     parts = [part for part in path.split("/") if part]
-    if len(parts) != 3 or parts[0] != "proc":
+    if len(parts) < 3 or parts[0] != "proc":
         return None
 
     folder = parts[1]
     record_id = parts[2].removesuffix(".json")
-    if folder == "customers" and re.match(r"^cust_\d+$", record_id):
+    if folder == "customers" and CUSTOMER_ID_RE.match(record_id):
         return record_id
+
+    if (
+        folder in {"carts", "payment-ledger", "return-workflows"}
+        and len(parts) >= 4
+        and CUSTOMER_ID_RE.match(parts[2])
+    ):
+        return parts[2]
 
     spec_by_folder = {
         "baskets": ("shopping_baskets", "basket_id"),
@@ -520,7 +532,7 @@ def has_cross_customer_denial_ref(
     *,
     user_id: str | None,
 ) -> bool:
-    if not user_id or not user_id.startswith("cust_"):
+    if not is_customer_identity(user_id):
         return False
 
     for ref in row_refs:
@@ -610,7 +622,7 @@ def explicit_target_refs_from_task(
 
 
 def is_customer_or_guest_context(user_id: str | None, roles: set[str]) -> bool:
-    if user_id and user_id.startswith("cust_"):
+    if is_customer_identity(user_id):
         return True
     if user_id and user_id.startswith("guest"):
         return True
@@ -621,6 +633,10 @@ def employee_id_from_ref(ref: str) -> str | None:
     path, _fragment = split_ref_fragment(ref)
     normalized = normalize_runtime_path(path)
     parts = [part for part in normalized.split("/") if part]
+    if len(parts) == 4 and parts[:2] == ["proc", "staff"]:
+        employee_id = parts[3].removesuffix(".json")
+        return employee_id if EMPLOYEE_ID_RE.match(employee_id) else None
+
     if len(parts) != 3 or parts[:2] != ["proc", "employees"]:
         return None
 

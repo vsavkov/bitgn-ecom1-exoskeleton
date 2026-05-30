@@ -83,6 +83,77 @@ class TaskClassification(BaseModel):
             "is named. Do not invent names."
         ),
     )
+    raw_file_mutation_intent: bool = Field(
+        default=False,
+        description=(
+            "True only when the task explicitly asks to mutate runtime state "
+            "through a file-like operation: write/edit/update/delete a runtime "
+            "file, clean a /tmp path, or add/put/remove an item in a basket/cart. "
+            "False for read-only analysis even when files or records are mentioned."
+        ),
+    )
+    tmp_cleanup_path: str = Field(
+        default="",
+        description=(
+            "Absolute /tmp path to clean when the task asks to remove or clean "
+            "files under a temporary path. Empty string when not a tmp cleanup task."
+        ),
+    )
+    tmp_cleanup_only_tmp_suffix: bool = Field(
+        default=False,
+        description=(
+            "True when the tmp cleanup task says to delete only files whose "
+            "basename ends exactly in .tmp. False when all files under the path "
+            "should be deleted or when this is not a tmp cleanup task."
+        ),
+    )
+    staff_role_count_intent: bool = Field(
+        default=False,
+        description=(
+            "True when the task asks how many staff/employees have a specific "
+            "role. False for manager verification, contact requests, and "
+            "general staff lookups."
+        ),
+    )
+    staff_role_count_role: str = Field(
+        default="",
+        description=(
+            "Role code to count for staff_role_count_intent, normalized with "
+            "underscores when clear, e.g. 'store_manager' or 'customer_service'. "
+            "Empty string when no specific role is requested."
+        ),
+    )
+    staff_role_count_store_name: str = Field(
+        default="",
+        description=(
+            "Store or branch name limiting the staff role count, e.g. "
+            "'PowerTools Vienna Hietzing'. Empty string for all staff or when "
+            "no branch is named."
+        ),
+    )
+    employee_contact_disclosure_requested: bool = Field(
+        default=False,
+        description=(
+            "True when a customer/guest-facing request asks for direct employee "
+            "contact details such as direct work email, phone, mobile, contact "
+            "details, or contact information. False when only verifying role."
+        ),
+    )
+    contact_employee_name: str = Field(
+        default="",
+        description=(
+            "Human display name of the employee/manager involved in an employee "
+            "contact-disclosure request. Empty string when no specific person "
+            "is named."
+        ),
+    )
+    contact_store_name: str = Field(
+        default="",
+        description=(
+            "Store or branch name associated with contact_employee_name in an "
+            "employee contact-disclosure request. Empty string when absent."
+        ),
+    )
 
 
 TASK_CLASSIFIER_PROMPT = render_prompt("task_classifier.j2")

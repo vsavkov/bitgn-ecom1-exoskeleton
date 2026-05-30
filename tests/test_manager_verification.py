@@ -1,5 +1,10 @@
 from dataclasses import dataclass
+import json
+from types import SimpleNamespace
 
+from bitgn.vm.ecom.ecom_pb2 import NodeKind
+
+import manager_verification
 from manager_verification import (
     ReqVerifyStoreManager,
     _matches_query,
@@ -26,6 +31,59 @@ class FakeVM:
         if request.path == "/bin/sql":
             return ExecResult(stdout=self.employee_rows)
         raise AssertionError(f"unexpected exec path: {request.path}")
+
+
+class FilesystemFakeVM(FakeVM):
+    def __init__(self) -> None:
+        super().__init__(id_stdout="user: cust-0007\nroles: customer\n", employee_rows="")
+        self.entries_by_path = {
+            "/proc/staff": [
+                SimpleNamespace(
+                    path="/proc/staff/store-graz-liebenau",
+                    name="store-graz-liebenau",
+                    kind=NodeKind.NODE_KIND_DIR,
+                ),
+            ],
+            "/proc/staff/store-graz-liebenau": [
+                SimpleNamespace(
+                    path="/proc/staff/store-graz-liebenau/emp-0003.json",
+                    name="emp-0003.json",
+                    kind=NodeKind.NODE_KIND_FILE,
+                ),
+            ],
+            "/proc/locations": [
+                SimpleNamespace(
+                    path="/proc/locations/Graz",
+                    name="Graz",
+                    kind=NodeKind.NODE_KIND_DIR,
+                ),
+            ],
+            "/proc/locations/Graz": [
+                SimpleNamespace(
+                    path="/proc/locations/Graz/store-graz-liebenau.json",
+                    name="store-graz-liebenau.json",
+                    kind=NodeKind.NODE_KIND_FILE,
+                ),
+            ],
+        }
+        self.file_payloads = {
+            "/proc/staff/store-graz-liebenau/emp-0003.json": {
+                "id": "emp-0003",
+                "display_name": "Romy Koster",
+                "store_id": "store-graz-liebenau",
+                "roles": ["store_manager"],
+            },
+            "/proc/locations/Graz/store-graz-liebenau.json": {
+                "id": "store-graz-liebenau",
+                "name": "PowerTools Graz Liebenau",
+            },
+        }
+
+    def list(self, request):
+        return SimpleNamespace(entries=self.entries_by_path.get(request.path, []))
+
+    def read(self, request):
+        return SimpleNamespace(content=json.dumps(self.file_payloads[request.path]))
 
 
 def csv_rows(*rows: str) -> str:
@@ -138,3 +196,21 @@ def test_verify_store_manager_reports_non_manager_and_missing_match() -> None:
 
     assert missing["verified"] is False
     assert missing["refs_to_submit"] == []
+
+
+def test_verify_store_manager_falls_back_to_filesystem_when_sql_fails(monkeypatch) -> None:
+    def fail_sql(*_args, **_kwargs):
+        raise RuntimeError("manager verification SQL failed: cluster down")
+
+    monkeypatch.setattr(manager_verification, "_sql_rows", fail_sql)
+
+    result = verify_store_manager(
+        FilesystemFakeVM(),
+        ReqVerifyStoreManager(
+            employee_name="Romy Koster",
+            store_name="PowerTools Graz Liebenau",
+        ),
+    )
+
+    assert result["verified"] is True
+    assert result["refs_to_submit"] == ["/proc/locations/Graz/store-graz-liebenau.json"]

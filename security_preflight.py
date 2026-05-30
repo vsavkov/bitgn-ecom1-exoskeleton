@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-import re
 from typing import Literal
 
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
@@ -8,6 +7,7 @@ from manager_verification import ReqVerifyStoreManager, verify_store_manager
 from runtime_calls import runtime_exec
 from submission_refs import (
     RuntimeVM,
+    is_customer_identity,
     parse_runtime_identity,
     sql_quote,
     sql_rows,
@@ -70,8 +70,9 @@ def customer_discount_security_preflight(
         return None
 
     user_id, _roles = _runtime_identity(vm)
-    if not user_id or not user_id.startswith("cust_"):
+    if not is_customer_identity(user_id):
         return None
+    customer_id = user_id or ""
 
     # A customer cannot self-authorize a discount by claiming a manager said
     # yes. Cite security and discount docs; include the customer-owned basket
@@ -79,7 +80,7 @@ def customer_discount_security_preflight(
     # cross-customer record.
     row_refs: list[str] = []
     if classification.explicit_basket_id:
-        ref = _customer_basket_ref(vm, classification.explicit_basket_id, user_id)
+        ref = _customer_basket_ref(vm, classification.explicit_basket_id, customer_id)
         if ref:
             row_refs.append(ref)
 
@@ -150,47 +151,32 @@ def system_override_security_preflight(
     )
 
 
-EMPLOYEE_CONTACT_DISCLOSURE_RE = re.compile(
-    r"\b(?:direct\s+)?(?:work\s+)?(?:e-?mail|email\s+address|phone|"
-    r"mobile|contact\s+details?|contact\s+info(?:rmation)?)\b",
-    re.IGNORECASE,
-)
-MANAGER_OR_EMPLOYEE_RE = re.compile(
-    r"\b(?:manager|store\s+manager|employee|staff|associate|lead)\b",
-    re.IGNORECASE,
-)
-MANAGER_AT_STORE_RE = re.compile(
-    r"(?:whether|if)\s+(?P<name>[A-Z][A-Za-z .'-]+?)\s+is\s+(?:really\s+)?"
-    r"(?:the\s+)?(?:store\s+)?manager\s+at\s+(?P<store>PowerTool\s+[A-Za-z]+(?:\s+[A-Za-z]+)?)",
-    re.IGNORECASE,
-)
-
-
 def employee_contact_security_preflight(
     vm: RuntimeVM,
-    task_text: str,
+    classification: TaskClassification,
 ) -> SecurityDenial | None:
-    if not EMPLOYEE_CONTACT_DISCLOSURE_RE.search(task_text):
-        return None
-    if not MANAGER_OR_EMPLOYEE_RE.search(task_text):
+    if not classification.employee_contact_disclosure_requested:
         return None
 
     user_id, roles = _runtime_identity(vm)
     role_names = {role.lower() for role in roles}
-    if user_id and not user_id.startswith("cust_"):
+    if user_id and not is_customer_identity(user_id):
         return None
     if role_names and not role_names <= {"guest", "customer"}:
         return None
 
     row_refs: list[str] = []
-    match = MANAGER_AT_STORE_RE.search(task_text)
-    if match:
+    employee_name = (
+        classification.contact_employee_name or classification.claimed_manager_name
+    )
+    store_name = classification.contact_store_name or classification.claimed_store_name
+    if employee_name and store_name:
         try:
             manager_result = verify_store_manager(
                 vm,
                 ReqVerifyStoreManager(
-                    employee_name=" ".join(match.group("name").split()),
-                    store_name=" ".join(match.group("store").split()),
+                    employee_name=" ".join(employee_name.split()),
+                    store_name=" ".join(store_name.split()),
                 ),
             )
         except Exception:
@@ -233,7 +219,7 @@ def security_preflight(
     denial = system_override_security_preflight(vm, classification)
     if denial is not None:
         return denial
-    denial = employee_contact_security_preflight(vm, task_text)
+    denial = employee_contact_security_preflight(vm, classification)
     if denial is not None:
         return denial
     return customer_discount_security_preflight(vm, classification)

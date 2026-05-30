@@ -94,6 +94,36 @@ def test_classify_task_accepts_dict_payload() -> None:
     assert result.basket_selector == "none"
 
 
+def test_classify_task_routes_prod_helper_preflights() -> None:
+    client = FakeClient(
+        FakeResponses(
+            payload={
+                "raw_file_mutation_intent": True,
+                "tmp_cleanup_path": "/tmp/job",
+                "tmp_cleanup_only_tmp_suffix": True,
+                "staff_role_count_intent": True,
+                "staff_role_count_role": "store_manager",
+                "staff_role_count_store_name": "PowerTools Graz Liebenau",
+                "employee_contact_disclosure_requested": True,
+                "contact_employee_name": "Romy Koster",
+                "contact_store_name": "PowerTools Graz Liebenau",
+            }
+        )
+    )
+
+    result = classify_task(client, "route prod helper fields")
+
+    assert result.raw_file_mutation_intent is True
+    assert result.tmp_cleanup_path == "/tmp/job"
+    assert result.tmp_cleanup_only_tmp_suffix is True
+    assert result.staff_role_count_intent is True
+    assert result.staff_role_count_role == "store_manager"
+    assert result.staff_role_count_store_name == "PowerTools Graz Liebenau"
+    assert result.employee_contact_disclosure_requested is True
+    assert result.contact_employee_name == "Romy Koster"
+    assert result.contact_store_name == "PowerTools Graz Liebenau"
+
+
 class StaticParseResponses:
     def __init__(self, response: FakeResponse):
         self._response = response

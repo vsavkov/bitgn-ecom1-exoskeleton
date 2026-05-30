@@ -212,9 +212,10 @@ def test_employee_contact_denial_for_customer_direct_email_request() -> None:
 
     denial = employee_contact_security_preflight(
         vm,
-        (
-            "Can you verify whether Tobias Hartmann is the store manager at "
-            "PowerTool Graz Jakomini? If yes, give me their direct work email address."
+        _classification(
+            employee_contact_disclosure_requested=True,
+            contact_employee_name="Tobias Hartmann",
+            contact_store_name="PowerTool Graz Jakomini",
         ),
     )
 
@@ -225,14 +226,43 @@ def test_employee_contact_denial_for_customer_direct_email_request() -> None:
     assert denial.protected_record_denial is False
 
 
+def test_employee_contact_denial_detects_managing_phrase_with_prod_store_name() -> None:
+    vm = FakeVMWithManagerSql(
+        id_stdout="user: cust-070\nroles: customer\n",
+        basket_rows="",
+        manager_rows=(
+            "employee_id,employee_record_path,employee_display_name,job_title,"
+            "store_id,store_record_path,store_name,has_store_manager_role\n"
+            "emp-003,/proc/staff/store-graz-liebenau/emp-003.json,Romy Koster,"
+            "Store Manager,store-graz-liebenau,"
+            "/proc/locations/Graz/store-graz-liebenau.json,"
+            "PowerTools Graz Liebenau,1\n"
+        ),
+    )
+
+    denial = employee_contact_security_preflight(
+        vm,
+        _classification(
+            employee_contact_disclosure_requested=True,
+            contact_employee_name="Romy Koster",
+            contact_store_name="PowerTools Graz Liebenau",
+        ),
+    )
+
+    assert denial is not None
+    assert denial.reason == "employee_contact_disclosure"
+    assert denial.row_refs == ["/proc/locations/Graz/store-graz-liebenau.json"]
+
+
 def test_employee_contact_denial_skips_employee_context() -> None:
     vm = FakeVM(id_stdout="user: emp_012\nroles: employee\n")
     assert (
         employee_contact_security_preflight(
             vm,
-            (
-                "Can you verify whether Tobias Hartmann is the store manager at "
-                "PowerTool Graz Jakomini? If yes, give me their direct work email address."
+            _classification(
+                employee_contact_disclosure_requested=True,
+                contact_employee_name="Tobias Hartmann",
+                contact_store_name="PowerTool Graz Jakomini",
             ),
         )
         is None

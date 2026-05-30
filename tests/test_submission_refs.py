@@ -16,6 +16,7 @@ from submission_refs import (
     catalog_lookup_refs_from_catalog_result,
     canonical_case_file_ref,
     canonical_proc_record_ref,
+    customer_scoped_ref_owner,
     dedupe_refs,
     employee_id_from_ref,
     explicit_target_refs_from_task,
@@ -348,6 +349,10 @@ def test_parse_runtime_identity() -> None:
         "cust_060",
         {"customer", "discount_manager"},
     )
+    assert parse_runtime_identity("user: cust-060\nroles: customer\n") == (
+        "cust-060",
+        {"customer"},
+    )
 
 
 def test_can_auto_cite_customer_scoped_record() -> None:
@@ -365,6 +370,26 @@ def test_can_auto_cite_customer_scoped_record() -> None:
     )
     assert can_auto_cite_customer_scoped_record(
         user_id="emp_001", roles={"discount_manager"}, record_customer_id="cust_060"
+    )
+    assert can_auto_cite_customer_scoped_record(
+        user_id="cust-060", roles={"customer"}, record_customer_id="cust-060"
+    )
+    assert not can_auto_cite_customer_scoped_record(
+        user_id="cust-060", roles={"customer"}, record_customer_id="cust-061"
+    )
+
+
+def test_prod_nested_customer_ref_owner_and_cross_customer_detection() -> None:
+    vm = FakeVM()
+
+    assert (
+        customer_scoped_ref_owner(vm, "/proc/carts/cust-060/basket-001.json")
+        == "cust-060"
+    )
+    assert has_cross_customer_denial_ref(
+        vm,
+        ["/proc/payment-ledger/cust-061/pay-001.json"],
+        user_id="cust-060",
     )
 
 
@@ -398,6 +423,7 @@ def test_explicit_target_patterns_do_not_match_embedded_words() -> None:
 def test_employee_id_from_ref_accepts_canonical_and_extensionless_paths() -> None:
     assert employee_id_from_ref("/proc/employees/emp_001.json") == "emp_001"
     assert employee_id_from_ref("proc/employees/emp_002") == "emp_002"
+    assert employee_id_from_ref("/proc/staff/store-vienna/emp-003.json") == "emp-003"
     assert employee_id_from_ref("/proc/baskets/basket_001.json") is None
 
 

@@ -86,6 +86,7 @@ from refund_preflight import (
 )
 from runtime_mutation_guard import raw_file_mutation_allowed
 from runtime_calls import runtime_call
+from staff_tools import staff_role_count_preflight
 from submission_refs import (
     availability_count_refs_from_catalog_result,
     availability_lookup_refs_from_catalog_result,
@@ -97,6 +98,7 @@ from submission_refs import (
     support_note_refs_from_catalog_result,
 )
 from task_classifier import classify_task
+from tmp_cleanup import tmp_cleanup_preflight
 
 if TYPE_CHECKING:
     P = ParamSpec("P")
@@ -765,6 +767,7 @@ def dispatch(
     cmd: BaseModel,
     *,
     task_text: str = "",
+    allow_raw_file_mutation: bool = False,
     timeout_ms: int | None = None,
 ):
     if isinstance(cmd, ReqTree):
@@ -808,7 +811,10 @@ def dispatch(
             timeout_ms,
         )
     if isinstance(cmd, ReqWrite):
-        if not raw_file_mutation_allowed(task_text):
+        if not raw_file_mutation_allowed(
+            task_text,
+            classified_intent=allow_raw_file_mutation,
+        ):
             raise RuntimeError(
                 "raw file write is not allowed for this task unless the user "
                 "explicitly asks to create, edit, update, delete, or save a file"
@@ -819,7 +825,10 @@ def dispatch(
             timeout_ms,
         )
     if isinstance(cmd, ReqDelete):
-        if not raw_file_mutation_allowed(task_text):
+        if not raw_file_mutation_allowed(
+            task_text,
+            classified_intent=allow_raw_file_mutation,
+        ):
             raise RuntimeError(
                 "raw file delete is not allowed for this task unless the user "
                 "explicitly asks to create, edit, update, delete, or save a file"
@@ -1468,6 +1477,32 @@ def run_agent(
         )
         return _finalize_preflight(cmd)
 
+    tmp_cleanup = tmp_cleanup_preflight(vm, classification)
+    if tmp_cleanup is not None:
+        cmd = ReportTaskCompletion(
+            completed_steps_laconic=tmp_cleanup.completed_steps_laconic,
+            task_type="other",
+            message="\n".join(tmp_cleanup.deleted_paths),
+            grounding_doc_refs=[],
+            grounding_row_refs=[],
+            protected_record_denial=False,
+            outcome="OUTCOME_OK",
+        )
+        return _finalize_preflight(cmd)
+
+    staff_role_count = staff_role_count_preflight(vm, classification)
+    if staff_role_count is not None:
+        cmd = ReportTaskCompletion(
+            completed_steps_laconic=staff_role_count.completed_steps_laconic,
+            task_type="other",
+            message=str(staff_role_count.count),
+            grounding_doc_refs=[],
+            grounding_row_refs=staff_role_count.refs_to_submit,
+            protected_record_denial=False,
+            outcome="OUTCOME_OK",
+        )
+        return _finalize_preflight(cmd)
+
     try:
         city_availability = resolve_city_availability_from_task_text(vm, task_text)
     except RuntimeError as exc:
@@ -1671,7 +1706,12 @@ def run_agent(
 
             result: Any | None = None
             try:
-                result = dispatch(vm, cmd, task_text=task_text)
+                result = dispatch(
+                    vm,
+                    cmd,
+                    task_text=task_text,
+                    allow_raw_file_mutation=classification.raw_file_mutation_intent,
+                )
                 _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
                 txt = _format_result_with_tree_followups(
                     vm, cmd, result, tree_help_paths, tree_read_paths, debug

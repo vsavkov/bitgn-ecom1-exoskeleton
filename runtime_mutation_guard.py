@@ -12,12 +12,18 @@ EXPLICIT_FILE_MUTATION_RE = re.compile(
 )
 
 
-def raw_file_mutation_allowed(task_text: str) -> bool:
+def raw_file_mutation_allowed(
+    task_text: str,
+    *,
+    classified_intent: bool = False,
+) -> bool:
     text = task_text.strip()
     if not text:
         return False
     if NO_MUTATION_RE.search(text):
         return False
+    if classified_intent:
+        return True
     if not EXPLICIT_FILE_MUTATION_RE.search(text):
         return False
     # Read-only analytical prompts can mention "record" or "file" because they

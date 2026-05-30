@@ -38,6 +38,10 @@ def runtime_read(vm: Any, request: Any, *, timeout_ms: int | None = None) -> Any
     return runtime_call(vm.read, request, timeout_ms=timeout_ms)
 
 
+def runtime_delete(vm: Any, request: Any, *, timeout_ms: int | None = None) -> Any:
+    return runtime_call(vm.delete, request, timeout_ms=timeout_ms)
+
+
 def runtime_stat(vm: Any, request: Any, *, timeout_ms: int | None = None) -> Any:
     return runtime_call(vm.stat, request, timeout_ms=timeout_ms)
 

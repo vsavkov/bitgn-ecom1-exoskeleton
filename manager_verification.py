@@ -1,13 +1,14 @@
 import csv
 import io
 import re
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
 from connectrpc.errors import ConnectError
 from pydantic import BaseModel, Field
 
 from runtime_calls import runtime_exec
+from staff_tools import verify_store_manager_filesystem
 from submission_refs import parse_runtime_identity
 
 
@@ -64,7 +65,11 @@ def _matches_query(candidate: str, query: str) -> bool:
 
 
 def _is_customer_or_guest(user_id: str | None, roles: set[str]) -> bool:
-    if user_id and (user_id.startswith("cust_") or user_id.startswith("guest")):
+    if user_id and (
+        user_id.startswith("cust_")
+        or user_id.startswith("cust-")
+        or user_id.startswith("guest")
+    ):
         return True
     return bool(roles) and roles <= {"guest"}
 
@@ -78,8 +83,7 @@ def _current_identity(vm: RuntimeVM) -> tuple[str | None, set[str]]:
 
 
 def verify_store_manager(vm: RuntimeVM, cmd: ReqVerifyStoreManager) -> dict[str, Any]:
-    rows = _sql_rows(
-        vm,
+    query = (
         "select "
         "e.employee_id, e.record_path as employee_record_path, "
         "e.employee_display_name, e.job_title, "
@@ -90,8 +94,19 @@ def verify_store_manager(vm: RuntimeVM, cmd: ReqVerifyStoreManager) -> dict[str,
         ") then 1 else 0 end as has_store_manager_role "
         "from employee_accounts e "
         "join stores s on s.store_id = e.store_id "
-        "order by e.employee_display_name, s.store_name;",
+        "order by e.employee_display_name, s.store_name;"
     )
+    try:
+        rows = _sql_rows(vm, query)
+    except RuntimeError:
+        fallback = verify_store_manager_filesystem(
+            cast(Any, vm),
+            employee_name=cmd.employee_name,
+            store_name=cmd.store_name,
+        )
+        if fallback is not None:
+            return fallback
+        raise
 
     matched_rows = [
         row
