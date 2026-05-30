@@ -48,7 +48,7 @@ TABLE_SKU_LINE_RE = re.compile(
 )
 LINE_TOTAL_RE = re.compile(r"\b(\d+)\s+EUR\s+([0-9]+(?:[.,][0-9]{2})?)\b")
 MONEY_RE = re.compile(r"\b([0-9]+(?:[.,][0-9]{2})?)\b")
-SUBTOTAL_RE = re.compile(r"^\s*Subtotal\s+EUR\s+([0-9]+(?:[.,][0-9]{2})?)\s*$", re.IGNORECASE)
+SUBTOTAL_RE = re.compile(r"^\s*SUB\s*T[O0]TAL\b(?P<rest>.*)$", re.IGNORECASE)
 # Receipt OCR often swaps visually similar characters inside SKU suffixes. Keep
 # this narrow and require a unique catalogue match before accepting a repair.
 CONFUSABLE_GROUPS = ("0O", "1IL", "2Z", "5S", "8B")
@@ -91,9 +91,12 @@ def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
 def _parse_subtotal_cents(content: str) -> int:
     for line in content.splitlines():
         match = SUBTOTAL_RE.match(line)
-        if match:
-            return _money_to_cents(match.group(1))
-    raise RuntimeError("receipt OCR does not contain a Subtotal EUR line")
+        if not match:
+            continue
+        amounts = MONEY_RE.findall(match.group("rest"))
+        if amounts:
+            return _money_to_cents(amounts[-1])
+    raise RuntimeError("receipt OCR does not contain a subtotal line")
 
 
 def _line_quantity_and_total(lines: list[str], sku_line_index: int, unit_cents: int) -> tuple[int, int]:

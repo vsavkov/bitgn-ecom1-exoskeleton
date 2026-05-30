@@ -5,6 +5,7 @@ from bitgn.vm.ecom.ecom_pb2 import ExecRequest, ReadRequest
 from receipt_price import (
     ReqAnalyzeReceiptPriceCheck,
     _money_to_cents,
+    _parse_subtotal_cents,
     _sku_confusable_variants,
     analyze_receipt_price_check,
     analyze_receipt_price_content,
@@ -104,6 +105,20 @@ def test_money_to_cents_accepts_dot_and_comma() -> None:
     assert _money_to_cents("12.34") == 1234
     assert _money_to_cents("12,34") == 1234
     assert _money_to_cents("12") == 1200
+
+
+def test_parse_subtotal_cents_accepts_ocr_variants() -> None:
+    cases = [
+        ("Subtotal EUR 1568.47", 156847),
+        ("Subtotal                           EUR 1568.47", 156847),
+        ("SUB T0TAL                             318.97", 31897),
+        ("SUBTOTAL 148.00", 14800),
+        ("SUB TOTAL EUR 42,50", 4250),
+        ("TOTAL EUR 382.76\nSUB T0TAL                             318.97", 31897),
+    ]
+
+    for content, expected_cents in cases:
+        assert _parse_subtotal_cents(content) == expected_cents
 
 
 def test_parse_receipt_ocr_extracts_subtotal_items_and_quantities() -> None:
