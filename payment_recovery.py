@@ -5,19 +5,6 @@ from collections.abc import Iterable, Sequence
 ISO_TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 PAYMENT_ID_RE = re.compile(r"\bpay_\d+\b")
 PAYMENT_REF_RE = re.compile(r"/proc/payments/(pay_\d+)\.json\b")
-# ECOM 3DS recovery treats an already-paid payment as a terminal unsupported
-# state. Summaries can phrase the SQL status in several equivalent ways.
-PAID_TERMINAL_STATUS_RE = re.compile(
-    r"\balready\s+paid\b|"
-    r"\bstatus\s*(?::|=|\bis\b)?\s*paid\b|"
-    r"\bpayment_status\s*(?::|=|\bis\b)?\s*paid\b|"
-    r"\bis\s+paid\b",
-    flags=re.IGNORECASE,
-)
-
-
-def mentions_paid_terminal_state(text: str) -> bool:
-    return bool(PAID_TERMINAL_STATUS_RE.search(text))
 
 
 def payment_ids_from_refs_and_text(refs: Sequence[str], text: str) -> set[str]:
@@ -62,20 +49,3 @@ def payment_recovery_message_with_retry_timestamp(
         else f"Retry blocked until {retry_available_at}"
     )
 
-
-def payment_recovery_outcome_for_terminal_state(
-    *,
-    task_type: str,
-    outcome: str,
-    message: str,
-    completed_steps_laconic: Sequence[str],
-) -> str:
-    if task_type != "payment_recovery":
-        return outcome
-    if outcome != "OUTCOME_NONE_CLARIFICATION":
-        return outcome
-
-    status_text = " ".join([message, *completed_steps_laconic])
-    if mentions_paid_terminal_state(status_text):
-        return "OUTCOME_NONE_UNSUPPORTED"
-    return outcome

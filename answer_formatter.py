@@ -14,7 +14,6 @@ from config import (
     helper_reasoning_effort,
     render_prompt,
 )
-from payment_recovery import mentions_paid_terminal_state
 
 if TYPE_CHECKING:
     P = ParamSpec("P")
@@ -64,29 +63,6 @@ def _leading_yes_no_token_message(message: str) -> str | None:
             r"^no(?:\s+|$)", "<NO> ", stripped, count=1, flags=re.IGNORECASE
         ).strip()
     return None
-
-
-def _payment_already_paid_message(
-    *,
-    task_type: str,
-    current_message: str,
-    outcome: str,
-    completed_steps_laconic: Sequence[str],
-) -> str | None:
-    if task_type != "payment_recovery" or outcome != "OUTCOME_NONE_UNSUPPORTED":
-        return None
-
-    stripped = current_message.strip()
-    if "paid" in stripped.lower():
-        return None
-
-    step_text = " ".join(completed_steps_laconic)
-    if not mentions_paid_terminal_state(step_text):
-        return None
-
-    # Business rule: 3DS recovery is unsupported for an already-paid payment,
-    # and the grader checks that this state is made explicit in the user text.
-    return f"{stripped}: payment is already paid" if stripped else "Payment is already paid"
 
 
 def _payment_recovery_lockout_message(
@@ -164,19 +140,6 @@ def format_completion_message(
                 f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}",
                 output_lines,
             )
-        return formatted_message
-
-    formatted_message = _payment_already_paid_message(
-        task_type=task_type,
-        current_message=current_message,
-        outcome=outcome,
-        completed_steps_laconic=completed_steps_laconic,
-    )
-    if formatted_message is not None:
-        _emit(
-            f"{CLI_YELLOW}FORMAT{CLI_CLR}: {current_message} -> {formatted_message}",
-            output_lines,
-        )
         return formatted_message
 
     formatted_message = _payment_recovery_lockout_message(

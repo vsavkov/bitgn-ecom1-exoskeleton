@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from answer_formatter import (
     FormattedAnswer,
     _leading_yes_no_token_message,
-    _payment_already_paid_message,
     _payment_recovery_lockout_message,
     _parsed_response,
     format_completion_message,
@@ -42,41 +41,6 @@ def test_format_completion_message_fast_path_does_not_call_client() -> None:
     assert output_lines
 
 
-def test_payment_already_paid_message_is_added_for_recovery_unsupported() -> None:
-    assert (
-        _payment_already_paid_message(
-            task_type="payment_recovery",
-            current_message="OUTCOME_NONE_UNSUPPORTED",
-            outcome="OUTCOME_NONE_UNSUPPORTED",
-            completed_steps_laconic=[
-                "Verified pay_049 is already paid, not requires_3ds_action."
-            ],
-        )
-        == "OUTCOME_NONE_UNSUPPORTED: payment is already paid"
-    )
-    assert (
-        _payment_already_paid_message(
-            task_type="payment_recovery",
-            current_message="OUTCOME_NONE_UNSUPPORTED",
-            outcome="OUTCOME_NONE_UNSUPPORTED",
-            completed_steps_laconic=["Confirmed pay_031 has status paid."],
-        )
-        == "OUTCOME_NONE_UNSUPPORTED: payment is already paid"
-    )
-
-
-def test_payment_already_paid_message_does_not_rewrite_other_unsupported() -> None:
-    assert (
-        _payment_already_paid_message(
-            task_type="checkout",
-            current_message="OUTCOME_NONE_UNSUPPORTED",
-            outcome="OUTCOME_NONE_UNSUPPORTED",
-            completed_steps_laconic=["Basket is already checked out."],
-        )
-        is None
-    )
-
-
 def test_payment_recovery_lockout_message_adds_timestamp() -> None:
     assert (
         _payment_recovery_lockout_message(
@@ -103,31 +67,6 @@ def test_payment_recovery_lockout_message_does_not_rewrite_unrelated_timestamp()
         )
         is None
     )
-
-
-def test_format_completion_message_paid_fast_path_does_not_call_client() -> None:
-    class Client:
-        @property
-        def responses(self):
-            raise AssertionError("formatter client should not be used")
-
-    output_lines: list[str] = []
-
-    assert (
-        format_completion_message(
-            Client(),
-            task_text="Recover 3DS for pay_049 safely.",
-            task_type="payment_recovery",
-            current_message="OUTCOME_NONE_UNSUPPORTED",
-            outcome="OUTCOME_NONE_UNSUPPORTED",
-            completed_steps_laconic=["Verified payment status is paid."],
-            grounding_refs=[],
-            debug=False,
-            output_lines=output_lines,
-        )
-        == "OUTCOME_NONE_UNSUPPORTED: payment is already paid"
-    )
-    assert output_lines
 
 
 def test_format_completion_message_lockout_fast_path_does_not_call_client() -> None:

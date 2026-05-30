@@ -17,7 +17,7 @@ from agent import (
     _apply_city_availability_result,
     _apply_catalog_availability_lookup_refs,
     _apply_catalog_lookup_result,
-    _apply_payment_recovery_terminal_outcome,
+    _apply_payment_recovery_terminal_review,
     _apply_payment_recovery_retry_timestamp,
     _apply_verified_manager_refs,
     _format_list_response,
@@ -55,6 +55,7 @@ from agent import (
     _trace_dispatch_outputs,
     _tree_followup_commands,
 )
+from payment_recovery_review import PaymentRecoveryTerminalReview
 from catalog_tools import CatalogLookupItem
 
 
@@ -682,7 +683,7 @@ def test_apply_catalog_lookup_result_ignores_non_table_tasks() -> None:
     assert updated == cmd
 
 
-def test_apply_payment_recovery_terminal_outcome_changes_paid_clarification() -> None:
+def test_apply_payment_recovery_terminal_review_changes_paid_clarification() -> None:
     cmd = ReportTaskCompletion(
         completed_steps_laconic=["Payment status is paid."],
         task_type="payment_recovery",
@@ -692,10 +693,15 @@ def test_apply_payment_recovery_terminal_outcome_changes_paid_clarification() ->
         protected_record_denial=False,
         outcome="OUTCOME_NONE_CLARIFICATION",
     )
+    review = PaymentRecoveryTerminalReview(
+        already_paid_terminal_state=True,
+        formatted_message="OUTCOME_NONE_UNSUPPORTED: payment is already paid",
+    )
 
-    updated = _apply_payment_recovery_terminal_outcome(cmd)
+    updated = _apply_payment_recovery_terminal_review(cmd, review)
 
     assert updated.outcome == "OUTCOME_NONE_UNSUPPORTED"
+    assert updated.message == "OUTCOME_NONE_UNSUPPORTED: payment is already paid"
 
 
 def test_apply_catalog_availability_lookup_refs_merges_store_and_catalog_refs() -> None:

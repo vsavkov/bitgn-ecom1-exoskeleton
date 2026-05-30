@@ -73,8 +73,11 @@ from pydantic import BaseModel, Field, ValidationError
 from payment_recovery import (
     payment_ids_from_refs_and_text,
     payment_recovery_message_with_retry_timestamp,
-    payment_recovery_outcome_for_terminal_state,
     retry_available_at_from_policy_text,
+)
+from payment_recovery_review import (
+    PaymentRecoveryTerminalReview,
+    review_payment_recovery_terminal_state,
 )
 from receipt_price import ReqAnalyzeReceiptPriceCheck, analyze_receipt_price_check
 from refund_preflight import amount_refund_clarification_preflight
@@ -1074,18 +1077,36 @@ def _apply_catalog_lookup_result(
     return cmd.model_copy(update=updates) if updates else cmd
 
 
-def _apply_payment_recovery_terminal_outcome(
+def _apply_payment_recovery_terminal_review(
     cmd: ReportTaskCompletion,
+    review: PaymentRecoveryTerminalReview,
 ) -> ReportTaskCompletion:
-    outcome = payment_recovery_outcome_for_terminal_state(
+    if cmd.task_type != "payment_recovery" or not review.already_paid_terminal_state:
+        return cmd
+
+    updates: dict[str, str] = {}
+    if cmd.outcome == "OUTCOME_NONE_CLARIFICATION":
+        updates["outcome"] = "OUTCOME_NONE_UNSUPPORTED"
+    if review.formatted_message:
+        updates["message"] = review.formatted_message
+    return cmd.model_copy(update=updates) if updates else cmd
+
+
+def _review_payment_recovery_terminal_state(
+    client: Any,
+    cmd: ReportTaskCompletion,
+    *,
+    task_text: str,
+) -> PaymentRecoveryTerminalReview:
+    return review_payment_recovery_terminal_state(
+        client,
+        task_text=task_text,
         task_type=cmd.task_type,
         outcome=cmd.outcome,
-        message=cmd.message,
+        current_message=cmd.message,
         completed_steps_laconic=cmd.completed_steps_laconic,
+        grounding_refs=dedupe_refs([*cmd.grounding_doc_refs, *cmd.grounding_row_refs]),
     )
-    if outcome == cmd.outcome:
-        return cmd
-    return cmd.model_copy(update={"outcome": outcome})
 
 
 def _apply_payment_recovery_retry_timestamp(
@@ -1266,7 +1287,12 @@ def run_agent(
     ledger.register_loaded_docs(sorted(tree_read_paths))
 
     def _finalize_preflight(cmd: ReportTaskCompletion) -> dict:
-        cmd = _apply_payment_recovery_terminal_outcome(cmd)
+        terminal_review = _review_payment_recovery_terminal_state(
+            formatter_client,
+            cmd,
+            task_text=task_text,
+        )
+        cmd = _apply_payment_recovery_terminal_review(cmd, terminal_review)
         cmd = _apply_payment_recovery_retry_timestamp(vm, cmd, task_text=task_text)
         dispatch(vm, cmd, task_text=task_text)
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
@@ -1489,7 +1515,12 @@ def run_agent(
                 # during the main loop beyond what the must startup pulled in.
                 ledger.register_loaded_docs(sorted(tree_read_paths))
                 cmd = ledger.apply_to_completion(cmd, task_text=task_text)
-                cmd = _apply_payment_recovery_terminal_outcome(cmd)
+                terminal_review = _review_payment_recovery_terminal_state(
+                    formatter_client,
+                    cmd,
+                    task_text=task_text,
+                )
+                cmd = _apply_payment_recovery_terminal_review(cmd, terminal_review)
                 cmd = _apply_payment_recovery_retry_timestamp(
                     vm, cmd, task_text=task_text
                 )
