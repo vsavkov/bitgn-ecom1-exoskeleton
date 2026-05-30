@@ -38,8 +38,10 @@ from agent import (
     _parse_tool_call,
     _remember_seen_tool_use,
     _render_command,
+    _should_preflight_payment_fraud_history,
     _synthetic_function_call,
     _synthetic_named_call,
+    _task_has_explicit_archive_export,
     _trace_agent_inputs,
     _trace_agent_outputs,
     _trace_cmd,
@@ -54,6 +56,22 @@ def test_path_helpers() -> None:
     assert _normalize_runtime_path("docs/security.md") == "/docs/security.md"
     assert _child_runtime_path("/", "docs") == "/docs"
     assert _child_runtime_path("/proc", "baskets") == "/proc/baskets"
+
+
+def test_payment_fraud_history_preflight_detection() -> None:
+    assert _should_preflight_payment_fraud_history(
+        "Fraud review says one hit is present in the archived payments. "
+        "Identify the fraudulent payment records from history."
+    )
+    assert _should_preflight_payment_fraud_history(
+        "Risk Ops confirmed a known fraud hit in the older archived payment history."
+    )
+    assert not _should_preflight_payment_fraud_history(
+        "Read /archive/payment_batch_export.tsv and identify fraud rows."
+    )
+    assert _task_has_explicit_archive_export(
+        "Read /archive/payment_batch_export.tsv and identify fraud rows."
+    )
 
 
 def test_render_and_truncation_helpers() -> None:
@@ -459,6 +477,7 @@ def test_apply_archive_fraud_result_sets_message_and_refs() -> None:
             "/archive/payments.tsv#row=R1",
             "/archive/payments.tsv#row=existing",
         ],
+        task_text="Answer message must contain only the total fraudulent payment amount.",
     )
 
     assert updated.message == "EUR 12.34"
@@ -466,6 +485,28 @@ def test_apply_archive_fraud_result_sets_message_and_refs() -> None:
         "/archive/payments.tsv#row=existing",
         "/archive/payments.tsv#row=R1",
     ]
+
+
+def test_apply_archive_fraud_result_keeps_record_identification_message() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=["analyzed live fraud"],
+        task_type="fraud_review",
+        message="Fraudulent payment records: pay_001",
+        grounding_doc_refs=[],
+        grounding_row_refs=[],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_archive_fraud_result(
+        cmd,
+        total_message="EUR 12.34",
+        refs_to_submit=["/proc/payments/pay_001.json"],
+        task_text="Identify the payment records that belong to that hit.",
+    )
+
+    assert updated.message == "Fraudulent payment records: pay_001"
+    assert updated.grounding_row_refs == ["/proc/payments/pay_001.json"]
 
 
 def test_apply_receipt_price_result_sets_message_and_refs_for_receipt_tasks() -> None:

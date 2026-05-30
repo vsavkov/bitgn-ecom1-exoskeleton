@@ -17,8 +17,8 @@ Classify the task and pick the primary tool. The most specific row wins.
 | "Apply discount" | `discount` | `/docs/discounts.md` + `/bin/discount` |
 | "Recover 3DS / payment" | `payment_recovery` | `/docs/payments/3ds.md` + `/bin/payments` |
 | "Refund payment pay_X" | `refund` | `/docs/returns.md` |
-| "Fraud review in `/archive/*.tsv`" | `fraud_review` | `analyze_archive_fraud_export` |
-| "Fraud review in `/proc/payments`" | `fraud_review` | `analyze_payment_fraud_history` |
+| "Fraud review in explicit `/archive/*.tsv` export path" | `fraud_review` | `analyze_archive_fraud_export` |
+| "Fraud review of archived/current payment history without `/archive/*.tsv` path" | `fraud_review` | `analyze_payment_fraud_history` |
 | "Compare old receipt total" | `receipt_price_check` | `analyze_receipt_price_check` |
 | "Is X a manager at Y store?" | `other` | `verify_store_manager` |
 

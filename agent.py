@@ -55,6 +55,7 @@ from config import (
     render_prompt,
 )
 from connectrpc.errors import ConnectError
+from doc_autocite import relevant_doc_refs_for_task_type
 from evidence_ledger import EvidenceLedger
 from google.protobuf.json_format import MessageToDict
 from langsmith.run_helpers import get_current_run_tree
@@ -334,14 +335,17 @@ TOOLS: list[FunctionToolParam] = [
         ReqAnalyzePaymentFraudHistory,
         name="analyze_payment_fraud_history",
         description=(
-            "Detect fraud incidents inside the live /proc/payments transaction "
-            "history. Use this for any fraud-review task that asks about "
-            "current or archived payment records inside /proc/payments (not "
-            "/archive/*.tsv exports). Returns total_message (EUR %d.%02d), "
-            "fraud_payment_ids, and refs_to_submit (/proc/payments/<id>.json) "
-            "based on velocity rules over customer_id, payment_method "
-            "fingerprint, and device fingerprint across distant store cities. "
-            "Do not run ad-hoc SQL fraud heuristics; rely on this helper."
+            "Detect fraud incidents inside the runtime /proc/payments "
+            "transaction history, including archived basket references stored "
+            "there. Use this for any fraud-review task that asks about current "
+            "payment history, old payment history, archived payment history, "
+            "or archived payment records when the task does not give an "
+            "explicit /archive/*.tsv export path. Returns total_message "
+            "(EUR %d.%02d), fraud_payment_ids, and refs_to_submit "
+            "(/proc/payments/<id>.json) based on velocity rules over "
+            "customer_id, payment_method fingerprint, and device fingerprint "
+            "across distant store cities. Do not run ad-hoc SQL fraud "
+            "heuristics; rely on this helper."
         ),
     ),
     _responses_function_tool(
@@ -890,17 +894,44 @@ def _apply_verified_manager_refs(
     return cmd.model_copy(update={"grounding_row_refs": row_refs})
 
 
+def _fraud_task_requires_amount_message(task_text: str) -> bool:
+    normalized = task_text.lower()
+    return (
+        "total fraudulent payment amount" in normalized
+        or "total fraud" in normalized
+        or ("answer message must contain only" in normalized and "eur" in normalized)
+    )
+
+
+def _task_has_explicit_archive_export(task_text: str) -> bool:
+    normalized = task_text.lower()
+    return "/archive/" in normalized and ".tsv" in normalized
+
+
+def _should_preflight_payment_fraud_history(task_text: str) -> bool:
+    normalized = task_text.lower()
+    if "fraud" not in normalized or _task_has_explicit_archive_export(task_text):
+        return False
+    return (
+        "payment history" in normalized
+        or "archived payments" in normalized
+        or "archived payment records" in normalized
+        or "payment records from history" in normalized
+    )
+
+
 def _apply_archive_fraud_result(
     cmd: ReportTaskCompletion,
     *,
     total_message: str,
     refs_to_submit: list[str],
+    task_text: str = "",
 ) -> ReportTaskCompletion:
     if not total_message and not refs_to_submit:
         return cmd
 
     updates: dict[str, Any] = {}
-    if total_message:
+    if total_message and _fraud_task_requires_amount_message(task_text):
         updates["message"] = total_message
     if refs_to_submit:
         updates["grounding_row_refs"] = dedupe_refs(
@@ -1124,6 +1155,49 @@ def run_agent(
         )
         return _finalize_preflight(cmd)
 
+    if _should_preflight_payment_fraud_history(task_text):
+        try:
+            fraud_history = analyze_payment_fraud_history(
+                vm,
+                ReqAnalyzePaymentFraudHistory(),
+            )
+        except RuntimeError as exc:
+            fraud_history = None
+            if debug:
+                print(f"{CLI_RED}ERR payment fraud helper: {exc}{CLI_CLR}")
+        if isinstance(fraud_history, dict):
+            refs_to_submit = [
+                ref
+                for ref in fraud_history.get("refs_to_submit", [])
+                if isinstance(ref, str)
+            ]
+            if refs_to_submit:
+                total_message = fraud_history.get("total_message")
+                message = "\n".join(refs_to_submit)
+                if (
+                    isinstance(total_message, str)
+                    and total_message
+                    and _fraud_task_requires_amount_message(task_text)
+                ):
+                    message = total_message
+                cmd = ReportTaskCompletion(
+                    completed_steps_laconic=[
+                        "Detected a payment-history fraud-review task without an explicit archive TSV.",
+                        "Used the payment fraud history helper as the authoritative classifier.",
+                        "Returned the helper's fraud payment record refs without modifying state.",
+                    ],
+                    task_type="fraud_review",
+                    message=message,
+                    grounding_doc_refs=relevant_doc_refs_for_task_type(
+                        sorted(tree_read_paths),
+                        "fraud_review",
+                    ),
+                    grounding_row_refs=refs_to_submit,
+                    protected_record_denial=False,
+                    outcome="OUTCOME_OK",
+                )
+                return _finalize_preflight(cmd)
+
     ambiguous_checkout = ambiguous_checkout_preflight(vm, classification)
     if ambiguous_checkout is not None:
         basket_list = ", ".join(ambiguous_checkout.basket_ids)
@@ -1225,7 +1299,7 @@ def run_agent(
                 # Refresh doc autocite bucket in case the model read more docs
                 # during the main loop beyond what the must startup pulled in.
                 ledger.register_loaded_docs(sorted(tree_read_paths))
-                cmd = ledger.apply_to_completion(cmd)
+                cmd = ledger.apply_to_completion(cmd, task_text=task_text)
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,

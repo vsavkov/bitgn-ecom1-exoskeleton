@@ -167,7 +167,10 @@ def test_apply_to_completion_uses_accumulated_archive_fraud_total() -> None:
         total_message="EUR 50.00",
     )
 
-    updated = ledger.apply_to_completion(cmd)
+    updated = ledger.apply_to_completion(
+        cmd,
+        task_text="Answer message must contain only the total fraudulent payment amount.",
+    )
 
     assert updated.message == "EUR 50.00"
     assert updated.grounding_row_refs == [
@@ -175,6 +178,28 @@ def test_apply_to_completion_uses_accumulated_archive_fraud_total() -> None:
         "/archive/payments.tsv#row=R1",
         "/archive/payments.tsv#row=R2",
     ]
+
+
+def test_apply_to_completion_keeps_live_fraud_record_message() -> None:
+    cmd = _completion(
+        task_type="fraud_review",
+        row_refs=[],
+        message="Fraudulent payment records: pay_001",
+    )
+
+    ledger = EvidenceLedger()
+    ledger.merge_fraud_result(
+        refs=["/proc/payments/pay_001.json"],
+        total_message="EUR 12.34",
+    )
+
+    updated = ledger.apply_to_completion(
+        cmd,
+        task_text="Identify the fraudulent payment records from history.",
+    )
+
+    assert updated.message == "Fraudulent payment records: pay_001"
+    assert updated.grounding_row_refs == ["/proc/payments/pay_001.json"]
 
 
 def test_apply_to_completion_uses_receipt_price_result() -> None:

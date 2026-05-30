@@ -21,6 +21,7 @@ from submission_refs import (
     is_catalog_ref,
     is_cross_customer_protected_record_denial,
     is_document_ref,
+    is_runtime_navigation_doc_ref,
     linked_payment_refs_for_returns,
     message_sku_refs,
     normalize_runtime_path,
@@ -109,6 +110,8 @@ def test_dedupe_refs_strips_blanks_and_keeps_order() -> None:
 def test_document_and_path_helpers() -> None:
     assert is_document_ref("/docs/security.md")
     assert not is_document_ref("/proc/baskets/basket_001.json")
+    assert is_runtime_navigation_doc_ref("/proc/payments/README.md")
+    assert not is_runtime_navigation_doc_ref("/docs/security.md")
     assert is_catalog_ref("/proc/catalog/FST-123.json")
     assert is_catalog_ref("proc/catalog/Brand/FST-123.json#row=1")
     assert not is_catalog_ref("/proc/stores/store_vienna_praterstern.json")
@@ -214,6 +217,27 @@ def test_normalize_submission_refs_preserves_docs_archive_rows_and_canonical_rec
         "/archive/payments.csv#row=2",
         "/proc/baskets/basket_001.json",
     ]
+
+
+def test_submission_refs_drops_runtime_navigation_readmes() -> None:
+    vm = FakeVM(
+        existing_paths={
+            "/docs/security.md",
+            "/proc/payments/README.md",
+            "/proc/payments/pay_001.json",
+        },
+    )
+
+    refs = submission_refs(
+        CompletionStub(
+            task_type="fraud_review",
+            grounding_doc_refs=["/docs/security.md", "/proc/payments/README.md"],
+            grounding_row_refs=["/proc/payments/pay_001.json"],
+        ),
+        vm,
+    )
+
+    assert refs == ["/docs/security.md", "/proc/payments/pay_001.json"]
 
 
 def test_canonical_case_file_ref_repairs_upload_filename_case() -> None:

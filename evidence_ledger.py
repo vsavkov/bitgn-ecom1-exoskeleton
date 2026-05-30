@@ -87,6 +87,8 @@ class EvidenceLedger:
     def apply_to_completion(
         self,
         cmd: "ReportTaskCompletion",
+        *,
+        task_text: str = "",
     ) -> "ReportTaskCompletion":
         from agent import (
             _apply_archive_fraud_result,
@@ -105,6 +107,7 @@ class EvidenceLedger:
             cmd,
             total_message=self.fraud_total_message,
             refs_to_submit=self.fraud_refs,
+            task_text=task_text,
         )
         cmd = _apply_receipt_price_result(
             cmd,

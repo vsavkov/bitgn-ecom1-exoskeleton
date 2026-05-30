@@ -131,6 +131,14 @@ def is_document_ref(ref: str) -> bool:
     return ref.endswith(".md")
 
 
+def is_runtime_navigation_doc_ref(ref: str) -> bool:
+    path, _fragment = split_ref_fragment(ref)
+    normalized = normalize_runtime_path(path).lower()
+    return normalized.endswith("/readme.md") and normalized.startswith(
+        ("/proc/", "/run/")
+    )
+
+
 def is_catalog_ref(ref: str) -> bool:
     path, _fragment = split_ref_fragment(ref)
     return bool(CATALOG_REF_RE.match(normalize_runtime_path(path)))
@@ -678,7 +686,13 @@ def submission_refs(
         *cmd.grounding_doc_refs,
         *cmd.grounding_row_refs,
     ]
-    doc_refs = dedupe_refs([ref for ref in all_refs if is_document_ref(ref)])
+    doc_refs = dedupe_refs(
+        [
+            ref
+            for ref in all_refs
+            if is_document_ref(ref) and not is_runtime_navigation_doc_ref(ref)
+        ]
+    )
     row_refs = dedupe_refs([ref for ref in all_refs if not is_document_ref(ref)])
 
     protected_record_denial = (
