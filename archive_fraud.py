@@ -185,6 +185,60 @@ def _archive_city_hop_incidents(
     return incidents
 
 
+def _archive_signal_city_hop_incidents(
+    rows: list[ArchivePaymentRow],
+) -> list[FraudIncident]:
+    # A copied card or cloned customer device can cross account boundaries in
+    # old archive exports. Keep this narrower than customer city-hop: card
+    # fingerprint hops are channel-independent, but device fingerprint hops
+    # still exclude staff terminals because those devices can be shared by
+    # legitimate staff workflows.
+    grouped: dict[tuple[str, str], list[ArchivePaymentRow]] = {}
+    for row in rows:
+        if row.payment_method_fingerprint:
+            grouped.setdefault(
+                ("payment_method_fingerprint", row.payment_method_fingerprint),
+                [],
+            ).append(row)
+        if (
+            row.archive_channel in CUSTOMER_CONTROLLED_CHANNELS
+            and row.device_fingerprint
+        ):
+            grouped.setdefault(
+                ("device_fingerprint", row.device_fingerprint),
+                [],
+            ).append(row)
+
+    incidents: list[FraudIncident] = []
+    for (key, signal), group_rows in grouped.items():
+        ordered = sorted(group_rows, key=lambda row: (row.created_at, row.row_id))
+        for index, first in enumerate(ordered):
+            chain = [first]
+            for row in ordered[index + 1 :]:
+                delta_seconds = (row.created_at - first.created_at).total_seconds()
+                if delta_seconds > ARCHIVE_CITY_HOP_WINDOW_SECONDS:
+                    break
+                chain.append(row)
+            if len(chain) < 2:
+                continue
+            if len({row.store_city for row in chain}) < 2:
+                continue
+            if sum(row.amount_cents for row in chain) < (
+                ARCHIVE_CITY_HOP_STANDALONE_MIN_TOTAL_CENTS
+            ):
+                continue
+            incidents.append(
+                FraudIncident(
+                    rule="archive_signal_city_hop",
+                    key=key,
+                    key_value=signal,
+                    rows=tuple(chain),
+                )
+            )
+
+    return incidents
+
+
 def _batched_short_city_hop_incidents(
     incidents: list[FraudIncident],
 ) -> list[FraudIncident]:
@@ -243,7 +297,10 @@ def _detect_archive_incidents(
 ) -> tuple[list[FraudIncident], list[FraudIncident]]:
     strong_incidents = _candidate_incidents(list(rows))  # type: ignore[arg-type]
     city_hop_incidents = _filter_archive_city_hop_incidents(
-        _archive_city_hop_incidents(rows),
+        [
+            *_archive_city_hop_incidents(rows),
+            *_archive_signal_city_hop_incidents(rows),
+        ],
         strong_incidents,
     )
     candidates = _drop_subset_incidents([*strong_incidents, *city_hop_incidents])

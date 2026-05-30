@@ -368,6 +368,102 @@ def test_detect_archive_fraud_keeps_high_value_short_city_hop() -> None:
     assert {incident.rule for incident in incidents} == {"archive_customer_city_hop"}
 
 
+def test_detect_archive_fraud_keeps_high_value_signal_city_hop() -> None:
+    rows = [
+        tsv_row(
+            "SH1",
+            "2023-11-12T08:01:00Z",
+            "arch_cust_signal_a",
+            "Graz",
+            120_000,
+            "pm_signal_hop",
+            "dev_signal_a",
+            "web",
+        ),
+        tsv_row(
+            "SH2",
+            "2023-11-12T08:05:00Z",
+            "arch_cust_signal_b",
+            "Vienna",
+            40_000,
+            "pm_signal_hop",
+            "dev_signal_b",
+            "web",
+        ),
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert [row.row_id for row in fraud_rows] == ["SH1", "SH2"]
+    assert {incident.rule for incident in incidents} == {"archive_signal_city_hop"}
+
+
+def test_detect_archive_fraud_ignores_staff_terminal_signal_city_hop() -> None:
+    rows = [
+        tsv_row(
+            "SS1",
+            "2023-11-12T08:01:00Z",
+            "arch_cust_signal_a",
+            "Graz",
+            120_000,
+            "pm_staff_signal_a",
+            "dev_staff_signal",
+            "store_terminal",
+        ),
+        tsv_row(
+            "SS2",
+            "2023-11-12T08:05:00Z",
+            "arch_cust_signal_b",
+            "Vienna",
+            40_000,
+            "pm_staff_signal_b",
+            "dev_staff_signal",
+            "store_terminal",
+        ),
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert fraud_rows == []
+    assert incidents == []
+
+
+def test_detect_archive_fraud_keeps_staff_terminal_payment_signal_city_hop() -> None:
+    rows = [
+        tsv_row(
+            "SP1",
+            "2023-11-12T08:01:00Z",
+            "arch_cust_signal_a",
+            "Graz",
+            120_000,
+            "pm_staff_signal",
+            "dev_staff_signal_a",
+            "store_terminal",
+        ),
+        tsv_row(
+            "SP2",
+            "2023-11-12T08:05:00Z",
+            "arch_cust_signal_b",
+            "Vienna",
+            40_000,
+            "pm_staff_signal",
+            "dev_staff_signal_b",
+            "store_terminal",
+        ),
+    ]
+
+    fraud_rows, incidents = detect_archive_fraud(
+        _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
+    )
+
+    assert [row.row_id for row in fraud_rows] == ["SP1", "SP2"]
+    assert {incident.rule for incident in incidents} == {"archive_signal_city_hop"}
+
+
 def test_detect_archive_fraud_ignores_isolated_short_city_hop() -> None:
     rows = [
         tsv_row(
