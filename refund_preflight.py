@@ -6,7 +6,9 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Protocol
 
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
+from connectrpc.errors import ConnectError
 
+from runtime_calls import runtime_exec
 from submission_refs import dedupe_refs, parse_runtime_identity, sql_quote
 
 
@@ -55,7 +57,10 @@ def refund_amount_cents_from_text(task_text: str) -> int | None:
 
 
 def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
-    result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
+    try:
+        result = runtime_exec(vm, ExecRequest(path="/bin/sql", stdin=query))
+    except ConnectError:
+        return []
     if getattr(result, "exit_code", 0):
         return []
     stdout = (getattr(result, "stdout", "") or "").strip()
@@ -65,7 +70,10 @@ def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
 
 
 def _current_customer_identity(vm: RuntimeVM) -> str | None:
-    identity = vm.exec(ExecRequest(path="/bin/id"))
+    try:
+        identity = runtime_exec(vm, ExecRequest(path="/bin/id"))
+    except ConnectError:
+        return None
     user_id, roles = parse_runtime_identity(getattr(identity, "stdout", "") or "")
     if not user_id or not user_id.startswith("cust_") or "customer" not in roles:
         return None

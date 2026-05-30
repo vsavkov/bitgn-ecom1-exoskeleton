@@ -3,6 +3,7 @@ from pathlib import Path
 from config import (
     env_choice,
     env_flag,
+    env_flag_default,
     env_int,
     helper_model,
     helper_reasoning_effort,
@@ -25,6 +26,10 @@ def test_env_helpers(monkeypatch, tmp_path: Path, capsys) -> None:
 
     assert env_flag("FLAG_TRUE")
     assert not env_flag("MISSING_FLAG")
+    assert env_flag_default("MISSING_DEFAULT_TRUE", True)
+    assert not env_flag_default("MISSING_DEFAULT_FALSE", False)
+    monkeypatch.setenv("FLAG_FALSE", "off")
+    assert not env_flag_default("FLAG_FALSE", True)
     assert env_int("COUNT", 5, minimum=0) == 12
     assert env_int("COUNT", 5, minimum=20) == 20
     assert env_int("BAD_COUNT", 5) == 5

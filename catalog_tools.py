@@ -17,6 +17,7 @@ from config import (
     openai_client_kwargs,
     render_prompt,
 )
+from runtime_calls import runtime_exec
 
 
 class RuntimeVM(Protocol):
@@ -197,7 +198,7 @@ def _dedupe_strings(values: Sequence[str]) -> list[str]:
 
 def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
     try:
-        result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
+        result = runtime_exec(vm, ExecRequest(path="/bin/sql", stdin=query))
     except ConnectError as exc:
         raise RuntimeError(f"catalog SQL query failed: {exc.message}") from exc
 

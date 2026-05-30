@@ -10,6 +10,8 @@ from bitgn.vm.ecom.ecom_pb2 import ExecRequest, ReadRequest
 from connectrpc.errors import ConnectError
 from pydantic import BaseModel, Field
 
+from runtime_calls import runtime_exec, runtime_read
+
 
 class RuntimeVM(Protocol):
     def read(self, request: ReadRequest) -> Any: ...
@@ -68,7 +70,7 @@ def _sql_quote(value: str) -> str:
 
 def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
     try:
-        result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
+        result = runtime_exec(vm, ExecRequest(path="/bin/sql", stdin=query))
     except ConnectError as exc:
         raise RuntimeError(f"receipt price SQL query failed: {exc.message}") from exc
 
@@ -285,7 +287,10 @@ def analyze_receipt_price_check(
     cmd: ReqAnalyzeReceiptPriceCheck,
 ) -> dict[str, Any]:
     try:
-        result = vm.read(ReadRequest(path=cmd.path, number=False, start_line=0, end_line=0))
+        result = runtime_read(
+            vm,
+            ReadRequest(path=cmd.path, number=False, start_line=0, end_line=0),
+        )
     except ConnectError as exc:
         raise RuntimeError(f"receipt OCR read failed: {exc.message}") from exc
 

@@ -85,6 +85,7 @@ from refund_preflight import (
     rejected_return_clarification_preflight,
 )
 from runtime_mutation_guard import raw_file_mutation_allowed
+from runtime_calls import runtime_call
 from submission_refs import (
     availability_count_refs_from_catalog_result,
     availability_lookup_refs_from_catalog_result,
@@ -140,8 +141,9 @@ class ReportTaskCompletion(BaseModel):
     message: str = Field(
         description=(
             "Exact final user-visible answer. If the task asks for an exact "
-            "format, contain only that format. Use <YES>/<NO> only for yes/no "
-            "questions without another exact format."
+            "format, contain only that format. For yes/no questions without "
+            "another exact format, use the tokens required by the current "
+            "/AGENTS.MD."
         )
     )
     grounding_doc_refs: List[str] = Field(
@@ -259,6 +261,38 @@ TOOL_MODELS: dict[str, type[BaseModel]] = {
 }
 
 TOOL_NAMES_BY_MODEL = {model: name for name, model in TOOL_MODELS.items()}
+DEFAULT_YES_NO_TOKENS = ("<YES>", "<NO>")
+
+
+def _yes_no_tokens_from_agents_md(content: str) -> tuple[str, str]:
+    normalized = content.upper()
+    if "TRUE(1)" in normalized and "FALSE(0)" in normalized:
+        return ("TRUE(1)", "FALSE(0)")
+    if "<YES>" in normalized and "<NO>" in normalized:
+        return DEFAULT_YES_NO_TOKENS
+    return DEFAULT_YES_NO_TOKENS
+
+
+def _apply_yes_no_tokens(
+    cmd: ReportTaskCompletion,
+    tokens: tuple[str, str],
+) -> ReportTaskCompletion:
+    if tokens == DEFAULT_YES_NO_TOKENS:
+        return cmd
+
+    message = cmd.message.strip()
+    upper = message.upper()
+    yes_token, no_token = tokens
+
+    if upper == "<YES>" or upper.startswith("<YES> "):
+        return cmd.model_copy(update={"message": yes_token})
+    if upper == "<NO>" or upper.startswith("<NO> "):
+        return cmd.model_copy(update={"message": no_token})
+    if upper in {"YES", "TRUE", "TRUE(1)"}:
+        return cmd.model_copy(update={"message": yes_token})
+    if upper in {"NO", "FALSE", "FALSE(0)"}:
+        return cmd.model_copy(update={"message": no_token})
+    return cmd
 
 
 def _responses_function_tool(
@@ -359,17 +393,17 @@ TOOLS: list[FunctionToolParam] = [
         ReqAnalyzePaymentFraudHistory,
         name="analyze_payment_fraud_history",
         description=(
-            "Detect fraud incidents inside the runtime /proc/payments "
-            "transaction history, including archived basket references stored "
-            "there. Use this for any fraud-review task that asks about current "
-            "payment history, old payment history, archived payment history, "
-            "or archived payment records when the task does not give an "
-            "explicit /archive/*.tsv export path. Returns total_message "
-            "(EUR %d.%02d), fraud_payment_ids, and refs_to_submit "
-            "(/proc/payments/<id>.json) based on velocity rules over "
-            "customer_id, payment_method fingerprint, and device fingerprint "
-            "across distant store cities. Do not run ad-hoc SQL fraud "
-            "heuristics; rely on this helper."
+            "Detect fraud incidents inside the runtime payment transaction "
+            "history, including archived basket references stored in current "
+            "payment records. Use this for any fraud-review task that asks "
+            "about current payment history, old payment history, archived "
+            "payment history, or archived payment records when the task does "
+            "not give an explicit /archive/*.tsv export path. Returns "
+            "total_message (EUR %d.%02d), fraud_payment_ids, and "
+            "refs_to_submit based on SQL record_path values and velocity rules "
+            "over customer_id, payment_method fingerprint, and device "
+            "fingerprint across distant store cities. Do not run ad-hoc SQL "
+            "fraud heuristics; rely on this helper."
         ),
     ),
     _responses_function_tool(
@@ -400,8 +434,9 @@ TOOLS: list[FunctionToolParam] = [
             "Analyze an uploaded receipt OCR text file and compare its ex-VAT "
             "subtotal with current catalogue prices. Use this for receipt "
             "price-difference yes/no tasks. Handles common OCR SKU confusions "
-            "such as O vs 0, and returns formatted_message (<YES>/<NO>) plus "
-            "refs_to_submit for the receipt and resolved product records."
+            "such as O vs 0, and returns formatted_message plus refs_to_submit "
+            "for the receipt and resolved product records. Remap the yes/no "
+            "message to the tokens required by the current /AGENTS.MD."
         ),
     ),
     _responses_function_tool(
@@ -669,7 +704,7 @@ def _tree_followup_commands(
 
 def _auto_followup_timeout_ms(cmd: BaseModel) -> int | None:
     if isinstance(cmd, ReqExec) and cmd.args == ["--help"]:
-        return env_int("AGENT_AUTO_HELP_TIMEOUT_MS", 1000, minimum=100)
+        return env_int("AGENT_AUTO_HELP_TIMEOUT_MS", 300, minimum=50)
     return None
 
 
@@ -688,9 +723,7 @@ def _format_followup_error(cmd: BaseModel, exc: ConnectError) -> str:
 
 
 def _runtime_call(method: Callable[..., Any], request: Any, timeout_ms: int | None):
-    if timeout_ms is None:
-        return method(request)
-    return method(request, timeout_ms=timeout_ms)
+    return runtime_call(method, request, timeout_ms=timeout_ms)
 
 
 def _format_result_with_tree_followups(
@@ -1276,6 +1309,7 @@ def run_agent(
     tree_read_paths: set[str] = set()
     formatter_output_lines: list[str] = []
     ledger = EvidenceLedger()
+    yes_no_tokens = DEFAULT_YES_NO_TOKENS
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
@@ -1316,7 +1350,19 @@ def run_agent(
         ]
 
         for cmd in must:
-            result = dispatch(vm, cmd)
+            try:
+                result = dispatch(vm, cmd)
+            except ConnectError as exc:
+                formatted = _format_followup_error(cmd, exc)
+                if debug:
+                    print(f"{CLI_RED}ERR {exc.code}: {exc.message}{CLI_CLR}")
+                append_synthetic_tool_result(cmd, formatted)
+                continue
+            if (
+                isinstance(cmd, ReqRead)
+                and cmd.path.rstrip("/").upper() == "/AGENTS.MD"
+            ):
+                yes_no_tokens = _yes_no_tokens_from_agents_md(result.content or "")
             _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
             formatted = _format_result(cmd, result)
             if debug:
@@ -1367,6 +1413,7 @@ def run_agent(
             payment_recovery_review,
             task_text=task_text,
         )
+        cmd = _apply_yes_no_tokens(cmd, yes_no_tokens)
         dispatch(vm, cmd, task_text=task_text)
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
         result_payload = {
@@ -1618,6 +1665,7 @@ def run_agent(
                     output_lines=None if print_completion else formatter_output_lines,
                 )
                 cmd = cmd.model_copy(update={"message": formatted_message})
+                cmd = _apply_yes_no_tokens(cmd, yes_no_tokens)
             elif isinstance(cmd, ReqResolveCatalogItems):
                 cmd = _normalize_catalog_resolution_for_task(cmd, task_text=task_text)
 

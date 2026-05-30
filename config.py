@@ -49,6 +49,13 @@ def env_flag(name: str) -> bool:
     return (os.getenv(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_flag_default(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None or raw_value.strip() == "":
+        return default
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def env_int(name: str, default: int, *, minimum: int = 0) -> int:
     raw_value = os.getenv(name)
     if not raw_value:

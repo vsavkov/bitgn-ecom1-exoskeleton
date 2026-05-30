@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
+from connectrpc.errors import ConnectError
 
+from runtime_calls import runtime_exec
 from submission_refs import parse_runtime_identity, sql_quote
 from task_classifier import TaskClassification
 
@@ -54,7 +56,10 @@ def active_customer_baskets(vm: RuntimeVM, customer_id: str) -> list[dict[str, s
 
 
 def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
-    result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
+    try:
+        result = runtime_exec(vm, ExecRequest(path="/bin/sql", stdin=query))
+    except ConnectError:
+        return []
     if getattr(result, "exit_code", 0):
         return []
 
@@ -72,7 +77,7 @@ def ambiguous_checkout_preflight(
         return None
 
     try:
-        identity = vm.exec(ExecRequest(path="/bin/id"))
+        identity = runtime_exec(vm, ExecRequest(path="/bin/id"))
     except Exception:
         return None
 
@@ -110,7 +115,7 @@ def selected_basket_preflight(
         return None
 
     try:
-        identity = vm.exec(ExecRequest(path="/bin/id"))
+        identity = runtime_exec(vm, ExecRequest(path="/bin/id"))
     except Exception:
         return None
 

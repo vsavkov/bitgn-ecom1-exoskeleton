@@ -18,7 +18,7 @@ from typing import Any
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from config import env_flag, load_dotenv  # noqa: E402
+from config import load_dotenv  # noqa: E402
 
 load_dotenv()
 

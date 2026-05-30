@@ -5,6 +5,7 @@ from typing import Literal
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest
 
 from manager_verification import ReqVerifyStoreManager, verify_store_manager
+from runtime_calls import runtime_exec
 from submission_refs import (
     RuntimeVM,
     parse_runtime_identity,
@@ -33,7 +34,7 @@ class SecurityDenial:
 
 def _runtime_identity(vm: RuntimeVM) -> tuple[str | None, set[str]]:
     try:
-        result = vm.exec(ExecRequest(path="/bin/id"))
+        result = runtime_exec(vm, ExecRequest(path="/bin/id"))
     except Exception:
         return None, set()
     return parse_runtime_identity(getattr(result, "stdout", "") or "")

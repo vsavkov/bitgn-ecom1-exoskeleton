@@ -25,6 +25,7 @@ from fraud_rules import (
     incidents_summary,
     select_non_overlapping_incidents as _select_non_overlapping_incidents,
 )
+from runtime_calls import runtime_read
 
 
 class RuntimeVM(Protocol):
@@ -479,7 +480,8 @@ def analyze_archive_fraud_export(
     cmd: ReqAnalyzeArchiveFraudExport,
 ) -> dict[str, Any]:
     try:
-        result = vm.read(
+        result = runtime_read(
+            vm,
             ReadRequest(path=cmd.path, number=False, start_line=0, end_line=0)
         )
     except ConnectError as exc:

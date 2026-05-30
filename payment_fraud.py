@@ -18,6 +18,7 @@ from fraud_rules import (
     incidents_summary,
     select_non_overlapping_incidents,
 )
+from runtime_calls import runtime_exec
 
 
 class RuntimeVM(Protocol):
@@ -98,7 +99,7 @@ def _probe_schema(vm: RuntimeVM) -> str:
     # runs in a snapshot where it cannot succeed (and risks long-running
     # full-table scans before the runtime kills the trial).
     try:
-        result = vm.exec(ExecRequest(path="/bin/sql", stdin=SCHEMA_PROBE_SQL))
+        result = runtime_exec(vm, ExecRequest(path="/bin/sql", stdin=SCHEMA_PROBE_SQL))
     except ConnectError as exc:
         return f"sqlite_schema probe failed: {exc.message}"
     if getattr(result, "exit_code", 0):
@@ -185,7 +186,8 @@ def _fetch_payment_rows(vm: RuntimeVM) -> PaymentFraudFetchResult:
     # history explicitly so fraud detection sees the whole timeline.
     for offset in range(0, 100_000, PAYMENT_FRAUD_PAGE_SIZE):
         try:
-            result = vm.exec(
+            result = runtime_exec(
+                vm,
                 ExecRequest(path="/bin/sql", stdin=_payment_fraud_sql_page(offset))
             )
         except ConnectError as exc:

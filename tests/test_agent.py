@@ -13,6 +13,7 @@ from agent import (
     ReqRead,
     ReqSearch,
     ReqTree,
+    _apply_yes_no_tokens,
     _child_runtime_path,
     _apply_archive_fraud_result,
     _apply_receipt_price_result,
@@ -58,6 +59,7 @@ from agent import (
     _trace_dispatch_inputs,
     _trace_dispatch_outputs,
     _tree_followup_commands,
+    _yes_no_tokens_from_agents_md,
 )
 from payment_recovery_review import PaymentRecoveryReview
 from catalog_tools import CatalogLookupItem
@@ -277,12 +279,33 @@ def test_remember_seen_tool_use() -> None:
 def test_auto_help_timeout_and_error_formatting() -> None:
     exc = ConnectError(Code.DEADLINE_EXCEEDED, "timed out")
 
-    assert _auto_followup_timeout_ms(ReqExec(path="/bin/sql", args=["--help"])) == 1000
+    assert _auto_followup_timeout_ms(ReqExec(path="/bin/sql", args=["--help"])) == 300
     assert _auto_followup_timeout_ms(ReqExec(path="/bin/sql")) is None
     assert _auto_followup_timeout_ms(ReqRead(path="/docs/security.md")) is None
     assert _format_followup_error(ReqExec(path="/bin/sql", args=["--help"]), exc).startswith(
         "/bin/sql --help\n[AUTO-FOLLOWUP ERROR: deadline_exceeded: timed out]"
     )
+
+
+def test_yes_no_tokens_from_agents_md() -> None:
+    assert _yes_no_tokens_from_agents_md("Use TRUE(1) or FALSE(0).") == (
+        "TRUE(1)",
+        "FALSE(0)",
+    )
+    assert _yes_no_tokens_from_agents_md("Use <YES> or <NO>.") == ("<YES>", "<NO>")
+
+
+def test_apply_yes_no_tokens_remaps_default_tokens() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=[],
+        message="<YES> price is within tolerance",
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+    updated = _apply_yes_no_tokens(cmd, ("TRUE(1)", "FALSE(0)"))
+
+    assert updated.message == "TRUE(1)"
 
 
 def test_format_read_search_exec_and_json_results() -> None:

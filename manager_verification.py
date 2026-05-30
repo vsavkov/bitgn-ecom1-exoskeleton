@@ -7,6 +7,7 @@ from bitgn.vm.ecom.ecom_pb2 import ExecRequest
 from connectrpc.errors import ConnectError
 from pydantic import BaseModel, Field
 
+from runtime_calls import runtime_exec
 from submission_refs import parse_runtime_identity
 
 
@@ -31,7 +32,7 @@ class ReqVerifyStoreManager(BaseModel):
 
 def _sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
     try:
-        result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
+        result = runtime_exec(vm, ExecRequest(path="/bin/sql", stdin=query))
     except ConnectError as exc:
         raise RuntimeError(f"manager verification SQL failed: {exc.message}") from exc
 
@@ -70,7 +71,7 @@ def _is_customer_or_guest(user_id: str | None, roles: set[str]) -> bool:
 
 def _current_identity(vm: RuntimeVM) -> tuple[str | None, set[str]]:
     try:
-        result = vm.exec(ExecRequest(path="/bin/id"))
+        result = runtime_exec(vm, ExecRequest(path="/bin/id"))
     except ConnectError:
         return None, set()
     return parse_runtime_identity(result.stdout or "")

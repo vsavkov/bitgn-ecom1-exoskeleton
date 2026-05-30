@@ -7,6 +7,8 @@ from typing import Any, NamedTuple, Protocol
 from bitgn.vm.ecom.ecom_pb2 import ExecRequest, ListRequest, NodeKind, StatRequest
 from connectrpc.errors import ConnectError
 
+from runtime_calls import runtime_exec, runtime_list, runtime_stat
+
 
 class CompletionLike(Protocol):
     @property
@@ -152,7 +154,7 @@ def normalize_runtime_path(path: str) -> str:
 
 def try_stat(vm: RuntimeVM, path: str) -> bool:
     try:
-        vm.stat(StatRequest(path=path))
+        runtime_stat(vm, StatRequest(path=path))
         return True
     except ConnectError:
         return False
@@ -167,7 +169,7 @@ def canonical_case_file_ref(vm: RuntimeVM, path: str) -> str | None:
         return normalized if try_stat(vm, normalized) else None
 
     try:
-        result = vm.list(ListRequest(path=parent))
+        result = runtime_list(vm, ListRequest(path=parent))
     except (AttributeError, ConnectError):
         return normalized if try_stat(vm, normalized) else None
 
@@ -200,7 +202,7 @@ def sql_quote(value: str) -> str:
 
 def sql_rows(vm: RuntimeVM, query: str) -> list[dict[str, str]]:
     try:
-        result = vm.exec(ExecRequest(path="/bin/sql", stdin=query))
+        result = runtime_exec(vm, ExecRequest(path="/bin/sql", stdin=query))
     except ConnectError:
         return []
 
@@ -452,7 +454,7 @@ def parse_runtime_identity(stdout: str) -> tuple[str | None, set[str]]:
 
 def runtime_identity(vm: RuntimeVM) -> tuple[str | None, set[str]]:
     try:
-        result = vm.exec(ExecRequest(path="/bin/id"))
+        result = runtime_exec(vm, ExecRequest(path="/bin/id"))
     except ConnectError:
         return None, set()
     return parse_runtime_identity(result.stdout or "")

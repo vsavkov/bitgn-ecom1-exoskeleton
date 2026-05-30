@@ -145,7 +145,10 @@ def test_render_html_uses__when_official_score_is_missing(tmp_path: Path) -> Non
     assert "" in html
 
 
-def test_maybe_enrich_s_respects_env(monkeypatch, tmp_path: Path) -> None:
+def test_maybe_enrich_s_defaults_on_and_can_be_disabled(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
     run_path = tmp_path / "run_20260529_100000.json"
     run_path.write_text(
         """
@@ -165,8 +168,22 @@ def test_maybe_enrich_s_respects_env(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("", raising=False)
     monkeypatch.delenv("", raising=False)
     _maybe_enrich_s(tmp_path)
-    assert "" not in run_path.read_text()
-
-    monkeypatch.setenv("", "1")
-    _maybe_enrich_s(tmp_path)
     assert "" in run_path.read_text()
+
+    run_path.write_text(
+        """
+        {
+          "test_cases": [
+            {
+              "task_id": "t01",
+              "task_text": "Return the SKU only",
+              "outcome": "OUTCOME_OK",
+              "message": "PT-ABC-123"
+            }
+          ]
+        }
+        """
+    )
+    monkeypatch.setenv("", "0")
+    _maybe_enrich_s(tmp_path)
+    assert "" not in run_path.read_text()

@@ -40,6 +40,8 @@ Useful environment overrides:
 - `HELPER_MODEL` controls helper agents such as the answer formatter and catalog parser; default is `gpt-5.4-nano`
 - `HELPER_REASONING_EFFORT` controls helper-agent reasoning; default is `low`
 - `AGENT_MAX_STEPS` caps response/tool iterations per trial; default is `75`
+- `AGENT_RUNTIME_TIMEOUT_MS` caps each runtime filesystem/tool call; default is `300` ms, set `0` to disable
+- `AGENT_AUTO_HELP_TIMEOUT_MS` caps auto-discovered `<command> --help` calls; default is `300` ms
 - `TRIAL_BATCH_SIZE` controls concurrent trials during `make run`; default is `10`
 - `OPENAI_TIMEOUT_SECONDS` caps each OpenAI request; default is `40`
 - `OPENAI_MAX_RETRIES` controls OpenAI SDK retries; default is `1`
