@@ -62,13 +62,13 @@ RULE_SCORE_WEIGHT: dict[str, int] = {
     "high_value_payment_multicity": 65,
 }
 
-# Live /proc/payments transactions arrive from real customer devices; the
-# archive TSV exports have a populated archive_channel string we have to
-# constrain because service-desk terminals can reuse a device fingerprint.
+# Live /proc/payments transactions arrive from real customer devices; archive
+# TSV exports have an explicit channel, so only customer-owned surfaces should
+# make a device fingerprint authoritative. Store kiosks and staff terminals are
+# merchant-side shared devices and can legitimately appear across customers.
 CUSTOMER_CONTROLLED_CHANNELS: set[str] = {
     "customer_terminal",
     "mobile_app",
-    "store_kiosk",
     "web",
 }
 

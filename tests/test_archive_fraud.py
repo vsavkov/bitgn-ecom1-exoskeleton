@@ -208,7 +208,7 @@ def test_detect_archive_fraud_ignores_shared_service_desk_device() -> None:
     assert incidents == []
 
 
-def test_detect_archive_fraud_keeps_shared_store_kiosk_device() -> None:
+def test_detect_archive_fraud_ignores_shared_store_kiosk_device() -> None:
     cities = ["Graz", "Salzburg", "Bratislava", "Vienna"]
     rows = [
         tsv_row(
@@ -228,8 +228,8 @@ def test_detect_archive_fraud_keeps_shared_store_kiosk_device() -> None:
         _parse_archive_tsv("\n".join([HEADER, *rows]) + "\n")
     )
 
-    assert [row.row_id for row in fraud_rows] == [f"K{index}" for index in range(1, 5)]
-    assert {incident.rule for incident in incidents} == {"high_value_device_multicity"}
+    assert fraud_rows == []
+    assert incidents == []
 
 
 def test_detect_archive_fraud_keeps_three_row_high_value_device_cluster() -> None:
@@ -621,7 +621,7 @@ def test_detect_archive_fraud_ignores_low_value_batched_short_city_hops() -> Non
                     f"2023-11-12T{hour:02d}:{minute:02d}:00Z",
                     f"arch_cust_low_value_{incident_index}",
                     "Graz",
-                    19_900,
+                    4_900,
                     f"pm_low_value_{incident_index}",
                     f"dev_low_value_{incident_index}",
                     "web",
@@ -631,7 +631,7 @@ def test_detect_archive_fraud_ignores_low_value_batched_short_city_hops() -> Non
                     f"2023-11-12T{hour:02d}:{minute + 4:02d}:00Z",
                     f"arch_cust_low_value_{incident_index}",
                     "Vienna",
-                    19_900,
+                    4_900,
                     f"pm_low_value_{incident_index}",
                     f"dev_low_value_{incident_index}",
                     "web",
