@@ -2,11 +2,19 @@ from collections.abc import Callable
 from inspect import Parameter, signature
 from typing import Any
 
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+
 from config import env_int
 
 
 def default_runtime_timeout_ms() -> int | None:
     value = env_int("AGENT_RUNTIME_TIMEOUT_MS", 300, minimum=0)
+    return value or None
+
+
+def runtime_retry_timeout_ms() -> int | None:
+    value = env_int("AGENT_RUNTIME_RETRY_TIMEOUT_MS", 1500, minimum=0)
     return value or None
 
 
@@ -23,7 +31,18 @@ def runtime_call(
         return method(request)
     if not _accepts_timeout_ms(method):
         return method(request)
-    return method(request, timeout_ms=effective_timeout_ms)
+    try:
+        return method(request, timeout_ms=effective_timeout_ms)
+    except ConnectError as exc:
+        retry_timeout_ms = runtime_retry_timeout_ms()
+        if (
+            timeout_ms is not None
+            or exc.code != Code.DEADLINE_EXCEEDED
+            or retry_timeout_ms is None
+            or retry_timeout_ms <= effective_timeout_ms
+        ):
+            raise
+        return method(request, timeout_ms=retry_timeout_ms)
 
 
 def runtime_exec(vm: Any, request: Any, *, timeout_ms: int | None = None) -> Any:

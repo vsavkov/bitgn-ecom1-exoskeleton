@@ -1,3 +1,7 @@
+import pytest
+from connectrpc.code import Code
+from connectrpc.errors import ConnectError
+
 from runtime_calls import default_runtime_timeout_ms, runtime_call
 
 
@@ -16,6 +20,18 @@ class LegacyMethod:
 
     def __call__(self, request: object) -> object:
         self.calls.append(request)
+        return request
+
+
+class FlakyTimeoutAwareMethod:
+    def __init__(self, *, code: Code = Code.DEADLINE_EXCEEDED) -> None:
+        self.calls: list[tuple[object, int | None]] = []
+        self.code = code
+
+    def __call__(self, request: object, *, timeout_ms: int | None = None) -> object:
+        self.calls.append((request, timeout_ms))
+        if len(self.calls) == 1:
+            raise ConnectError(self.code, "timed out")
         return request
 
 
@@ -53,3 +69,23 @@ def test_runtime_call_supports_legacy_fakes(monkeypatch) -> None:
     runtime_call(method, "request")
 
     assert method.calls == ["request"]
+
+
+def test_runtime_call_retries_default_deadline_once(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_RUNTIME_TIMEOUT_MS", "100")
+    monkeypatch.setenv("AGENT_RUNTIME_RETRY_TIMEOUT_MS", "1500")
+    method = FlakyTimeoutAwareMethod()
+
+    runtime_call(method, "request")
+
+    assert method.calls == [("request", 100), ("request", 1500)]
+
+
+def test_runtime_call_does_not_retry_explicit_timeout(monkeypatch) -> None:
+    monkeypatch.setenv("AGENT_RUNTIME_RETRY_TIMEOUT_MS", "1500")
+    method = FlakyTimeoutAwareMethod()
+
+    with pytest.raises(ConnectError):
+        runtime_call(method, "request", timeout_ms=75)
+
+    assert method.calls == [("request", 75)]
