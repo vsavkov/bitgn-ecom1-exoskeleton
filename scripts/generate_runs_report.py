@@ -347,7 +347,7 @@ thead .task-head {{
   color: #ffffff;
   font-weight: 700;
 }}
-.sum-head {{
+thead .sum-head {{
   left: 0;
   z-index: 4;
   background: #111827;
