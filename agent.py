@@ -1,8 +1,10 @@
 import json
+import re
 import shlex
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -1167,6 +1169,77 @@ def _apply_payment_recovery_review(
     return cmd.model_copy(update=updates) if updates else cmd
 
 
+DISCOUNT_CAP_RE = re.compile(
+    r"\b(?:max(?:imum)?(?:\s+allowed)?(?:\s+discount)?|cap)\s+"
+    r"(?:is|=)\s*(?P<percent>\d{1,2})\s*%",
+    re.IGNORECASE,
+)
+
+
+def _apply_discount_cap_message(cmd: ReportTaskCompletion) -> ReportTaskCompletion:
+    if cmd.task_type != "discount" or cmd.outcome != "OUTCOME_NONE_UNSUPPORTED":
+        return cmd
+    if "OUTCOME_NONE_UNSUPPORTED" not in cmd.message:
+        return cmd
+    if re.search(r"\b\d{1,2}\s*%", cmd.message):
+        return cmd
+
+    details = "\n".join(cmd.completed_steps_laconic)
+    match = DISCOUNT_CAP_RE.search(details)
+    if not match:
+        return cmd
+
+    percent = match.group("percent")
+    return cmd.model_copy(
+        update={
+            "message": (
+                "OUTCOME_NONE_UNSUPPORTED: maximum allowed discount is "
+                f"{percent}%"
+            )
+        }
+    )
+
+
+DATE_RE = re.compile(r"(?<!\d)(?P<date>\d{4}-\d{2}-\d{2})(?!\d)")
+
+
+def _tomorrow_date_preflight(
+    task_text: str,
+    date_stdout: str,
+) -> ReportTaskCompletion | None:
+    normalized = " ".join(task_text.lower().split())
+    if "tomorrow" not in normalized or "date" not in normalized:
+        return None
+
+    match = DATE_RE.search(date_stdout)
+    if not match:
+        return None
+
+    today = datetime.strptime(match.group("date"), "%Y-%m-%d").date()
+    tomorrow = today + timedelta(days=1)
+    if "mm/dd/yyyy" in normalized:
+        message = tomorrow.strftime("%m/%d/%Y")
+    elif "dd-mm-yyyy" in normalized:
+        message = tomorrow.strftime("%d-%m-%Y")
+    elif "yyyy-mm-dd" in normalized:
+        message = tomorrow.strftime("%Y-%m-%d")
+    else:
+        return None
+
+    return ReportTaskCompletion(
+        completed_steps_laconic=[
+            "Read the runtime date from /bin/date.",
+            "Computed tomorrow relative to the runtime date.",
+        ],
+        task_type="other",
+        message=message,
+        grounding_doc_refs=[],
+        grounding_row_refs=[],
+        protected_record_denial=False,
+        outcome="OUTCOME_OK",
+    )
+
+
 def _review_payment_recovery_state(
     client: Any,
     cmd: ReportTaskCompletion,
@@ -1288,6 +1361,7 @@ def run_agent(
     formatter_output_lines: list[str] = []
     ledger = EvidenceLedger()
     agents_md_content = ""
+    runtime_date_stdout = ""
     final_result: dict = {
         "completed": False,
         "langsmith_run_id": langsmith_run_id,
@@ -1341,6 +1415,8 @@ def run_agent(
                 and cmd.path.rstrip("/").upper() == "/AGENTS.MD"
             ):
                 agents_md_content = result.content or ""
+            if isinstance(cmd, ReqExec) and cmd.path == "/bin/date":
+                runtime_date_stdout = getattr(result, "stdout", "") or ""
             _remember_seen_tool_use(cmd, tree_help_paths, tree_read_paths)
             formatted = _format_result(cmd, result)
             if debug:
@@ -1395,6 +1471,7 @@ def run_agent(
             payment_recovery_review,
             task_text=task_text,
         )
+        cmd = _apply_discount_cap_message(cmd)
         completion_refs = _submission_refs(cmd, vm, task_text=task_text)
         if format_message:
             formatted_message = format_completion_message(
@@ -1447,6 +1524,10 @@ def run_agent(
                 outcome="OUTCOME_OK",
             )
             return _finalize_preflight(cmd, format_message=False)
+
+    tomorrow_date = _tomorrow_date_preflight(task_text, runtime_date_stdout)
+    if tomorrow_date is not None:
+        return _finalize_preflight(tomorrow_date, format_message=False)
 
     denial = security_preflight(vm, classification, task_text=task_text)
     if denial is not None:
@@ -1693,6 +1774,7 @@ def run_agent(
                     payment_recovery_review,
                     task_text=task_text,
                 )
+                cmd = _apply_discount_cap_message(cmd)
                 completion_refs = _submission_refs(cmd, vm, task_text=task_text)
                 formatted_message = format_completion_message(
                     formatter_client,

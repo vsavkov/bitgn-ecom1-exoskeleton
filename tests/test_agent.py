@@ -19,6 +19,7 @@ from agent import (
     _apply_city_availability_result,
     _apply_catalog_availability_lookup_refs,
     _apply_catalog_lookup_result,
+    _apply_discount_cap_message,
     _apply_payment_recovery_review,
     _apply_payment_recovery_retry_timestamp,
     _apply_verified_manager_refs,
@@ -58,6 +59,7 @@ from agent import (
     _trace_dispatch_inputs,
     _trace_dispatch_outputs,
     _tree_followup_commands,
+    _tomorrow_date_preflight,
 )
 from payment_recovery_review import PaymentRecoveryReview
 from catalog_tools import CatalogLookupItem
@@ -845,6 +847,67 @@ def test_apply_payment_recovery_retry_timestamp_uses_review_timestamp() -> None:
     assert updated.message == (
         "OUTCOME_NONE_UNSUPPORTED: retry blocked until 2024-07-18T14:49:48Z"
     )
+
+
+def test_apply_discount_cap_message_preserves_policy_cap() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=[
+            "Computed basket subtotal and policy state: max allowed discount is 12%."
+        ],
+        task_type="discount",
+        message="OUTCOME_NONE_UNSUPPORTED",
+        grounding_doc_refs=["/docs/discount-policy.md"],
+        grounding_row_refs=["/proc/baskets/basket_001.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_NONE_UNSUPPORTED",
+    )
+
+    updated = _apply_discount_cap_message(cmd)
+
+    assert updated.message == (
+        "OUTCOME_NONE_UNSUPPORTED: maximum allowed discount is 12%"
+    )
+
+
+def test_apply_discount_cap_message_does_not_overwrite_specific_message() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=[
+            "Computed basket subtotal and policy state: max allowed discount is 12%."
+        ],
+        task_type="discount",
+        message="OUTCOME_NONE_UNSUPPORTED: maximum allowed discount is 10%",
+        grounding_doc_refs=["/docs/discount-policy.md"],
+        grounding_row_refs=["/proc/baskets/basket_001.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_NONE_UNSUPPORTED",
+    )
+
+    updated = _apply_discount_cap_message(cmd)
+
+    assert updated.message == cmd.message
+
+
+def test_tomorrow_date_preflight_formats_runtime_date() -> None:
+    cmd = _tomorrow_date_preflight(
+        "What date is tomorrow? Reply MM/DD/YYYY only.",
+        "Tue Jun 16 17:13:01 UTC 2026\n2026-06-16\n",
+    )
+
+    assert cmd is not None
+    assert cmd.message == "06/17/2026"
+    assert cmd.outcome == "OUTCOME_OK"
+    assert cmd.grounding_doc_refs == []
+    assert cmd.grounding_row_refs == []
+
+
+def test_tomorrow_date_preflight_respects_requested_format() -> None:
+    cmd = _tomorrow_date_preflight(
+        "Give tomorrow date in DD-MM-YYYY.",
+        "2026-12-31T23:15:00Z\n",
+    )
+
+    assert cmd is not None
+    assert cmd.message == "01-01-2027"
 
 
 def test_parse_tool_call() -> None:
