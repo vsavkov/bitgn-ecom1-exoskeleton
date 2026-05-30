@@ -578,7 +578,7 @@ def parse_runtime_identity(stdout: str) -> tuple[str | None, set[str]]:
         if key.strip() == "user":
             user_id = value.strip() or None
         elif key.strip() == "roles":
-            roles.update(re.findall(r"[A-Za-z0-9_]+", value))
+            roles.update(role.lower() for role in re.findall(r"[A-Za-z0-9_]+", value))
     return user_id, roles
 
 
@@ -788,9 +788,11 @@ def explicit_target_refs_from_task(
 def is_customer_or_guest_context(user_id: str | None, roles: set[str]) -> bool:
     if is_customer_identity(user_id):
         return True
-    if user_id and user_id.startswith("guest"):
+    normalized_user = (user_id or "").lower()
+    if normalized_user.startswith(("guest", "anonymous")):
         return True
-    return bool(roles) and roles <= {"guest"}
+    normalized_roles = {role.lower() for role in roles}
+    return bool(normalized_roles) and normalized_roles <= {"guest"}
 
 
 def employee_id_from_ref(ref: str) -> str | None:
@@ -907,6 +909,22 @@ def store_ref_for_employee(vm: RuntimeVM, employee_id: str) -> str | None:
     return path if path.startswith("/") else None
 
 
+def employee_ref_by_id(vm: RuntimeVM, employee_id: str) -> str | None:
+    path_from_sql = sql_record_path(
+        vm,
+        table="employee_accounts",
+        key_column="employee_id",
+        value=employee_id,
+    )
+    if path_from_sql and try_stat(vm, path_from_sql):
+        return path_from_sql
+
+    employee_record = find_record_by_id(vm, STAFF_ROOTS, employee_id)
+    if employee_record is not None:
+        return employee_record.path
+    return None
+
+
 def replace_customer_facing_employee_refs(
     vm: RuntimeVM,
     refs: list[str],
@@ -950,7 +968,13 @@ def is_cross_customer_protected_record_denial(
 
 
 def is_guest_identity(user_id: str | None, roles: set[str]) -> bool:
-    return (not user_id and roles <= {"guest"}) or user_id in {"guest", "anonymous"}
+    normalized_user = (user_id or "").lower()
+    normalized_roles = {role.lower() for role in roles}
+    return (
+        (not normalized_user and normalized_roles <= {"guest"})
+        or normalized_user.startswith(("guest", "anonymous"))
+        or normalized_roles <= {"guest"}
+    )
 
 
 def is_negative_catalog_answer(message: str) -> bool:
@@ -1010,6 +1034,21 @@ def filter_extra_basket_refs_named_in_message(
         if (basket_id := basket_id_from_ref(ref)) is None
         or basket_id in baskets_in_message
     ]
+
+
+def explicit_sku_inventory_count_task(task_text: str) -> bool:
+    normalized = " ".join(task_text.lower().split())
+    if not MESSAGE_SKU_RE.search(task_text):
+        return False
+    return "sku" in normalized and any(
+        marker in normalized
+        for marker in (
+            "same-day units",
+            "physically on hand",
+            "after reservations",
+            "available after reservations",
+        )
+    )
 
 
 def submission_refs(
@@ -1096,6 +1135,12 @@ def submission_refs(
                     *upload_receipt_sku_refs(vm, row_refs),
                 ]
             )
+        if (
+            vm is not None
+            and cmd.task_type == "count"
+            and explicit_sku_inventory_count_task(task_text)
+        ):
+            row_refs = dedupe_refs([*row_refs, *task_sku_refs(vm, task_text)])
         if vm is not None and task_text:
             excluded_refs = set(negated_task_sku_refs(vm, task_text))
             if excluded_refs:
@@ -1124,6 +1169,15 @@ def submission_refs(
             )
         if vm is not None and cmd.task_type == "refund":
             row_refs = dedupe_refs([*row_refs, *linked_payment_refs_for_returns(vm, row_refs)])
+        if (
+            vm is not None
+            and cmd.task_type == "discount"
+            and user_id
+            and EMPLOYEE_ID_RE.match(user_id)
+        ):
+            employee_ref = employee_ref_by_id(vm, user_id)
+            if employee_ref:
+                row_refs = dedupe_refs([*row_refs, employee_ref])
         if vm is not None:
             row_refs = replace_customer_facing_employee_refs(
                 vm,

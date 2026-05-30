@@ -385,6 +385,10 @@ def test_parse_runtime_identity() -> None:
         "cust_060",
         {"customer", "discount_manager"},
     )
+    assert parse_runtime_identity("user: anonymous\nroles: GUEST\n") == (
+        "anonymous",
+        {"guest"},
+    )
     assert parse_runtime_identity("user: cust-060\nroles: customer\n") == (
         "cust-060",
         {"customer"},
@@ -1006,7 +1010,7 @@ def test_submission_refs_keeps_only_upload_for_crosslist_report() -> None:
 
 
 def test_submission_refs_drops_guest_security_denial_customer_refs() -> None:
-    vm = FakeVM(id_stdout="user: guest\nroles: guest\n")
+    vm = FakeVM(id_stdout="user: guest (anonymous)\nroles: GUEST\n")
 
     assert submission_refs(
         CompletionStub(
@@ -1018,6 +1022,70 @@ def test_submission_refs_drops_guest_security_denial_customer_refs() -> None:
         ),
         vm,
     ) == ["/docs/security.md", "/docs/checkout.md"]
+
+
+def test_submission_refs_adds_explicit_skus_for_inventory_count_task() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-125.json": {
+                "sku": "PT-GRD-BOS-GWS1400-125"
+            },
+            "/proc/catalog/Metabo/PT-GRD-MET-W18-125-4AH.json": {
+                "sku": "PT-GRD-MET-W18-125-4AH"
+            },
+            "/proc/stores/store-graz-center.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="count",
+            message="0",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=["/proc/stores/store-graz-center.json"],
+        ),
+        vm,
+        task_text=(
+            "At Graz central PowerTools, how many of these SKUs have at least "
+            "3 units physically on hand, but fewer than 3 same-day units "
+            "available after reservations: PT-GRD-BOS-GWS1400-125, "
+            "PT-GRD-MET-W18-125-4AH?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/stores/store-graz-center.json",
+        "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-125.json",
+        "/proc/catalog/Metabo/PT-GRD-MET-W18-125-4AH.json",
+    ]
+
+
+def test_submission_refs_adds_current_employee_ref_for_discount_decision() -> None:
+    vm = FakeVM(
+        id_stdout="user: emp_056\nroles: employee discount_requester\n",
+        sql_outputs={
+            "from employee_accounts": csv_rows(
+                "record_path",
+                "/proc/employees/emp_056.json",
+            ),
+        },
+        existing_paths={"/proc/employees/emp_056.json", "/proc/baskets/basket_013.json"},
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="discount",
+            outcome="OUTCOME_DENIED_SECURITY",
+            message="OUTCOME_DENIED_SECURITY",
+            grounding_doc_refs=["/docs/security.md", "/docs/discounts.md"],
+            grounding_row_refs=["/proc/baskets/basket_013.json"],
+        ),
+        vm,
+    ) == [
+        "/docs/security.md",
+        "/docs/discounts.md",
+        "/proc/baskets/basket_013.json",
+        "/proc/employees/emp_056.json",
+    ]
 
 
 def test_submission_refs_drops_extra_basket_refs_when_message_names_target() -> None:
