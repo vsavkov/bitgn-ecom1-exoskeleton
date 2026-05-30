@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import re
 from collections.abc import Sequence
 from typing import Any, NamedTuple, Protocol
@@ -387,6 +388,18 @@ def message_sku_refs(vm: RuntimeVM, message: str) -> list[str]:
     )
 
 
+def completion_step_sku_refs(vm: RuntimeVM, cmd: CompletionLike) -> list[str]:
+    steps = getattr(cmd, "completed_steps_laconic", None)
+    if not isinstance(steps, Sequence) or isinstance(steps, str):
+        return []
+
+    sku_values: list[str] = []
+    for step in steps:
+        if isinstance(step, str):
+            sku_values.extend(MESSAGE_SKU_RE.findall(step))
+    return sku_refs(vm, sku_values)
+
+
 def _catalog_record_ref_by_sku_from_tree(vm: RuntimeVM, sku: str) -> str | None:
     stack = ["/proc/catalog"]
     target = f"{sku}.json"
@@ -459,6 +472,7 @@ def negated_task_sku_refs(vm: RuntimeVM, task_text: str) -> list[str]:
 
 def upload_receipt_sku_refs(vm: RuntimeVM, refs: Sequence[str]) -> list[str]:
     sku_values: list[str] = []
+    parsed_record_refs: list[str] = []
     for ref in refs:
         path, _fragment = split_ref_fragment(ref)
         path = normalize_runtime_path(path)
@@ -469,8 +483,32 @@ def upload_receipt_sku_refs(vm: RuntimeVM, refs: Sequence[str]) -> list[str]:
         except (AttributeError, ConnectError):
             continue
         content = getattr(record, "content", "") or ""
+        try:
+            decoded = json.loads(content)
+        except json.JSONDecodeError:
+            pass
+        else:
+            if isinstance(decoded, dict) and isinstance(decoded.get("text"), str):
+                content = decoded["text"]
+        try:
+            from receipt_price import _fetch_current_products, parse_receipt_ocr
+
+            _subtotal, items = parse_receipt_ocr(content)
+            product_rows, resolved_skus = _fetch_current_products(
+                vm,
+                [item.raw_sku for item in items],
+            )
+            for item in items:
+                resolved_sku = resolved_skus.get(item.raw_sku)
+                if not resolved_sku:
+                    continue
+                record_path = product_rows.get(resolved_sku, {}).get("record_path") or ""
+                if record_path:
+                    parsed_record_refs.append(record_path)
+        except RuntimeError:
+            pass
         sku_values.extend(MESSAGE_SKU_RE.findall(content))
-    return sku_refs(vm, sku_values)
+    return dedupe_refs([*parsed_record_refs, *sku_refs(vm, sku_values)])
 
 
 def availability_count_refs_from_catalog_result(result: Any) -> list[str]:
@@ -984,6 +1022,18 @@ def is_negative_catalog_answer(message: str) -> bool:
     )
 
 
+def is_positive_availability_answer(message: str) -> bool:
+    normalized = " ".join(message.lower().split()).strip()
+    return normalized in {"<yes>", "yes", "ja", "true"} or (
+        normalized.startswith("true(") and normalized.endswith(")")
+    )
+
+
+def task_has_primary_negative_product_description(task_text: str) -> bool:
+    before_parenthetical = task_text.split("(", 1)[0].lower()
+    return " not the " in f" {before_parenthetical} "
+
+
 def is_crosslist_report_task(task_text: str, message: str) -> bool:
     combined = f"{task_text}\n{message}".lower()
     return "/exports/crosslist" in combined and "purchase request" in combined
@@ -1049,6 +1099,87 @@ def explicit_sku_inventory_count_task(task_text: str) -> bool:
             "available after reservations",
         )
     )
+
+
+def plain_integer_message(message: str) -> int | None:
+    normalized = message.strip()
+    if not normalized or not normalized.isdecimal():
+        return None
+    return int(normalized)
+
+
+def positive_availability_count_message(message: str) -> int | None:
+    normalized = " ".join(message.lower().split()).strip()
+    if not normalized.startswith("true(") or not normalized.endswith(")"):
+        return None
+    value = normalized.removeprefix("true(").removesuffix(")")
+    if not value.isdecimal():
+        return None
+    return int(value)
+
+
+def align_count_catalog_refs_to_answer(
+    row_refs: Sequence[str],
+    *,
+    message: str,
+    task_text: str,
+) -> list[str]:
+    count = plain_integer_message(message)
+    if count is None or explicit_sku_inventory_count_task(task_text):
+        return list(row_refs)
+
+    catalog_refs = [ref for ref in row_refs if is_catalog_ref(ref)]
+    if len(catalog_refs) <= count:
+        return list(row_refs)
+
+    kept_catalog_refs = set(catalog_refs[:count])
+    return [
+        ref
+        for ref in row_refs
+        if not is_catalog_ref(ref) or ref in kept_catalog_refs
+    ]
+
+
+def align_positive_availability_refs_to_answer(
+    row_refs: Sequence[str],
+    *,
+    message: str,
+) -> list[str]:
+    count = positive_availability_count_message(message)
+    if count is None:
+        return list(row_refs)
+
+    catalog_refs = [ref for ref in row_refs if is_catalog_ref(ref)]
+    if len(catalog_refs) <= count:
+        return list(row_refs)
+
+    kept_catalog_refs = set(catalog_refs[:count])
+    return [
+        ref
+        for ref in row_refs
+        if not is_catalog_ref(ref) or ref in kept_catalog_refs
+    ]
+
+
+def align_catalog_clarification_refs_to_message(
+    vm: RuntimeVM,
+    row_refs: Sequence[str],
+    *,
+    message: str,
+) -> list[str]:
+    message_catalog_refs = set(
+        normalize_runtime_path(split_ref_fragment(ref)[0])
+        for ref in sku_refs(vm, MESSAGE_SKU_RE.findall(message))
+    )
+    if not message_catalog_refs:
+        return list(row_refs)
+
+    return [
+        ref
+        for ref in row_refs
+        if not is_catalog_ref(ref)
+        or normalize_runtime_path(split_ref_fragment(ref)[0]) in message_catalog_refs
+    ]
 
 
 def submission_refs(
@@ -1128,12 +1259,41 @@ def submission_refs(
             "receipt_price_check",
             "checkout",
         }:
+            task_sku_row_refs = task_sku_refs(vm, task_text)
+            if cmd.task_type == "availability_count" and catalog_refs_from_refs(row_refs):
+                if (
+                    not is_positive_availability_answer(cmd.message)
+                    or task_has_primary_negative_product_description(task_text)
+                ):
+                    excluded_refs = set(negated_task_sku_refs(vm, task_text))
+                    task_sku_row_refs = [
+                        ref
+                        for ref in task_sku_row_refs
+                        if normalize_runtime_path(split_ref_fragment(ref)[0])
+                        not in excluded_refs
+                    ]
             row_refs = dedupe_refs(
                 [
                     *row_refs,
-                    *task_sku_refs(vm, task_text),
+                    *task_sku_row_refs,
+                    *completion_step_sku_refs(vm, cmd),
                     *upload_receipt_sku_refs(vm, row_refs),
                 ]
+            )
+            if cmd.task_type == "availability_count":
+                row_refs = align_positive_availability_refs_to_answer(
+                    row_refs,
+                    message=cmd.message,
+                )
+        if (
+            vm is not None
+            and cmd.task_type in {"availability_count", "availability_lookup", "catalog_lookup"}
+            and getattr(cmd, "outcome", "") == "OUTCOME_NONE_CLARIFICATION"
+        ):
+            row_refs = align_catalog_clarification_refs_to_message(
+                vm,
+                row_refs,
+                message=cmd.message,
             )
         if (
             vm is not None
@@ -1150,6 +1310,11 @@ def submission_refs(
                     if normalize_runtime_path(split_ref_fragment(ref)[0])
                     not in excluded_refs
                 ]
+            row_refs = align_count_catalog_refs_to_answer(
+                row_refs,
+                message=cmd.message,
+                task_text=task_text,
+            )
         if cmd.task_type == "catalog_lookup" and is_negative_catalog_answer(cmd.message):
             row_refs = [
                 ref

@@ -101,6 +101,13 @@ class ParsedCatalogConstraint(BaseModel):
     )
     label: str = Field(description="Property label, e.g. 'disc diameter'.")
     value: str = Field(description="Property value, e.g. '180 mm'.")
+    negated: bool = Field(
+        default=False,
+        description=(
+            "True when the task excludes this variant/property, e.g. "
+            "'without workshop accessories' or '4Ah set excluded'."
+        ),
+    )
 
 
 class ParsedCatalogItem(BaseModel):
@@ -441,10 +448,28 @@ def _constraint_segments(text: str) -> list[str]:
 
 
 def _constraint_from_text(text: str) -> ParsedCatalogConstraint:
-    words = text.split()
-    normalized_words = _norm_words(text).split()
+    negated = False
+    clean_text = text.strip()
+    normalized_text = _norm_words(clean_text)
+    for prefix in (
+        "not the ",
+        "not ",
+        "without ",
+        "outside the ",
+        "outside ",
+    ):
+        if normalized_text.startswith(_norm_words(prefix)):
+            clean_text = clean_text[len(prefix) :].strip()
+            negated = True
+            break
+    if normalized_text.endswith(" excluded"):
+        clean_text = clean_text[: -len(" excluded")].strip()
+        negated = True
+
+    words = clean_text.split()
+    normalized_words = _norm_words(clean_text).split()
     label = ""
-    value = text.strip()
+    value = clean_text
 
     if len(normalized_words) >= 3 and normalized_words[1] in {
         "class",
@@ -465,7 +490,12 @@ def _constraint_from_text(text: str) -> ParsedCatalogConstraint:
         label = words[0]
         value = " ".join(words[1:]) if len(words) > 1 else ""
 
-    return ParsedCatalogConstraint(text=text.strip(), label=label, value=value.strip())
+    return ParsedCatalogConstraint(
+        text=clean_text,
+        label=label,
+        value=value.strip(),
+        negated=negated,
+    )
 
 
 def _constraints_from_text(text: str) -> list[ParsedCatalogConstraint]:
@@ -787,6 +817,11 @@ def _candidate_constraint_matches(
     missing: list[str] = []
     for constraint in constraints:
         constraint_text, constraint_label = _constraint_text_and_label(constraint)
+        negated = (
+            constraint.negated
+            if isinstance(constraint, ParsedCatalogConstraint)
+            else _constraint_from_text(str(constraint)).negated
+        )
         found = False
         for prop in properties:
             if _property_matches_constraint(
@@ -817,7 +852,12 @@ def _candidate_constraint_matches(
             and _constraint_matches_product_name(constraint_text, product_name)
         ):
             found = True
-        if found:
+        if negated:
+            if found:
+                missing.append(f"not {constraint_text}")
+            else:
+                matched.append(f"not {constraint_text}")
+        elif found:
             matched.append(constraint_text)
         else:
             missing.append(constraint_text)

@@ -199,6 +199,37 @@ def test_repair_parsed_catalog_item_backfills_missing_constraints_from_source() 
     ]
 
 
+def test_repair_parsed_catalog_item_marks_excluded_constraints() -> None:
+    parsed = _repair_parsed_catalog_item(
+        ParsedCatalogItems.model_validate(
+            {
+                "items": [
+                    {
+                        "item_index": 0,
+                        "brand": "Bosch",
+                        "product_kind": "washer",
+                        "product_family": "Bosch UniversalAquatak 135",
+                        "constraints": [],
+                    }
+                ]
+            }
+        ).items[0],
+        (
+            "the washer from Bosch in the Bosch UniversalAquatak 135 line "
+            "that has patio set excluded"
+        ),
+    )
+
+    assert parsed.constraints == [
+        ParsedCatalogConstraint(
+            text="patio set",
+            label="",
+            value="patio set",
+            negated=True,
+        )
+    ]
+
+
 def test_repair_parsed_catalog_item_prefers_source_family_boundary() -> None:
     parsed = _repair_parsed_catalog_item(
         ParsedCatalogItems.model_validate(
@@ -311,6 +342,36 @@ def test_candidate_constraint_matches_and_availability() -> None:
 
     assert matched == ["color family black", "zinc plated"]
     assert missing == ["diameter 5 mm"]
+
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="patio set",
+                label="",
+                value="patio set",
+                negated=True,
+            )
+        ],
+        [],
+        "Bosch UniversalAquatak 135 patio set",
+    )
+    assert matched == []
+    assert missing == ["not patio set"]
+
+    matched, missing = _candidate_constraint_matches(
+        [
+            ParsedCatalogConstraint(
+                text="patio set",
+                label="",
+                value="patio set",
+                negated=True,
+            )
+        ],
+        [],
+        "Bosch UniversalAquatak 135 car cleaning set",
+    )
+    assert matched == ["not patio set"]
+    assert missing == []
     assert _availability_qualifies(5, threshold=3, predicate="at_least")
     assert not _availability_qualifies(2, threshold=3, predicate="at_least")
     assert _availability_qualifies(2, threshold=3, predicate="below")

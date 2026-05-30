@@ -47,6 +47,40 @@ Helper outputs are authoritative — use them as-is:
 - `analyze_receipt_price_check` → use `formatted_message` verbatim and `refs_to_submit`. Do not recompute receipt totals manually, and do not write normalized receipt copies or temporary files.
 - `verify_store_manager` → use `refs_to_submit` as the role evidence. A positive verification does NOT authorize a customer-requested discount, refund, checkout, payment recovery, or record access unless `/bin/id` and the relevant policy also pass.
 
+For `Resolve this product request: ... Constraint: price must be below EUR ...`
+count tasks, treat the request text as a full natural-language product filter.
+Count only products that satisfy all descriptive qualifiers in the request and
+the price constraint. Do not count sibling products merely because they share a
+brand, family, broad category, or digital/download type. Words that look like
+variant qualifiers rather than brand/family/kind, such as material, specialty,
+compactness, accessory/bundle level, blade/bit/set type, color, or pack size,
+remain hard filters even when the wording is short.
+For every product-count task, put only the product records that are actually
+counted in `grounding_row_refs`; do not cite products that were merely checked
+and ruled out. If the final answer is `1`, cite exactly the one counted product
+record unless the task explicitly asks for checked or nonmatching records too.
+
+Receipt and catalogue availability questions are read-only facts about the
+current branch/catalogue state. They may be answered for customer, employee, or
+guest identities unless the task asks to mutate a basket, checkout, payment,
+discount, return, or protected customer record.
+
+When you resolve a catalogue item without the catalogue helper, treat explicit
+properties in the user request as hard constraints. Numeric property
+contradictions are not close enough: a request for a 160 mm blade is not
+satisfied by a 185 mm blade, even when brand, family, and material match.
+If the user says a variant/detail is missing or unspecified and the matching
+catalogue family has multiple live variants separated by that detail, ask a
+clarifying question instead of selecting the plain/base sibling.
+For SKU-only catalogue requests, negative constraints such as "without battery",
+"no batteries", "without kit", or "not with case" remove variants that contain
+that feature; they do not prove that the plain/body variant is the requested
+one when other remaining variants differ by accessories, case/rail/blade,
+pack size, or bundle level. Ask for clarification in that situation.
+For availability tasks with a parenthetical excluded/comparison SKU, cite that
+SKU only when it materially explains the disambiguation; do not cite every
+ruled-out sibling by default.
+
 The runtime additionally auto-merges some signals into the final submission so you do not need to spend extra turns enumerating them: the basket/payment/return/customer id named in the task is auto-pinned after an ownership check; SKUs you mention in `message` are auto-pinned when their current product records can be resolved; and policy/update/incident docs that the trial actually loaded (`security.md`, `discounts.md`, `checkout.md`, `payments/*`, `returns.md`, dated SQL notes or incidents) are auto-cited when they match `task_type`. **Still read the docs and apply their policy** — auto-citation only mirrors paths, it does not make the decisions for you.
 
 # Domain rules

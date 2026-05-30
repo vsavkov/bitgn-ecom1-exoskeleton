@@ -49,6 +49,7 @@ class CompletionStub:
     message: str = ""
     grounding_doc_refs: list[str] = field(default_factory=list)
     grounding_row_refs: list[str] = field(default_factory=list)
+    completed_steps_laconic: list[str] = field(default_factory=list)
     outcome: str = "OUTCOME_OK"
 
 
@@ -856,6 +857,193 @@ def test_submission_refs_keeps_explicitly_excluded_sku_refs_for_availability() -
     ]
 
 
+def test_submission_refs_does_not_auto_add_excluded_sku_when_helper_resolved_product() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json": {
+                "sku": "PT-SAW-MAK-DHS680-RAIL"
+            },
+            "/proc/catalog/Makita/PT-SAW-MAK-DHS680-BLADE.json": {
+                "sku": "PT-SAW-MAK-DHS680-BLADE"
+            },
+            "/proc/locations/Salzburg/store-salzburg-maxglan.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/proc/locations/Salzburg/store-salzburg-maxglan.json",
+                "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
+            ],
+            message="<YES>",
+        ),
+        vm,
+        task_text=(
+            "Do you have accessory bundle not the blade accessory "
+            "(but not PT-SAW-MAK-DHS680-BLADE) in stock?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/locations/Salzburg/store-salzburg-maxglan.json",
+        "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
+    ]
+
+
+def test_submission_refs_keeps_only_resolved_product_for_positive_availability_count() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Karcher/PT-WASH-KAR-K4-PREMIUM.json": {
+                "sku": "PT-WASH-KAR-K4-PREMIUM"
+            },
+            "/proc/catalog/Karcher/PT-WASH-KAR-K4-PIPE.json": {
+                "sku": "PT-WASH-KAR-K4-PIPE"
+            },
+            "/proc/locations/Salzburg/store-salzburg-nord.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/proc/locations/Salzburg/store-salzburg-nord.json",
+                "/proc/catalog/Karcher/PT-WASH-KAR-K4-PREMIUM.json",
+            ],
+            message="TRUE(1)",
+        ),
+        vm,
+        task_text=(
+            "Do you have karcher k4 specialist accessory set without home car kit "
+            "(but not PT-WASH-KAR-K4-PIPE) in stock?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/locations/Salzburg/store-salzburg-nord.json",
+        "/proc/catalog/Karcher/PT-WASH-KAR-K4-PREMIUM.json",
+    ]
+
+
+def test_submission_refs_adds_sku_used_in_availability_reasoning_steps() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Alpen/PT-BIT-ALP-HSS-41.json": {
+                "sku": "PT-BIT-ALP-HSS-41"
+            },
+            "/proc/catalog/Alpen/PT-BIT-ALP-HSS-25.json": {
+                "sku": "PT-BIT-ALP-HSS-25"
+            },
+            "/proc/locations/Linz/store-linz-urfahr.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/proc/catalog/Alpen/PT-BIT-ALP-HSS-41.json",
+                "/proc/locations/Linz/store-linz-urfahr.json",
+            ],
+            completed_steps_laconic=[
+                "Resolved the larger standard set after excluding PT-BIT-ALP-HSS-25.",
+            ],
+            message="TRUE(1)",
+        ),
+        vm,
+        task_text=(
+            "Do you have 4 of 'alpen hss sprint larger standard set' "
+            "(but not PT-BIT-ALP-HSS-25) in stock?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/catalog/Alpen/PT-BIT-ALP-HSS-41.json",
+        "/proc/locations/Linz/store-linz-urfahr.json",
+    ]
+
+
+def test_submission_refs_keeps_catalog_clarification_refs_named_in_message() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-125.json": {
+                "sku": "PT-GRD-BOS-GWS1400-125"
+            },
+            "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-150.json": {
+                "sku": "PT-GRD-BOS-GWS1400-150"
+            },
+            "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-CASE.json": {
+                "sku": "PT-GRD-BOS-GWS1400-CASE"
+            },
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="catalog_lookup",
+            outcome="OUTCOME_NONE_CLARIFICATION",
+            message=(
+                "Which one do you mean: PT-GRD-BOS-GWS1400-150 "
+                "or PT-GRD-BOS-GWS1400-CASE?"
+            ),
+            grounding_doc_refs=["/docs/catalogue-lookup.md"],
+            grounding_row_refs=[
+                "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-150.json",
+                "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-CASE.json",
+                "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-125.json",
+            ],
+        ),
+        vm,
+    ) == [
+        "/docs/catalogue-lookup.md",
+        "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-150.json",
+        "/proc/catalog/Bosch Professional/PT-GRD-BOS-GWS1400-CASE.json",
+    ]
+
+
+def test_submission_refs_filters_availability_clarification_refs_to_message_options() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Einhell/PT-CMP-EIN-TEAC270-50.json": {
+                "sku": "PT-CMP-EIN-TEAC270-50"
+            },
+            "/proc/catalog/Einhell/PT-CMP-EIN-TEAC270-50KIT.json": {
+                "sku": "PT-CMP-EIN-TEAC270-50KIT"
+            },
+            "/proc/catalog/Einhell/PT-CMP-EIN-TEAC270-50S.json": {
+                "sku": "PT-CMP-EIN-TEAC270-50S"
+            },
+            "/proc/stores/store-salzburg-maxglan.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_lookup",
+            outcome="OUTCOME_NONE_CLARIFICATION",
+            message=(
+                "Which one do you mean: PT-CMP-EIN-TEAC270-50KIT "
+                "or PT-CMP-EIN-TEAC270-50S?"
+            ),
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/proc/stores/store-salzburg-maxglan.json",
+                "/proc/catalog/Einhell/PT-CMP-EIN-TEAC270-50KIT.json",
+                "/proc/catalog/Einhell/PT-CMP-EIN-TEAC270-50S.json",
+                "/proc/catalog/Einhell/PT-CMP-EIN-TEAC270-50.json",
+            ],
+        ),
+        vm,
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/stores/store-salzburg-maxglan.json",
+        "/proc/catalog/Einhell/PT-CMP-EIN-TEAC270-50KIT.json",
+        "/proc/catalog/Einhell/PT-CMP-EIN-TEAC270-50S.json",
+    ]
+
+
 def test_submission_refs_removes_explicitly_excluded_sku_refs_for_counts() -> None:
     vm = FakeVM(
         files={
@@ -886,6 +1074,43 @@ def test_submission_refs_removes_explicitly_excluded_sku_refs_for_counts() -> No
     ) == [
         "/docs/catalogue-lookup.md",
         "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
+    ]
+
+
+def test_submission_refs_keeps_only_counted_catalog_refs_for_plain_count_answer() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/PowerTools Academy/PT-DIG-COURSE-GRINDER-SAFETY.json": {
+                "sku": "PT-DIG-COURSE-GRINDER-SAFETY"
+            },
+            "/proc/catalog/PowerTools Academy/PT-DIG-COURSE-SAW-STRAIGHT-CUTS.json": {
+                "sku": "PT-DIG-COURSE-SAW-STRAIGHT-CUTS"
+            },
+            "/proc/catalog/PowerTools Academy/PT-DIG-COURSE-DRILL-BASICS.json": {
+                "sku": "PT-DIG-COURSE-DRILL-BASICS"
+            },
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="count",
+            grounding_doc_refs=["/docs/catalogue-lookup.md"],
+            grounding_row_refs=[
+                "/proc/catalog/PowerTools Academy/PT-DIG-COURSE-GRINDER-SAFETY.json",
+                "/proc/catalog/PowerTools Academy/PT-DIG-COURSE-SAW-STRAIGHT-CUTS.json",
+                "/proc/catalog/PowerTools Academy/PT-DIG-COURSE-DRILL-BASICS.json",
+            ],
+            message="1",
+        ),
+        vm,
+        task_text=(
+            "Resolve this product request: PowerTools Academy intermediate "
+            "course. Constraint: price must be below EUR 64.10."
+        ),
+    ) == [
+        "/docs/catalogue-lookup.md",
+        "/proc/catalog/PowerTools Academy/PT-DIG-COURSE-GRINDER-SAFETY.json",
     ]
 
 
