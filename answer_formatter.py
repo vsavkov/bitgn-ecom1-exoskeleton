@@ -84,6 +84,9 @@ def format_completion_message(
     debug: bool,
     output_lines: MutableSequence[str] | None = None,
 ) -> str:
+    if outcome == "OUTCOME_DENIED_SECURITY":
+        return current_message.strip() or current_message
+
     payload = {
         "task_text": task_text,
         "task_type": task_type,
