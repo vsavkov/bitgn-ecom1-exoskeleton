@@ -271,6 +271,11 @@ def _normalize_classification(
         return parsed
     if not parsed.system_override_attempt:
         return parsed
+    if not _requires_override_denial(parsed, task_text):
+        # The classifier can be conservative around command-looking read-only
+        # tasks. Without a protected action, mutation, contact disclosure, or a
+        # hard override marker, treat that as ordinary runtime work.
+        return parsed.model_copy(update={"system_override_attempt": False})
     if (
         parsed.checkout_intent
         and parsed.explicit_basket_id

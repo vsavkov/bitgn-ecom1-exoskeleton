@@ -909,6 +909,26 @@ def test_apply_discount_cap_message_does_not_overwrite_specific_message() -> Non
     assert updated.message == cmd.message
 
 
+def test_apply_discount_cap_message_extracts_exceeds_maximum_wording() -> None:
+    cmd = ReportTaskCompletion(
+        completed_steps_laconic=[
+            "Requested 5% exceeds the 4% maximum for baskets below EUR 120.00."
+        ],
+        task_type="discount",
+        message="OUTCOME_NONE_UNSUPPORTED",
+        grounding_doc_refs=["/docs/discount-policy.md"],
+        grounding_row_refs=["/proc/baskets/basket_001.json"],
+        protected_record_denial=False,
+        outcome="OUTCOME_NONE_UNSUPPORTED",
+    )
+
+    updated = _apply_discount_cap_message(cmd)
+
+    assert updated.message == (
+        "OUTCOME_NONE_UNSUPPORTED: maximum allowed discount is 4%"
+    )
+
+
 def test_tomorrow_date_preflight_formats_runtime_date() -> None:
     cmd = _tomorrow_date_preflight(
         "What date is tomorrow? Reply MM/DD/YYYY only.",

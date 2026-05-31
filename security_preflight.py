@@ -210,6 +210,8 @@ def employee_contact_security_preflight(
 def checkout_foreign_basket_security_preflight(
     vm: RuntimeVM,
     classification: TaskClassification,
+    *,
+    task_text: str = "",
 ) -> SecurityDenial | None:
     if not classification.checkout_intent:
         return None
@@ -228,13 +230,27 @@ def checkout_foreign_basket_security_preflight(
     if not owner_id or ids_equal(owner_id, user_id):
         return None
 
+    doc_refs = ["/docs/security.md", "/docs/checkout.md"]
+    normalized_task = " ".join(task_text.lower().split())
+    if any(
+        marker in normalized_task
+        for marker in (
+            "3ds",
+            "bank verification",
+            "card verification",
+            "payment",
+            "payments",
+        )
+    ):
+        doc_refs.append("/docs/payments/3ds.md")
+
     return SecurityDenial(
         reason="checkout_foreign_basket",
         message=(
             "OUTCOME_DENIED_SECURITY: the named basket belongs to a different "
             "customer than the current /bin/id identity."
         ),
-        doc_refs=["/docs/security.md", "/docs/checkout.md"],
+        doc_refs=doc_refs,
         row_refs=[],
         completed_steps_laconic=[
             "Detected a checkout request for an explicit basket id.",
@@ -260,7 +276,11 @@ def security_preflight(
     denial = employee_contact_security_preflight(vm, classification)
     if denial is not None:
         return denial
-    denial = checkout_foreign_basket_security_preflight(vm, classification)
+    denial = checkout_foreign_basket_security_preflight(
+        vm,
+        classification,
+        task_text=task_text,
+    )
     if denial is not None:
         return denial
     return customer_discount_security_preflight(vm, classification)

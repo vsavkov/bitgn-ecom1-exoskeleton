@@ -820,7 +820,7 @@ def test_submission_refs_adds_sku_refs_without_digits() -> None:
     ]
 
 
-def test_submission_refs_keeps_explicitly_excluded_sku_refs_for_availability() -> None:
+def test_submission_refs_omits_explicitly_excluded_sku_refs_for_availability_target() -> None:
     vm = FakeVM(
         files={
             "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json": {
@@ -853,7 +853,6 @@ def test_submission_refs_keeps_explicitly_excluded_sku_refs_for_availability() -
         "/docs/availability-checks.md",
         "/proc/locations/Salzburg/store-salzburg-maxglan.json",
         "/proc/catalog/Makita/PT-SAW-MAK-DHS680-RAIL.json",
-        "/proc/catalog/Makita/PT-SAW-MAK-DHS680-BLADE.json",
     ]
 
 
@@ -892,7 +891,7 @@ def test_submission_refs_does_not_auto_add_excluded_sku_when_helper_resolved_pro
     ]
 
 
-def test_submission_refs_adds_excluded_sku_for_negative_availability_evidence() -> None:
+def test_submission_refs_omits_excluded_sku_when_target_product_is_resolved() -> None:
     vm = FakeVM(
         files={
             "/proc/catalog/DeWalt/PT-IMP-DEW-DCF887-BODY.json": {
@@ -924,7 +923,6 @@ def test_submission_refs_adds_excluded_sku_for_negative_availability_evidence() 
         "/docs/availability-checks.md",
         "/proc/locations/Vienna/store-vie-meidling.json",
         "/proc/catalog/DeWalt/PT-IMP-DEW-DCF887-BODY.json",
-        "/proc/catalog/DeWalt/PT-IMP-DEW-DCF887-2AH.json",
     ]
 
 
@@ -960,6 +958,43 @@ def test_submission_refs_does_not_auto_add_excluded_sku_after_primary_negative_f
         "/docs/availability-checks.md",
         "/proc/locations/Vienna/store-vie-favoriten.json",
         "/proc/catalog/Makita/PT-DRL-MAK-DDF485-5AH.json",
+    ]
+
+
+def test_submission_refs_removes_model_supplied_excluded_sku_for_availability_count() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/3M/PT-SAFE-3M-SF400-SMOKE.json": {
+                "sku": "PT-SAFE-3M-SF400-SMOKE"
+            },
+            "/proc/catalog/3M/PT-SAFE-3M-SF400-AMBER.json": {
+                "sku": "PT-SAFE-3M-SF400-AMBER"
+            },
+            "/proc/locations/Salzburg/store-salzburg-alpenstrasse.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/proc/locations/Salzburg/store-salzburg-alpenstrasse.json",
+                "/proc/catalog/3M/PT-SAFE-3M-SF400-SMOKE.json",
+                "/proc/catalog/3M/PT-SAFE-3M-SF400-AMBER.json",
+            ],
+            message="<NO>",
+        ),
+        vm,
+        task_text=(
+            "Do you have 5 of '3M SecureFit 400 tinted single pair. "
+            "Lens tint was not supplied.' "
+            "(but not PT-SAFE-3M-SF400-AMBER) in stock?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/locations/Salzburg/store-salzburg-alpenstrasse.json",
+        "/proc/catalog/3M/PT-SAFE-3M-SF400-SMOKE.json",
     ]
 
 

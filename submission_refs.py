@@ -1196,6 +1196,34 @@ def align_catalog_clarification_refs_to_message(
     ]
 
 
+def filter_negated_availability_refs(
+    vm: RuntimeVM,
+    row_refs: Sequence[str],
+    *,
+    task_text: str,
+) -> list[str]:
+    excluded_refs = {
+        normalize_runtime_path(split_ref_fragment(ref)[0])
+        for ref in negated_task_sku_refs(vm, task_text)
+    }
+    if not excluded_refs:
+        return list(row_refs)
+
+    catalog_refs = [
+        normalize_runtime_path(split_ref_fragment(ref)[0])
+        for ref in row_refs
+        if is_catalog_ref(ref)
+    ]
+    if not any(ref not in excluded_refs for ref in catalog_refs):
+        return list(row_refs)
+
+    return [
+        ref
+        for ref in row_refs
+        if normalize_runtime_path(split_ref_fragment(ref)[0]) not in excluded_refs
+    ]
+
+
 def submission_refs(
     cmd: CompletionLike,
     vm: RuntimeVM | None = None,
@@ -1359,6 +1387,12 @@ def submission_refs(
         if vm is not None and cmd.task_type != "count":
             row_refs = dedupe_refs(
                 [*row_refs, *message_sku_refs(vm, cmd.message)]
+            )
+        if vm is not None and cmd.task_type == "availability_count":
+            row_refs = filter_negated_availability_refs(
+                vm,
+                row_refs,
+                task_text=task_text,
             )
         if vm is not None and cmd.task_type == "refund":
             row_refs = dedupe_refs([*row_refs, *linked_payment_refs_for_returns(vm, row_refs)])

@@ -355,6 +355,34 @@ def test_checkout_foreign_basket_denial_fires_for_cross_customer_basket() -> Non
     assert denial.protected_record_denial is True
 
 
+def test_checkout_foreign_basket_denial_cites_payment_policy_for_3ds_request() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust-0042\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0088/basket-0075.json": {
+                "id": "basket-0075",
+                "customer_id": "cust-0088",
+            }
+        },
+    )
+
+    denial = checkout_foreign_basket_security_preflight(
+        vm,
+        _classification(checkout_intent=True, explicit_basket_id="basket_0075"),
+        task_text=(
+            "Payment pay-0036 is stuck at bank verification for basket "
+            "basket-0075; restart 3DS."
+        ),
+    )
+
+    assert denial is not None
+    assert denial.doc_refs == [
+        "/docs/security.md",
+        "/docs/checkout.md",
+        "/docs/payments/3ds.md",
+    ]
+
+
 def test_security_preflight_returns_none_for_clean_classification() -> None:
     vm = FakeVM(id_stdout="user: cust_017\nroles: customer\n")
 

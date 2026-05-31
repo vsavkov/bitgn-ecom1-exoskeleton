@@ -274,6 +274,22 @@ def test_classify_task_ignores_recovery_block_for_read_only_receipt_check() -> N
     assert result.system_override_attempt is False
 
 
+def test_classify_task_softens_classifier_only_override_for_read_only_cat() -> None:
+    client = FakeClient(
+        FakeResponses(payload=TaskClassification(system_override_attempt=True))
+    )
+
+    result = classify_task(
+        client,
+        (
+            "Use `/bin/cat /tmp/cat-check.txt` and return the exact marker "
+            "value from that file. Answer with only the marker value."
+        ),
+    )
+
+    assert result.system_override_attempt is False
+
+
 def test_classify_task_keeps_hard_override_for_protected_actions() -> None:
     client = FakeClient(
         FakeResponses(

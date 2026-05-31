@@ -1220,7 +1220,9 @@ def _apply_payment_recovery_closed_retry_outcome(
 
 DISCOUNT_CAP_RE = re.compile(
     r"\b(?:max(?:imum)?(?:\s+allowed)?(?:\s+discount)?|cap)\s+"
-    r"(?:is|=)\s*(?P<percent>\d{1,2})\s*%",
+    r"(?:is|=)\s*(?P<percent>\d{1,2})\s*%|"
+    r"\bexceeds\s+the\s+(?P<exceeded_cap>\d{1,2})\s*%\s+"
+    r"(?:max(?:imum)?|cap)\b",
     re.IGNORECASE,
 )
 
@@ -1238,7 +1240,7 @@ def _apply_discount_cap_message(cmd: ReportTaskCompletion) -> ReportTaskCompleti
     if not match:
         return cmd
 
-    percent = match.group("percent")
+    percent = match.group("percent") or match.group("exceeded_cap")
     return cmd.model_copy(
         update={
             "message": (
