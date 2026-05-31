@@ -892,6 +892,42 @@ def test_submission_refs_does_not_auto_add_excluded_sku_when_helper_resolved_pro
     ]
 
 
+def test_submission_refs_adds_excluded_sku_for_negative_availability_evidence() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/DeWalt/PT-IMP-DEW-DCF887-BODY.json": {
+                "sku": "PT-IMP-DEW-DCF887-BODY"
+            },
+            "/proc/catalog/DeWalt/PT-IMP-DEW-DCF887-2AH.json": {
+                "sku": "PT-IMP-DEW-DCF887-2AH"
+            },
+            "/proc/locations/Vienna/store-vie-meidling.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/proc/locations/Vienna/store-vie-meidling.json",
+                "/proc/catalog/DeWalt/PT-IMP-DEW-DCF887-BODY.json",
+            ],
+            message="FALSE(0)",
+        ),
+        vm,
+        task_text=(
+            "Do you have the DeWalt DCF887 XR with battery inclusion unspecified "
+            "(but not PT-IMP-DEW-DCF887-2AH) in stock?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/locations/Vienna/store-vie-meidling.json",
+        "/proc/catalog/DeWalt/PT-IMP-DEW-DCF887-BODY.json",
+        "/proc/catalog/DeWalt/PT-IMP-DEW-DCF887-2AH.json",
+    ]
+
+
 def test_submission_refs_keeps_only_resolved_product_for_positive_availability_count() -> None:
     vm = FakeVM(
         files={

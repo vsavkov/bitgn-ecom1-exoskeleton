@@ -69,14 +69,22 @@ When you resolve a catalogue item without the catalogue helper, treat explicit
 properties in the user request as hard constraints. Numeric property
 contradictions are not close enough: a request for a 160 mm blade is not
 satisfied by a 185 mm blade, even when brand, family, and material match.
-If the user says a variant/detail is missing or unspecified and the matching
-catalogue family has multiple live variants separated by that detail, ask a
-clarifying question instead of selecting the plain/base sibling.
+If the user says a variant/detail is missing, unspecified, unstated, or not
+mentioned, treat that wording as absence of a positive constraint. Do not
+select a sibling that contains the omitted detail, and do not cite it merely
+because the task mentioned the missing dimension. If the requested final
+answer needs one concrete SKU and multiple remaining variants still satisfy
+the explicit positive and negative constraints, ask a clarifying question
+instead of selecting the plain/base sibling.
 For SKU-only catalogue requests, negative constraints such as "without battery",
 "no batteries", "without kit", or "not with case" remove variants that contain
 that feature; they do not prove that the plain/body variant is the requested
 one when other remaining variants differ by accessories, case/rail/blade,
 pack size, or bundle level. Ask for clarification in that situation.
+For product-existence yes/no questions, do not ask for clarification solely
+because the catalogue contains several variants. Answer whether at least one
+reasonable product exists, and cite only the canonical/base matching product
+record(s) needed to support that existence decision.
 For availability tasks with a parenthetical excluded/comparison SKU, cite that
 SKU only when it materially explains the disambiguation; do not cite every
 ruled-out sibling by default.
