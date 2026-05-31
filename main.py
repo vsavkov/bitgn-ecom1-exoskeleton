@@ -47,6 +47,7 @@ BITGN_URL = (
 BITGN_API_KEY = os.getenv("BITGN_API_KEY") or ""
 BENCH_ID = os.getenv("BENCH_ID") or os.getenv("BENCHMARK_ID") or "bitgn/ecom1-dev"
 MODEL_ID = os.getenv("MODEL_ID") or "gpt-4.1-2025-04-14"
+BITGN_TIMEOUT_MS = env_int("BITGN_TIMEOUT_MS", 30_000, minimum=1_000)
 
 RUNS_DIR = PROJECT_ROOT / "runs"
 DEFAULT_TRIAL_BATCH_SIZE = 10
@@ -65,6 +66,10 @@ def _print_locked(message: str) -> None:
 def _chunks[T](items: list[T], size: int):
     for index in range(0, len(items), size):
         yield items[index : index + size]
+
+
+def _harness_client() -> HarnessServiceClientSync:
+    return HarnessServiceClientSync(BITGN_URL, timeout_ms=BITGN_TIMEOUT_MS)
 
 
 def _format_task_report(output: dict) -> str:
@@ -252,7 +257,7 @@ def _write_run_artifact(result, started_at: datetime, trial_outputs: dict[str, d
 
 
 def _run_trial(trial_id: str, task_filter: set[str], debug: bool) -> tuple[str, dict]:
-    client = HarnessServiceClientSync(BITGN_URL)
+    client = _harness_client()
     trial = None
     output: dict = {}
     should_end = False
@@ -315,7 +320,7 @@ def main() -> None:
 
     try:
         _warm_openai_lazy_imports()
-        client = HarnessServiceClientSync(BITGN_URL)
+        client = _harness_client()
         print("Connecting to BitGN", client.status(StatusRequest()))
         res = client.get_benchmark(GetBenchmarkRequest(benchmark_id=BENCH_ID))
         print(
