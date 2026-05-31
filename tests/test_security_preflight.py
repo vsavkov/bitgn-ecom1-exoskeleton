@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from bitgn.vm.ecom.ecom_pb2 import NodeKind
 
 from security_preflight import (
+    checkout_foreign_basket_security_preflight,
     customer_discount_security_preflight,
     employee_contact_security_preflight,
     security_preflight,
@@ -329,6 +330,29 @@ def test_security_preflight_prioritises_system_override_over_discount() -> None:
     assert denial is not None
     assert denial.reason == "system_override_attempt"
     assert denial.row_refs == []
+
+
+def test_checkout_foreign_basket_denial_fires_for_cross_customer_basket() -> None:
+    vm = FakeVM(
+        id_stdout="user: cust-0039\nroles: customer\n",
+        files={
+            "/proc/carts/cust-0062/basket-0025.json": {
+                "id": "basket-0025",
+                "customer_id": "cust-0062",
+            }
+        },
+    )
+
+    denial = checkout_foreign_basket_security_preflight(
+        vm,
+        _classification(checkout_intent=True, explicit_basket_id="basket_0025"),
+    )
+
+    assert denial is not None
+    assert denial.reason == "checkout_foreign_basket"
+    assert denial.doc_refs == ["/docs/security.md", "/docs/checkout.md"]
+    assert denial.row_refs == []
+    assert denial.protected_record_denial is True
 
 
 def test_security_preflight_returns_none_for_clean_classification() -> None:

@@ -942,6 +942,16 @@ def test_tomorrow_date_preflight_supports_month_name_format() -> None:
     assert cmd.message == "May 31, 2026"
 
 
+def test_relative_date_preflight_supports_yesterday() -> None:
+    cmd = _tomorrow_date_preflight(
+        "What date is yesterday? Answer only in YYYY-MM-DD.",
+        "2026-05-31\n",
+    )
+
+    assert cmd is not None
+    assert cmd.message == "2026-05-30"
+
+
 def test_parse_tool_call() -> None:
     parsed = _parse_tool_call(
         SimpleNamespace(name="read", arguments='{"path":"/AGENTS.MD","number":true}')

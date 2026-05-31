@@ -928,6 +928,41 @@ def test_submission_refs_adds_excluded_sku_for_negative_availability_evidence() 
     ]
 
 
+def test_submission_refs_does_not_auto_add_excluded_sku_after_primary_negative_filter() -> None:
+    vm = FakeVM(
+        files={
+            "/proc/catalog/Makita/PT-DRL-MAK-DDF485-BODY.json": {
+                "sku": "PT-DRL-MAK-DDF485-BODY"
+            },
+            "/proc/catalog/Makita/PT-DRL-MAK-DDF485-5AH.json": {
+                "sku": "PT-DRL-MAK-DDF485-5AH"
+            },
+            "/proc/locations/Vienna/store-vie-favoriten.json": {"id": "store"},
+        }
+    )
+
+    assert submission_refs(
+        CompletionStub(
+            task_type="availability_count",
+            grounding_doc_refs=["/docs/availability-checks.md"],
+            grounding_row_refs=[
+                "/proc/locations/Vienna/store-vie-favoriten.json",
+                "/proc/catalog/Makita/PT-DRL-MAK-DDF485-5AH.json",
+            ],
+            message="<NO>",
+        ),
+        vm,
+        task_text=(
+            "Do you have Makita DDF485 not the 3Ah starter kit "
+            "(but not PT-DRL-MAK-DDF485-BODY) in stock?"
+        ),
+    ) == [
+        "/docs/availability-checks.md",
+        "/proc/locations/Vienna/store-vie-favoriten.json",
+        "/proc/catalog/Makita/PT-DRL-MAK-DDF485-5AH.json",
+    ]
+
+
 def test_submission_refs_keeps_only_resolved_product_for_positive_availability_count() -> None:
     vm = FakeVM(
         files={

@@ -88,6 +88,8 @@ record(s) needed to support that existence decision.
 For availability tasks with a parenthetical excluded/comparison SKU, cite that
 SKU only when it materially explains the disambiguation; do not cite every
 ruled-out sibling by default.
+A parenthetical `(but not SKU)` is also a hard exclusion from the target item:
+never use that exact SKU as the product you answer availability/count for.
 
 The runtime additionally auto-merges some signals into the final submission so you do not need to spend extra turns enumerating them: the basket/payment/return/customer id named in the task is auto-pinned after an ownership check; SKUs you mention in `message` are auto-pinned when their current product records can be resolved; and policy/update/incident docs that the trial actually loaded (`security.md`, `discounts.md`, `checkout.md`, `payments/*`, `returns.md`, dated SQL notes or incidents) are auto-cited when they match `task_type`. **Still read the docs and apply their policy** — auto-citation only mirrors paths, it does not make the decisions for you.
 

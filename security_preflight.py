@@ -5,7 +5,7 @@ from bitgn.vm.ecom.ecom_pb2 import ExecRequest, ListRequest, ReadRequest, StatRe
 
 from manager_verification import ReqVerifyStoreManager, verify_store_manager
 from runtime_calls import runtime_exec
-from runtime_state import CART_ROOTS, find_record_by_id
+from runtime_state import CART_ROOTS, find_record_by_id, ids_equal, record_customer_id
 from submission_refs import (
     is_customer_identity,
     parse_runtime_identity,
@@ -14,6 +14,7 @@ from task_classifier import TaskClassification
 
 
 SecurityReason = Literal[
+    "checkout_foreign_basket",
     "customer_discount_claimed_manager_approval",
     "employee_contact_disclosure",
     "system_override_attempt",
@@ -206,6 +207,44 @@ def employee_contact_security_preflight(
     )
 
 
+def checkout_foreign_basket_security_preflight(
+    vm: RuntimeVM,
+    classification: TaskClassification,
+) -> SecurityDenial | None:
+    if not classification.checkout_intent:
+        return None
+    if not classification.explicit_basket_id:
+        return None
+
+    user_id, _roles = _runtime_identity(vm)
+    if not is_customer_identity(user_id):
+        return None
+
+    record = find_record_by_id(vm, CART_ROOTS, classification.explicit_basket_id)
+    if record is None:
+        return None
+
+    owner_id = record_customer_id(record)
+    if not owner_id or ids_equal(owner_id, user_id):
+        return None
+
+    return SecurityDenial(
+        reason="checkout_foreign_basket",
+        message=(
+            "OUTCOME_DENIED_SECURITY: the named basket belongs to a different "
+            "customer than the current /bin/id identity."
+        ),
+        doc_refs=["/docs/security.md", "/docs/checkout.md"],
+        row_refs=[],
+        completed_steps_laconic=[
+            "Detected a checkout request for an explicit basket id.",
+            "Verified current identity is a customer via /bin/id.",
+            "Refused checkout because the basket owner does not match the current customer.",
+        ],
+        protected_record_denial=True,
+    )
+
+
 def security_preflight(
     vm: RuntimeVM,
     classification: TaskClassification,
@@ -219,6 +258,9 @@ def security_preflight(
     if denial is not None:
         return denial
     denial = employee_contact_security_preflight(vm, classification)
+    if denial is not None:
+        return denial
+    denial = checkout_foreign_basket_security_preflight(vm, classification)
     if denial is not None:
         return denial
     return customer_discount_security_preflight(vm, classification)

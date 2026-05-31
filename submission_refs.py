@@ -1029,8 +1029,14 @@ def is_positive_availability_answer(message: str) -> bool:
     )
 
 
-def should_preserve_negated_availability_refs(cmd: CompletionLike) -> bool:
+def should_preserve_negated_availability_refs(
+    cmd: CompletionLike,
+    *,
+    task_text: str,
+) -> bool:
     if cmd.task_type != "availability_count":
+        return False
+    if task_has_primary_negative_product_description(task_text):
         return False
     if getattr(cmd, "outcome", "") == "OUTCOME_NONE_CLARIFICATION":
         return True
@@ -1288,7 +1294,7 @@ def submission_refs(
                     *upload_receipt_sku_refs(vm, row_refs),
                 ]
             )
-            if should_preserve_negated_availability_refs(cmd):
+            if should_preserve_negated_availability_refs(cmd, task_text=task_text):
                 row_refs = dedupe_refs(
                     [
                         *row_refs,
@@ -1310,7 +1316,7 @@ def submission_refs(
                 row_refs,
                 message=cmd.message,
             )
-            if should_preserve_negated_availability_refs(cmd):
+            if should_preserve_negated_availability_refs(cmd, task_text=task_text):
                 row_refs = dedupe_refs(
                     [
                         *row_refs,

@@ -1252,7 +1252,14 @@ def _apply_discount_cap_message(cmd: ReportTaskCompletion) -> ReportTaskCompleti
 DATE_RE = re.compile(r"(?<!\d)(?P<date>\d{4}-\d{2}-\d{2})(?!\d)")
 
 
-def _tomorrow_date_preflight(
+RELATIVE_DATE_OFFSETS = {
+    "yesterday": -1,
+    "today": 0,
+    "tomorrow": 1,
+}
+
+
+def _relative_date_preflight(
     task_text: str,
     date_stdout: str,
 ) -> ReportTaskCompletion | None:
@@ -1261,7 +1268,17 @@ def _tomorrow_date_preflight(
         marker in normalized
         for marker in ("date", "yyyy", "dd", "month")
     )
-    if "tomorrow" not in normalized or not requested_date_format:
+    if not requested_date_format:
+        return None
+
+    matched_label = ""
+    matched_offset: int | None = None
+    for label, offset in RELATIVE_DATE_OFFSETS.items():
+        if label in normalized:
+            matched_label = label
+            matched_offset = offset
+            break
+    if matched_offset is None:
         return None
 
     match = DATE_RE.search(date_stdout)
@@ -1269,22 +1286,22 @@ def _tomorrow_date_preflight(
         return None
 
     today = datetime.strptime(match.group("date"), "%Y-%m-%d").date()
-    tomorrow = today + timedelta(days=1)
+    target_date = today + timedelta(days=matched_offset)
     if "mm/dd/yyyy" in normalized:
-        message = tomorrow.strftime("%m/%d/%Y")
+        message = target_date.strftime("%m/%d/%Y")
     elif "dd-mm-yyyy" in normalized:
-        message = tomorrow.strftime("%d-%m-%Y")
+        message = target_date.strftime("%d-%m-%Y")
     elif "yyyy-mm-dd" in normalized:
-        message = tomorrow.strftime("%Y-%m-%d")
+        message = target_date.strftime("%Y-%m-%d")
     elif "month dd, yyyy" in normalized:
-        message = tomorrow.strftime("%B %d, %Y")
+        message = target_date.strftime("%B %d, %Y")
     else:
         return None
 
     return ReportTaskCompletion(
         completed_steps_laconic=[
             "Read the runtime date from /bin/date.",
-            "Computed tomorrow relative to the runtime date.",
+            f"Computed {matched_label} relative to the runtime date.",
         ],
         task_type="other",
         message=message,
@@ -1293,6 +1310,13 @@ def _tomorrow_date_preflight(
         protected_record_denial=False,
         outcome="OUTCOME_OK",
     )
+
+
+def _tomorrow_date_preflight(
+    task_text: str,
+    date_stdout: str,
+) -> ReportTaskCompletion | None:
+    return _relative_date_preflight(task_text, date_stdout)
 
 
 def _review_payment_recovery_state(
@@ -1581,9 +1605,9 @@ def run_agent(
             )
             return _finalize_preflight(cmd, format_message=False)
 
-    tomorrow_date = _tomorrow_date_preflight(task_text, runtime_date_stdout)
-    if tomorrow_date is not None:
-        return _finalize_preflight(tomorrow_date, format_message=False)
+    relative_date = _relative_date_preflight(task_text, runtime_date_stdout)
+    if relative_date is not None:
+        return _finalize_preflight(relative_date, format_message=False)
 
     denial = security_preflight(vm, classification, task_text=task_text)
     if denial is not None:
