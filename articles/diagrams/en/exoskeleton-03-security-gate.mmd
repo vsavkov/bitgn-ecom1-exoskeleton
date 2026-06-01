@@ -1,0 +1,20 @@
+flowchart TB
+    T(["Task text"]) --> C("Classifier · gpt-5.4-nano<br/>intent flags (incl. impersonation suspicion)")
+    C --> N("Flag normalization · code:<br/>raise/drop the impersonation suspicion")
+    N --> P{"Security preflight check · code<br/>+ /bin/id as the identity source"}
+    P -->|high blast radius and idiom present| D(["Refusal OUTCOME_DENIED_SECURITY<br/>(no private references)"])
+    P -->|zero blast radius / no grounds| G(["Proceed: run the task"])
+
+classDef io fill:#334155,stroke:#94a3b8,stroke-width:1.5px,color:#f8fafc;
+    classDef model fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#2e1065;
+    classDef code fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#0f172a;
+    classDef env fill:#eff6ff,stroke:#3b82f6,stroke-width:1.5px,color:#0c4a6e;
+    classDef obs fill:#f0fdf4,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef deny fill:#fef2f2,stroke:#ef4444,stroke-width:1.5px,color:#7f1d1d;
+    classDef ok fill:#ecfdf5,stroke:#10b981,stroke-width:1.5px,color:#064e3b;
+    classDef human fill:#fffbeb,stroke:#f59e0b,stroke-width:1.5px,color:#78350f;
+    class T io;
+    class C model;
+    class N,P code;
+    class D deny;
+    class G ok;

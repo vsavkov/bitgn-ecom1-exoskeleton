@@ -1,0 +1,19 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "IBM Plex Sans, -apple-system, system-ui, Inter, Segoe UI, sans-serif",
+    "fontSize": "15px",
+    "lineColor": "#64748b",
+    "edgeLabelBackground": "#ffffff",
+    "titleColor": "#0f172a",
+    "clusterBorder": "#cbd5e1"
+  },
+  "flowchart": {
+    "htmlLabels": true,
+    "curve": "basis",
+    "nodeSpacing": 48,
+    "rankSpacing": 60,
+    "padding": 14,
+    "useMaxWidth": true
+  }
+}

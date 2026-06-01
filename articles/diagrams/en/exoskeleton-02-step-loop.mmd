@@ -1,0 +1,18 @@
+flowchart LR
+    CTX("Accumulated context") --> M("Dispatcher · gpt-5.4-mini")
+    M -->|1..N calls| EX("Tool execution")
+    EX --> CTX
+    M -->|report_completion| DONE(["Answer assembly"])
+
+classDef io fill:#334155,stroke:#94a3b8,stroke-width:1.5px,color:#f8fafc;
+    classDef model fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#2e1065;
+    classDef code fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#0f172a;
+    classDef env fill:#eff6ff,stroke:#3b82f6,stroke-width:1.5px,color:#0c4a6e;
+    classDef obs fill:#f0fdf4,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef deny fill:#fef2f2,stroke:#ef4444,stroke-width:1.5px,color:#7f1d1d;
+    classDef ok fill:#ecfdf5,stroke:#10b981,stroke-width:1.5px,color:#064e3b;
+    classDef human fill:#fffbeb,stroke:#f59e0b,stroke-width:1.5px,color:#78350f;
+    class M model;
+    class CTX code;
+    class EX env;
+    class DONE io;

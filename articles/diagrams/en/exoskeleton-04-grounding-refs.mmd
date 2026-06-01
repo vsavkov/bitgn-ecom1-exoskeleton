@@ -1,0 +1,24 @@
+flowchart TB
+    subgraph SIN["What comes in"]
+        MR("References from the model<br/>(doc + row)")
+        LR("References from helpers<br/>(via the ledger)")
+    end
+    SIN --> SPLIT("Split by meaning:<br/>documents (.md) vs records")
+    SPLIT --> CANON("Canonicalize + stat-check:<br/>a concrete record, not a directory")
+    CANON --> PIN("Auto-add:<br/>the named record (after an ownership check),<br/>SKU from the message, linked payment for a refund")
+    PIN --> FILT("Filter out:<br/>explored-but-not-final,<br/>truncate to the stated number")
+    FILT --> SAFE("Shield the private:<br/>on a security refusal — documents only")
+    SAFE --> OUTR(["Final grounding references"])
+
+classDef io fill:#334155,stroke:#94a3b8,stroke-width:1.5px,color:#f8fafc;
+    classDef model fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#2e1065;
+    classDef code fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#0f172a;
+    classDef env fill:#eff6ff,stroke:#3b82f6,stroke-width:1.5px,color:#0c4a6e;
+    classDef obs fill:#f0fdf4,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef deny fill:#fef2f2,stroke:#ef4444,stroke-width:1.5px,color:#7f1d1d;
+    classDef ok fill:#ecfdf5,stroke:#10b981,stroke-width:1.5px,color:#064e3b;
+    classDef human fill:#fffbeb,stroke:#f59e0b,stroke-width:1.5px,color:#78350f;
+    class MR,LR env;
+    class SPLIT,CANON,PIN,FILT,SAFE code;
+    class OUTR io;
+    style SIN fill:#eff6ff,stroke:#bfdbfe,color:#0f172a;

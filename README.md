@@ -1,26 +1,32 @@
-# BitGN ECOM Python Sample
+# BitGN ECOM1 agent — Exoskeleton
 
-Runnable Python sample for the `bitgn/ecom1-dev` benchmark.
+An AI agent for the [BitGN ECOM1](https://bitgn.com/challenge/ecom) agentic-commerce challenge: a hundred tasks inside a simulated e-commerce operating system (catalog, carts, checkout, payments, fraud, refunds, support).
 
-Watch the leaderboard here - [https://bitgn.com/challenge/ecom](https://bitgn.com/challenge/ecom)
+The agent runs a small model (`gpt-5.4-mini`, `gpt-5.4-nano`) inside a deterministic engineering harness — **Exoskeleton**: the model dispatches, while deterministic code computes the heavy domain logic, grounds the evidence, holds the exact answer format, and guards the security boundaries. The guiding principle — **the model proposes, the code disposes.**
 
-ECOM is an ecommerce operations runtime. It exposes a file-shaped workspace plus runtime tools such as `/bin/sql` over the `bitgn.vm.ecom` API.
+**Results** — agent `@dev_salikhov ecom1 gpt-5.4-mini`:
 
-You will need to provide your own `BITGN_API_KEY` and `OPENAI_API_KEY`, or swap the OpenAI client for a provider of your choice.
+- **1st** — Live PROD leaderboard (at the time of writing)
+- **1st** — Hall of Fame: Speed
+- **10th** — Hall of Fame: Ultimate
+- **18th** — Hall of Fame: Accuracy
+
+**Architecture write-up:**
+- [ARCHITECTURE.md](articles/ARCHITECTURE.md) (english)
+- [ARCHITECTURE_RU.md](articles/ARCHITECTURE_RU.md) (russian)
+
+**Author:** [@dev_salikhov on Telegram](https://t.me/dev_salikhov)
+
+Leaderboard: [https://bitgn.com/challenge/ecom](https://bitgn.com/challenge/ecom)
 
 ## Setup
 
-1. Copy `.env.example` to `.env`
-2. Fill in `BITGN_API_KEY` and `OPENAI_API_KEY`
-3. Set `MODEL_ID` in `.env` when switching models
-4. Run `make sync`
-5. Run `make run`
+1. Copy `.env.example` to `.env` and fill
+2. Run `make sync`
+3. Run `make run`
 
 ## Commands
 
-- Run the full ECOM benchmark: `uv run python main.py`
-- Run a single task: `uv run python main.py t01`
-- Run a subset of tasks: `uv run python main.py t01 t04`
 - Install or update the local environment: `make sync`
 - Run the full benchmark via Make: `make run`
 - Run selected tasks via Make: `make task TASKS="t01 t04"`

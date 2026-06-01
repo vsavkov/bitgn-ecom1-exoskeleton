@@ -1,0 +1,55 @@
+flowchart TB
+    IN(["Trial task:<br/>text + isolated ECOM OS snapshot"])
+
+    subgraph S0["(1) Start"]
+        WARM("Environment map → context<br/>/AGENTS.MD · tree · /docs · /bin · date · id<br/>(as synthetic «call → result» pairs)")
+        CLS("Intent classifier<br/>gpt-5.4-nano · high")
+    end
+
+    subgraph S1["(2) Preflight checks · deterministic code"]
+        NORM("Flag normalization · code:<br/>raise/drop the impersonation suspicion<br/>by the task's «blast radius»")
+        SEC("Security + /bin/id")
+        OTHER("Other preflight checks:<br/>date · refund · /tmp · count ·<br/>city · fraud-history · basket selection")
+    end
+
+    subgraph S2["(3) Main loop"]
+        DISP("Dispatcher · gpt-5.4-mini · high<br/>Responses API · tool_choice=required<br/>several calls per step")
+        TOOLS("Environment tools<br/>tree · find · read · exec · …")
+        HELP("Domain helpers:<br/>catalog & availability · receipt check ·<br/>dispatch plan · fraud analysis ·<br/>3DS recovery · manager verification ·<br/>staff count")
+    end
+
+    subgraph S3["(4) Answer assembly · deterministic code"]
+        LED("Evidence ledger:<br/>collects helper references<br/>and merges them into the final answer")
+        REF("Reference normalization")
+        FMT("Formatter · gpt-5.4-nano · high")
+    end
+
+    OUT(["answer( outcome · message · grounding references )"])
+    OBS("Observability:<br/>artifacts → heatmap · traces")
+
+    IN --> WARM --> CLS --> NORM --> SEC --> OTHER
+    OTHER -->|a preflight check fired| LED
+    OTHER -->|clear| DISP
+    DISP <--> TOOLS
+    DISP <--> HELP
+    DISP -->|report_completion| LED
+    LED --> REF --> FMT --> OUT
+    OUT -.->|after the run| OBS
+
+classDef io fill:#334155,stroke:#94a3b8,stroke-width:1.5px,color:#f8fafc;
+    classDef model fill:#ede9fe,stroke:#7c3aed,stroke-width:2px,color:#2e1065;
+    classDef code fill:#f8fafc,stroke:#64748b,stroke-width:1.5px,color:#0f172a;
+    classDef env fill:#eff6ff,stroke:#3b82f6,stroke-width:1.5px,color:#0c4a6e;
+    classDef obs fill:#f0fdf4,stroke:#16a34a,stroke-width:1.5px,color:#14532d;
+    classDef deny fill:#fef2f2,stroke:#ef4444,stroke-width:1.5px,color:#7f1d1d;
+    classDef ok fill:#ecfdf5,stroke:#10b981,stroke-width:1.5px,color:#064e3b;
+    classDef human fill:#fffbeb,stroke:#f59e0b,stroke-width:1.5px,color:#78350f;
+    class IN,OUT io;
+    class CLS,DISP,FMT model;
+    class WARM,NORM,SEC,OTHER,LED,REF code;
+    class TOOLS,HELP env;
+    class OBS obs;
+    style S0 fill:#eff6ff,stroke:#bfdbfe,color:#0f172a;
+    style S1 fill:#fff7ed,stroke:#fed7aa,color:#0f172a;
+    style S2 fill:#f5f3ff,stroke:#ddd6fe,color:#0f172a;
+    style S3 fill:#ecfeff,stroke:#a5f3fc,color:#0f172a;
