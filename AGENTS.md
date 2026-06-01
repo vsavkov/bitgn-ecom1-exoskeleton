@@ -1,27 +1,27 @@
 # AGENTS.md
 
-Это репозиторий разрабатываемого агента для челенджа ECOM1 for agentic ecommerce.
+This repository contains an agent being developed for the ECOM1 challenge for agentic ecommerce.
 
-Цитата с сайта челенджа
+Quote from the challenge website:
 
 > You write an agent, connect it to BitGN via API, and solve tasks inside a deterministic simulated commercial environment. BitGN evaluates observable outcomes such as tool calls, state changes, required flags/references, and forbidden actions avoided.
 
-Агент работает через API в специальном Sandbox. На вход подаются разные тестовые задачи общения клиента или сотрудника с агентом.
-Каждая задача оценивается. По результатам тестам формируется Leaderboard с лучшими результатами.
+The agent works through an API in a special sandbox. It receives different test tasks that simulate conversations between a customer or employee and the agent.
+Each task is scored. The test results are used to build a leaderboard with the best scores.
 
-Ты должен мне помочь разработать и улучшить агента, который получит максимум очков. 
-При этом нужно затачиваться не под конкретные задачи. Не заниматься заплатками с регулярками и подобными костылями.
-Нужно продумывать архитектурные улучшения, выявлять на основе прогонов нюансы и правила.
+You should help me develop and improve the agent so it earns the highest possible score.
+At the same time, do not tune the agent to specific tasks. Do not rely on regex patches or similar hacks.
+Think through architectural improvements and use run results to identify nuances and rules.
 
-**Важно**
-* В runs/bitgn__ecom1-dev история запусков в рамках периода обкатки на `BENCH_ID=bitgn/ecom1-dev`.
-* В runs/bitgn__ecom1 история запусков в рамках текущего цикла улучшений под проходящий сейчас челендж `BENCH_ID=bitgn/ecom1-prod`.
+**Important**
+* `runs/bitgn__ecom1-dev` contains the run history from the tuning period on `BENCH_ID=bitgn/ecom1-dev`.
+* `runs/bitgn__ecom1` contains the run history from the current improvement cycle for the active challenge `BENCH_ID=bitgn/ecom1-prod`.
 
-**Сейчас мы дорабатываем** под `BENCH_ID=bitgn/ecom1-prod`.
-Используй историю коммитов и запусков для dev, чтобы понимать, что когда и для чего менялось.
-В PROD челендже между запусками может меняться довольно много в OS в одних и тех же тасках.
-Поэтому нужно аккуратно анализировать историю запусков одного и того же таска.
-Таски между `ecom1-dev` и `ecom1-prod` не одно и то же. `t01` в одном не то же самое, что `t01` в другом.
+**We are currently improving** for `BENCH_ID=bitgn/ecom1-prod`.
+Use commit history and dev run history to understand what changed, when, and why.
+In the PROD challenge, the OS can change quite a lot between runs of the same tasks.
+Therefore, analyze the history of runs for the same task carefully.
+Tasks are not the same between `ecom1-dev` and `ecom1-prod`. `t01` in one benchmark is not the same as `t01` in the other.
 
 ## Commands
 
@@ -31,46 +31,46 @@
 - Check linting and typing after any code changes: `make check`
 - Run unit tests after any code changes: `make test`
 
-После любых изменений в Python-коде или конфигурации проекта прогоняй `make check test`.
+After any Python-code or project-configuration changes, run `make check test`.
 
-Прогоны тасков самостоятельно не запускать, чтобы не потратить лимиты на прогоны.
+Do not run task benchmarks on your own, to avoid spending run limits.
 
 ## Tests
 
-- Тестовые файлы размещай в соответствии с исходными файлами: `module.py` покрывается `tests/test_module.py`, скрипты из `scripts/foo.py` покрываются `tests/scripts/test_foo.py`.
-- Pure functions и детерминированные helper-ы покрывай unit-тестами без внешних API, BitGN runtime и LangSmith. Для runtime-адаптеров используй fake/stub объекты.
+- Place test files next to the corresponding source files: `module.py` is covered by `tests/test_module.py`, scripts from `scripts/foo.py` are covered by `tests/scripts/test_foo.py`.
+- Cover pure functions and deterministic helpers with unit tests that do not use external APIs, the BitGN runtime, or LangSmith. Use fake/stub objects for runtime adapters.
 
 ## Commits
 
-Оформляй коммиты с подробными пояснениями, что в него включено.
+Write commits with detailed explanations of what they include.
 
 ## BITGN Architecture
 
-Важные наблюдения, которые нужно учитывать при улучшении агента:
+Important observations to keep in mind when improving the agent:
 
-- Челендж состоит из `benchmark -> run -> trial`. `get_benchmark` дает описание и preview/hint задач, но конкретные инструкции внутри `start_run/start_trial` могут параметризоваться иначе; нельзя затачиваться на дословные тексты из preview.
-- Каждый trial получает отдельный runtime URL и изолированный слепок ECOM OS. Действия оцениваются по наблюдаемому результату: вызовы runtime tools, изменения состояния, финальный `answer`, grounding refs, правильный outcome и отсутствие запрещенных мутаций.
-- `StartPlayground` в SDK есть, но сервер отвечает, что sandbox mode больше не поддерживается. Для разведки окружения нужен normal run/trial; такие trial нужно аккуратно закрывать и не считать их продуктивными score-прогонами.
-- Runtime выглядит как Unix-подобная файловая система с корнем `/` аля: `/AGENTS.MD`, `/docs`, `/proc`, `/bin`, `/run/actions`. Все пути в запросах к runtime tools должны быть абсолютными.
-- Grounding refs важны для оценки.
-- В коде не завязываться на структуру папок, она может меняться
+- The challenge consists of `benchmark -> run -> trial`. `get_benchmark` provides descriptions and preview/hint text for tasks, but the concrete instructions inside `start_run/start_trial` can be parameterized differently; do not tune to exact preview text.
+- Each trial receives its own runtime URL and an isolated snapshot of the ECOM OS. Actions are scored by observable results: runtime tool calls, state changes, the final `answer`, grounding refs, the correct outcome, and avoidance of forbidden mutations.
+- `StartPlayground` exists in the SDK, but the server replies that sandbox mode is no longer supported. Use a normal run/trial to explore the environment; such trials must be closed carefully and should not be treated as productive score runs.
+- The runtime looks like a Unix-like filesystem rooted at `/`, for example: `/AGENTS.MD`, `/docs`, `/proc`, `/bin`, `/run/actions`. All paths passed to runtime tools must be absolute.
+- Grounding refs matter for scoring.
+- Do not hard-code assumptions about folder structure in code; it can change.
 
 ## LangSmith Trace Analysis
 
-Для разбора уже выполненного прогона используй read-only helper `scripts/langsmith_trace_report.py`; он читает LangSmith traces и не стартует BitGN run/trial.
+To analyze an already completed run, use the read-only helper `scripts/langsmith_trace_report.py`; it reads LangSmith traces and does not start BitGN run/trial.
 
-- Список последних root traces: `uv run python scripts/langsmith_trace_report.py --limit 80`.
-- Несколько задач по индексам: `uv run python scripts/langsmith_trace_report.py --limit 80 --indices 3,6,14-16`.
-- Детальный разбор с child LLM/tool spans: `uv run python scripts/langsmith_trace_report.py --limit 80 --indices 38-40 --children --output-limit 3000`.
-- Один trace по id: `uv run python scripts/langsmith_trace_report.py --run-id <RUN_ID> --children`.
-- Индексы в helper — это порядок root traces по `start_time`; перед сопоставлением с `tXX` проверь, нет ли более ранних одиночных запусков в том же проекте.
+- List recent root traces: `uv run python scripts/langsmith_trace_report.py --limit 80`.
+- Analyze several tasks by index: `uv run python scripts/langsmith_trace_report.py --limit 80 --indices 3,6,14-16`.
+- Detailed analysis with child LLM/tool spans: `uv run python scripts/langsmith_trace_report.py --limit 80 --indices 38-40 --children --output-limit 3000`.
+- Analyze one trace by id: `uv run python scripts/langsmith_trace_report.py --run-id <RUN_ID> --children`.
+- Helper indices follow the ordering of root traces by `start_time`; before mapping them to `tXX`, check whether there were earlier single-task runs in the same project.
 
 ## Run Reports
 
-Отчеты по прогонам складывай в `reports/report_run<N>_<YYYYMMDD_HHMMSS>.md`.
+Store run reports in `reports/report_run<N>_<YYYYMMDD_HHMMSS>.md`.
 
-- В начале укажи источник данных: score output пользователя, LangSmith project, диапазон root spans/revision и факт, что BitGN прогоны во время анализа не запускались.
-- Добавь сводку: итоговый score, количество full/zero/partial задач и основные группы проблем.
-- Добавь общую таблицу по всем задачам: task, score, деталь из grader output, категория.
-- Для неудачных и частичных кейсов опиши: затронутые task id, наблюдения из trace, корневую причину и обобщаемое предложение по улучшению агента.
-- Не затачивай выводы под конкретные SKU, basket id, payment id или customer id; используй их только как evidence в отчете, а предложения формулируй как общие правила поведения агента.
+- At the top, specify the data source: user-provided score output, LangSmith project, root span/revision range, and the fact that no BitGN runs were started during analysis.
+- Add a summary: final score, number of full/zero/partial tasks, and the main groups of problems.
+- Add an overview table for all tasks: task, score, detail from grader output, category.
+- For failed and partial cases, describe: affected task ids, trace observations, root cause, and a generalizable proposal for improving the agent.
+- Do not tune conclusions to specific SKUs, basket IDs, payment IDs, or customer IDs; use them only as evidence in the report, and formulate proposals as general rules for agent behavior.
