@@ -25,12 +25,6 @@ dev = [
     "ty>=0.0.40",
 ]
 
-[tool.ruff]
-exclude = ["agent_original.py"]
-
-[tool.ty.src]
-exclude = ["agent_original.py"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
