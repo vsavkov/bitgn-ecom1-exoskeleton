@@ -134,7 +134,7 @@ It became clear (something I'd already met in my own practice): **where the mode
 
 The key idea of preflight checks: some decisions are cheaper, more reliable, and safer to make **before** the model reasons. If a workflow has a clear security boundary or fully deterministic mechanics, there's no point running a weak model over it and hoping it lands every time.
 
-### The intent classifier and why we don't trust it
+### The intent classifier
 
 It all starts with a classifier on `gpt-5.4-nano` (structured output, high reasoning effort, a tight output budget). It's a **general** task classifier. It returns a flat set of flags and entities — is there an intent to check out, is an explicit basket id named, does the customer cite a manager's approval, does it look like impersonation, are an employee's contacts being requested, and so on. It runs in parallel with the environment loading, so its latency hides behind calls the agent makes anyway. If the classifier fails entirely, all preflight checks simply become empty, and the ordinary model solves the task. The degradation is "soft".
 
