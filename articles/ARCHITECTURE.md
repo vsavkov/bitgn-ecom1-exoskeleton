@@ -6,26 +6,9 @@ _The architecture of the agent `@dev_salikhov ecom1 gpt-5.4-mini`, which took fi
 
 ECOM1 is [BitGN](https://bitgn.com)'s agentic-commerce benchmark: a hundred tasks inside a simulated e-commerce operating system. The agent reads the company's rules, checks carts, completes checkouts, recovers payments after a 3DS failure, handles refunds, counts warehouse stock, builds dispatch plans, catches fraudulent payments — it answers and attaches the right grounding references to each answer.
 
-What's graded is not the reasoning but the **observable result**: which commands were called, what changed in state, which `outcome` was submitted, which references were attached, and whether any forbidden actions occurred.
-
-The agent `@dev_salikhov ecom1 gpt-5.4-mini` finished the challenge with:
-
-- **1st place** — Live PROD leaderboard ECOM1 (at the time of writing);
-- **1st place** — Hall of Fame: Speed (fast and accurate: only runs with a total response time under 60 minutes qualify);
-- **10th place** — Hall of Fame: Ultimate;
-- **18th place** — Hall of Fame: Accuracy.
-
-In the **Accuracy** category, the closed "blind" run (a three-hour window on 30 May, with no feedback or visible scores) scored `71.8/100` in `51:01`. That's 18th place, but the agents ranked above run on senior models or are built around codex/claude CLI (which use the same senior models inside).
-
-In the **Speed** category (under 60 minutes of total response time) that same run is **first**.
-
-Once the post-challenge window opened the option to keep refining the solution in **Live PROD**, the agent reached `94.9/100` and first place within an hour of improvement, overtaking the senior models — both on score and on time.
-
 A small model is a deliberate choice. `gpt-5.4-mini` is roughly 3× cheaper than `gpt-5.4` and 6× cheaper than `gpt-5.5`. That's, for example, the difference between a `$10k` and a `$1.5k` monthly bill, and in a narrow business domain such models can and should be used.
 
-The entire cycle of work on the challenge (several thousand solved tasks, analysis, failed attempts, tracing) cost only about `$120`.
-
-This was not an attempt to fit the test tasks. On the contrary, fitting to specific tasks was a deliberate taboo in the project. This article is about the **architecture** that let a small model win, and about why it is built the way it is.
+The entire cycle of work on the challenge (several thousand solved tasks, analysis, failed attempts, traces) cost only about `$120`.
 
 I call this architecture the **Exoskeleton**. The model is a "body" that isn't very strong on its own. Around it is a deterministic exoskeleton that gives it both **strength** (it computes fraud, routes, prices — what the model can't pull off itself) and **precision** (it grounds the evidence, holds the format, guards the security boundaries). The principle that recurs in every node: **the model proposes — the code disposes.** And this exoskeleton wasn't designed all at once; it grew rib by rib, from the heatmap of recurring errors.
 
@@ -41,7 +24,7 @@ Three components grow out of how grading works, and they later shape the whole a
 
 All three are observable and verifiable. Which means they can be pinned down in code — and that's exactly what the exoskeleton does.
 
-One more property of the environment is worth keeping in mind: **it is parameterized between runs.** The task text from the preview is not the real one; the state structure, the policy file names, the set of columns in a table — everything is movable. Hence the project's baseline principle: don't teach the agent specific products, carts, and payments — teach it ways to navigate and generalizable rules. We forbade every temptation to hardcode an answer from a snapshot we'd seen.
+One more property of the environment is worth keeping in mind: **it is parameterized between runs.** The task text from the preview is not the real one; the state structure, the policy file names, the set of columns in a table — everything is movable. Hence the project's baseline principle: don't teach the agent specific products, carts, and payments — teach it ways to navigate and generalizable rules.
 
 ## The architecture as a whole
 
@@ -87,7 +70,7 @@ I'll start at the center — with how the model actually acts. It's useful for u
 
 Agent development started from a **Schema Guided Reasoning** (SGR) architecture with the `NextStep` object from the sample the platform provided. The model had to return JSON: current state, a brief plan, a completion flag, and exactly one function from a tagged union of types. The code took the first step and executed it. The loop ran up to thirty steps, one action at a time.
 
-This approach was invented by Rinat Abdullin in the days of simpler models, when models reasoned and called tools poorly, and `NextStep` set the working frame they needed.
+This excellent approach was invented by Rinat Abdullin in the days of simpler models, when models reasoned and called tools poorly, and `NextStep` set the working frame they needed.
 
 But even on `gpt-5.4-mini` it worked unsatisfactorily. The model started returning **several JSON objects in a row**: a tree walk, then a command, then an answer. By intent it wanted to do several actions per turn — and it was right. But the homemade protocol expected exactly one object, the parser stumbled on the "extra tail", and the task failed with a zero. The model was trying to work in parallel, and the harness forbade it.
 
@@ -133,7 +116,7 @@ When work on improving the agent runs intensively, instability starts surfacing 
 - one extra retry to the models is built in;
 - calls to the BitGN environment have their own hard 300 ms timeout, with one retry on a longer deadline (1.5 seconds): file operations and bin-utility calls must be fast;
 - the automatic `--help` hints have an even shorter timeout, so a hung `--help` doesn't waste execution time;
-- domain-helper errors (an unexpected schema in a new snapshot) don't crash the trial — control returns to the model, and it picks a different path.
+- domain-helper errors don't crash the trial — control returns to the model, and it picks a different path.
 
 The attempts themselves are parallelized: trials run in batches (at different stages — 10, 15, 20 at a time), each in its own thread. A full run even of a fast agent takes tens of minutes; batches sharply sped up the "edit → run → look at the heatmap" cycle.
 
@@ -154,8 +137,6 @@ The key idea of preflight checks: some decisions are cheaper, more reliable, and
 ### The intent classifier and why we don't trust it
 
 It all starts with a classifier on `gpt-5.4-nano` (structured output, high reasoning effort, a tight output budget). It's a **general** task classifier. It returns a flat set of flags and entities — is there an intent to check out, is an explicit basket id named, does the customer cite a manager's approval, does it look like impersonation, are an employee's contacts being requested, and so on. It runs in parallel with the environment loading, so its latency hides behind calls the agent makes anyway. If the classifier fails entirely, all preflight checks simply become empty, and the ordinary model solves the task. The degradation is "soft".
-
-But the key thing here: **we don't trust the nano model's verdict directly.** On top of it runs deterministic flag normalization that can both raise and lower the verdict. This brings us to the least obvious idea of the whole layer.
 
 ### Security as "blast radius", not a blocklist of words
 
@@ -189,8 +170,6 @@ The refusal decision itself is made by deterministic code that **reads `/bin/id`
 Next come simpler preflight checks, and the first one to fire closes the task: a simple date (arithmetic from the environment's date), refunds with an ambiguous amount (ask for clarification rather than guess), bounded `/tmp` cleanup, counting staff with a role, a product's city-wide availability, fraudulent-payment analysis over history, an ambiguous basket at checkout.
 
 The basket-selection preflight stands apart. It's the only one that **doesn't replace** the model but cooperates with it: if the customer asks for, say, the "most recent" basket, the code deterministically finds it and **adds a synthetic tool result into the context** — "the selector is resolved, use this basket". The usual checkout policy (ownership, stock) is then applied by the model itself. The ambiguity is removed by code, but the decision stays with the model.
-
-And once more about the principle: all of this is behavior rules, not patches per task number. There isn't a single binding to a task, basket, or product id anywhere in the preflight-check code.
 
 ## Domain helpers
 
@@ -270,7 +249,10 @@ Typical slips: instead of `<NO>` — an explanation, instead of an exact `<COUNT
 
 The solution came as a "lightweight judge": a small model in structured-output mode that you can ask in two passes — does this task require a special format and, if so, does the answer match it. That's how a separate formatter on `gpt-5.4-nano` appeared. It receives the task text, the current answer, the outcome, the references, and the rules from `/AGENTS.MD`, and returns only the visible message. Crucially: **it doesn't re-solve the task** — it brings the ready answer to the contract, preserving the same decision, facts, and ids; flipping "yes" to "no" and inventing things is forbidden to it.
 
-A contract with priorities: first the exact format set by the task itself (a template, a number, "SKU only"), which outranks the company's "house style"; if the task requires no format — the general rules from `/AGENTS.MD` (which tokens this company uses for "yes/no"). A subtlety: "yes/no" as a class of answer and `true`/`false` as a field value are different things; if the task asks for a property value equal to `false`, the formatter outputs the raw `false`.
+A contract with priorities:
+* First the exact format set by the task itself (a template, a number, "SKU only"), which outranks the company's "house style"
+* If the task requires no format — the general rules from `/AGENTS.MD` (which tokens this company uses for "yes/no")
+* A subtlety: "yes/no" as a class of answer and `true`/`false` as a field value are different things; if the task asks for a property value equal to `false`, the formatter outputs the raw `false`
 
 Around the model stand deterministic safeguards: refusals and clarifications the formatter doesn't touch at all (it only trims a stray outcome prefix); an outcome marker appended on its own is removed; and if the answer already exactly matches the required "yes/no" token — the model isn't called at all. Any formatter failure returns the original message — it can't lose the answer.
 
@@ -284,9 +266,9 @@ So a linter and a static type analyzer were set up almost immediately: they catc
 
 Tests were written precisely on the business logic: pure functions (catalog parsing, receipt-price comparison, fraud-incident selection), reference normalization with all the ownership and cut-out rules, preflight checks, and in places — tests with a real call to the small model (the formatter can't be checked otherwise). Improvement stopped being prompt shamanism and became ordinary development: there's a function, there's an invariant, there's a test.
 
-## The agent's evolution: two speeds
+## The agent's evolution: three steps
 
-The path breaks into four phases, and their order is exactly what matters.
+The path breaks into three phases, and their order is exactly what matters.
 
 ![A two-speed improvement loop: first the architecture by hand, then autonomous refinement of components](images/en/exoskeleton-05-improvement-loop.png)
 
@@ -300,7 +282,7 @@ The path breaks into four phases, and their order is exactly what matters.
 
 ## Cost
 
-The cost of the whole cycle, by the tracing data: roughly 400M tokens and ~$120. This includes not only the successful runs but all the failed attempts, the tracing, the small helpers, and the autonomous iterations. A small model, a short startup context, moving repeated computation into code, and batched runs together gave both quality and a manageable cost.
+The cost of the whole cycle, by the trace data: roughly 400M tokens and ~$120. This includes not only the successful runs but all the failed attempts, the traces, the small helpers, and the autonomous iterations. A small model, a short startup context, moving repeated computation into code, and batched runs together gave both quality and a manageable cost.
 
 ## Key principles: what to take away
 
