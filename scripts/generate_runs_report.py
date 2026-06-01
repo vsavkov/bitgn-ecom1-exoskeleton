@@ -91,8 +91,6 @@ def _case_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-
-
 def _load_run(path: Path) -> RunRecord:
     payload = json.loads(path.read_text())
     started_at = str(payload.get("started_at") or "")
@@ -142,7 +140,6 @@ def _load_runs(runs_dir: Path) -> list[RunRecord]:
             record.path.name,
         ),
     )
-
 
 
 def _interpolate(start: tuple[int, int, int], end: tuple[int, int, int], ratio: float) -> tuple[int, int, int]:

@@ -14,7 +14,6 @@ from scripts.generate_runs_report import (
     _interpolate,
     _load_run,
     _load_runs,
-    _maybe_enrich_s,
     _natural_key,
     _parse_datetime,
     _render_html,
@@ -60,7 +59,6 @@ def test_runs_report_helpers(tmp_path: Path) -> None:
               "task_id": "t01",
               "task_text": "Task text",
               "score": 1,
-              "": {"score": 0.5},
               "langsmith_trace_id": "trace-1",
               "score_detail": ["detail"]
             }
@@ -76,7 +74,6 @@ def test_runs_report_helpers(tmp_path: Path) -> None:
         task_id="t01",
         task_text="Task text",
         score=1.0,
-        =0.5,
         trace_id="trace-1",
         comment="detail",
     )
@@ -89,7 +86,6 @@ def test_runs_report_helpers(tmp_path: Path) -> None:
         benchmark_id="",
         model_id="",
         score=None,
-        =None,
         cases={},
     )
     assert _run_label(fallback) == "custom"
@@ -113,77 +109,3 @@ def test_load_runs_sorts_by_started_at_and_render_html(tmp_path: Path) -> None:
     assert "t01" in html
     assert "sum" in html
     assert "No run_*.json" in _render_html([], benchmark_id="bitgn/ecom1-dev")
-
-
-def test_render_html_uses__when_official_score_is_missing(tmp_path: Path) -> None:
-    run_path = tmp_path / "run_local.json"
-    run_path.write_text(
-        """
-        {
-          "started_at": "2026-05-30T10:00:00+00:00",
-          "benchmark_id": "bitgn/ecom1-prod",
-          "model_id": "gpt-test",
-          "score": null,
-          "": {"mean_score": 0.72, "case_count": 1},
-          "test_cases": [
-            {
-              "task_id": "t01",
-              "task_text": "Task text",
-              "score": null,
-              "": {"score": 0.72}
-            }
-          ]
-        }
-        """
-    )
-
-    record = _load_run(run_path)
-    assert record. == 0.72
-    assert _display_score(record.cases["t01"]) == 0.72
-    html = _render_html([record], benchmark_id="bitgn/ecom1-prod")
-    assert "local 0.72" in html
-    assert "" in html
-
-
-def test_maybe_enrich_s_defaults_on_and_can_be_disabled(
-    monkeypatch,
-    tmp_path: Path,
-) -> None:
-    run_path = tmp_path / "run_20260529_100000.json"
-    run_path.write_text(
-        """
-        {
-          "test_cases": [
-            {
-              "task_id": "t01",
-              "task_text": "Return the SKU only",
-              "outcome": "OUTCOME_OK",
-              "message": "PT-ABC-123"
-            }
-          ]
-        }
-        """
-    )
-
-    monkeypatch.delenv("", raising=False)
-    monkeypatch.delenv("", raising=False)
-    _maybe_enrich_s(tmp_path)
-    assert "" in run_path.read_text()
-
-    run_path.write_text(
-        """
-        {
-          "test_cases": [
-            {
-              "task_id": "t01",
-              "task_text": "Return the SKU only",
-              "outcome": "OUTCOME_OK",
-              "message": "PT-ABC-123"
-            }
-          ]
-        }
-        """
-    )
-    monkeypatch.setenv("", "0")
-    _maybe_enrich_s(tmp_path)
-    assert "" not in run_path.read_text()

@@ -359,7 +359,6 @@ def backfill_file(
         margin_seconds=margin_seconds,
         overwrite=overwrite,
     )
-
     case_count = len(_case_items(payload))
     next_text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
     if not dry_run and next_text != original_text:

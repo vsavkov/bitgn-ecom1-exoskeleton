@@ -157,8 +157,6 @@ def _run_artifact_path(started_at: datetime) -> Path:
     raise RuntimeError(f"could not choose a free run artifact path for {base}")
 
 
-
-
 def _agent_output_case_fields(agent_output: dict) -> dict:
     return {
         "outcome": agent_output.get("outcome"),
@@ -250,7 +248,6 @@ def _write_run_artifact(result, started_at: datetime, trial_outputs: dict[str, d
         "score_available": bool(result.score_available),
         "test_cases": test_cases,
     }
-
     path = _run_artifact_path(started_at)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
     return path
