@@ -15,6 +15,10 @@ The agent runs a small model (`gpt-5.4-mini`, `gpt-5.4-nano`) inside a determini
 - [ARCHITECTURE.md](articles/ARCHITECTURE.md) (english)
 - [ARCHITECTURE_RU.md](articles/ARCHITECTURE_RU.md) (russian)
 
+**Open-model research** — can open-weight models replace `gpt-5.4-mini` in this agent? Ten families benchmarked on quality, time, and cost:
+- [OPEN_MODELS_RESEARCH.md](articles/OPEN_MODELS_RESEARCH.md) (english)
+- [OPEN_MODELS_RESEARCH_RU.md](articles/OPEN_MODELS_RESEARCH_RU.md) (russian)
+
 **Author:** [@dev_salikhov on Telegram](https://t.me/dev_salikhov)
 
 Leaderboard: [https://bitgn.com/challenge/ecom](https://bitgn.com/challenge/ecom)

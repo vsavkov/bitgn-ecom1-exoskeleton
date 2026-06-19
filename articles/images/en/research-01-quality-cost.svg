@@ -1,0 +1,58 @@
+<svg viewBox="0 0 820 520" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Sans, system-ui, -apple-system, Segoe UI, Roboto, sans-serif">
+<rect x="20" y="20" width="780" height="480" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.5" rx="14"/>
+<text x="410.0" y="54" text-anchor="middle" font-size="18.5" font-weight="700" fill="#0f172a">Open-weight models. Quality / cost / time per run</text>
+<line x1="92" y1="436.0" x2="756" y2="436.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="82" y="440.0" text-anchor="end" font-size="11.5" fill="#475569">0.5</text>
+<line x1="92" y1="357.3" x2="756" y2="357.3" stroke="#e2e8f0" stroke-width="1"/>
+<text x="82" y="361.3" text-anchor="end" font-size="11.5" fill="#475569">0.6</text>
+<line x1="92" y1="278.7" x2="756" y2="278.7" stroke="#e2e8f0" stroke-width="1"/>
+<text x="82" y="282.7" text-anchor="end" font-size="11.5" fill="#475569">0.7</text>
+<line x1="92" y1="200.0" x2="756" y2="200.0" stroke="#e2e8f0" stroke-width="1"/>
+<text x="82" y="204.0" text-anchor="end" font-size="11.5" fill="#475569">0.8</text>
+<line x1="92" y1="121.3" x2="756" y2="121.3" stroke="#e2e8f0" stroke-width="1"/>
+<text x="82" y="125.3" text-anchor="end" font-size="11.5" fill="#475569">0.9</text>
+<line x1="175.3" y1="82" x2="175.3" y2="436" stroke="#e2e8f0" stroke-width="1"/>
+<text x="175.3" y="458" text-anchor="middle" font-size="11.5" fill="#475569">$1</text>
+<line x1="337.3" y1="82" x2="337.3" y2="436" stroke="#e2e8f0" stroke-width="1"/>
+<text x="337.3" y="458" text-anchor="middle" font-size="11.5" fill="#475569">$2</text>
+<line x1="551.4" y1="82" x2="551.4" y2="436" stroke="#e2e8f0" stroke-width="1"/>
+<text x="551.4" y="458" text-anchor="middle" font-size="11.5" fill="#475569">$5</text>
+<line x1="713.4" y1="82" x2="713.4" y2="436" stroke="#e2e8f0" stroke-width="1"/>
+<text x="713.4" y="458" text-anchor="middle" font-size="11.5" fill="#475569">$10</text>
+<text x="424.0" y="490" text-anchor="middle" font-size="12.5" fill="#0f172a">Cost per run, $ (log scale)</text>
+<text x="28" y="259.0" text-anchor="middle" font-size="12.5" fill="#0f172a" transform="rotate(-90 28 259)">Average score</text>
+<rect x="540" y="388" width="212" height="9" rx="4" fill="url(#spd)"/>
+<defs><linearGradient id="spd" x1="0" x2="1"><stop offset="0" stop-color="#16a34a"/><stop offset="0.5" stop-color="#f59e0b"/><stop offset="1" stop-color="#ef4444"/></linearGradient></defs>
+<text x="540" y="412" font-size="10.5" fill="#475569">fast, 50 min</text>
+<text x="752" y="412" text-anchor="end" font-size="10.5" fill="#475569">slow, 270 min</text>
+<circle cx="214.0" cy="115.8" r="9" fill="#23a346" stroke="#1e293b" stroke-width="2.4"/>
+<text x="225.0" y="107.8" text-anchor="start" font-size="12" font-weight="700" fill="#0f172a">OpenAI mini/nano</text>
+<text x="225.0" y="120.8" text-anchor="start" font-size="10.5" fill="#475569">0.907 · $1.18</text>
+<circle cx="414.3" cy="146.5" r="7" fill="#86a02a" stroke="#0f172a" stroke-width="1.2"/>
+<text x="425.3" y="150.5" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">Kimi K2.7</text>
+<text x="425.3" y="163.5" text-anchor="start" font-size="10.5" fill="#475569">0.868 · $2.78</text>
+<circle cx="731.4" cy="157.5" r="7" fill="#f26d2a" stroke="#0f172a" stroke-width="1.2"/>
+<text x="719.4" y="161.5" text-anchor="end" font-size="12" font-weight="600" fill="#0f172a">GLM 5.1</text>
+<text x="719.4" y="174.5" text-anchor="end" font-size="10.5" fill="#475569">0.854 · $10.8</text>
+<circle cx="216.0" cy="180.3" r="7" fill="#a5a022" stroke="#0f172a" stroke-width="1.2"/>
+<text x="227.0" y="184.3" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">MiniMax M3</text>
+<text x="227.0" y="197.3" text-anchor="start" font-size="10.5" fill="#475569">0.825 · $1.19</text>
+<circle cx="331.4" cy="241.7" r="7" fill="#df9e11" stroke="#0f172a" stroke-width="1.2"/>
+<text x="342.4" y="233.7" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">Nemotron 3 Super</text>
+<text x="342.4" y="246.7" text-anchor="start" font-size="10.5" fill="#475569">0.747 · $1.95</text>
+<circle cx="319.1" cy="255.9" r="7" fill="#28a345" stroke="#0f172a" stroke-width="1.2"/>
+<text x="307.1" y="271.9" text-anchor="end" font-size="12" font-weight="600" fill="#0f172a">Mistral Large 3</text>
+<text x="307.1" y="284.9" text-anchor="end" font-size="10.5" fill="#475569">0.729 · $1.85</text>
+<circle cx="369.0" cy="265.3" r="7" fill="#f48819" stroke="#0f172a" stroke-width="1.2"/>
+<text x="380.0" y="277.3" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">Qwen 3.6</text>
+<text x="380.0" y="290.3" text-anchor="start" font-size="10.5" fill="#475569">0.717 · $2.29</text>
+<circle cx="111.2" cy="284.2" r="7" fill="#ef4643" stroke="#0f172a" stroke-width="1.2"/>
+<text x="122.2" y="288.2" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">Gemma 4</text>
+<text x="122.2" y="301.2" text-anchor="start" font-size="10.5" fill="#475569">0.693 · $0.76</text>
+<circle cx="436.7" cy="345.5" r="7" fill="#f26b2b" stroke="#0f172a" stroke-width="1.2"/>
+<text x="447.7" y="349.5" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">DeepSeek V4 Pro</text>
+<text x="447.7" y="362.5" text-anchor="start" font-size="10.5" fill="#475569">0.615 · $3.06</text>
+<circle cx="129.0" cy="394.3" r="7" fill="#16a34a" stroke="#0f172a" stroke-width="1.2"/>
+<text x="140.0" y="398.3" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">Llama 4 Maverick</text>
+<text x="140.0" y="411.3" text-anchor="start" font-size="10.5" fill="#475569">0.553 · $0.82</text>
+</svg>
