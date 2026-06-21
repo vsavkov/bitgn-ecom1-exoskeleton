@@ -224,6 +224,8 @@ Below, a detailed write-up per family: what the model is, what it does well, whe
 
 **Numbers.** Score: 0.899, 0.925, 0.896 (avg 0.907). Platform time 0:55–1:16. Cost measured directly: **\$1.14–1.23** per run. Best run — 87 full tasks, 8 partial, 5 zeros.
 
+**Run artifacts.** Fresh controls: [0.899](./runs/run_20260618_070219.json), [0.925](./runs/run_20260618_071411.json), [0.896](./runs/run_20260618_072628.json). High-reasoning control used for the max/cost range: [0.934](./runs/run_20260617_164558.json).
+
 **What it does well.** Everything basic — clean and with few steps: checkout with ownership checks, identity and manager lookups, simple catalog properties, ordinary policy denials. Transport is stable: across three fresh controls, not a single provider error. That's why it's cheap: fast, cache-hitting, no retries.
 
 **Where it stumbles.** Only the shared ceiling: dispatch (80–83%), archive-fraud (partial recall), occasional catalog-refs (one run cites the wrong catalog record, another passes the same task), rare outcome-boundary misses — e.g. it correctly reports «attempts exhausted: 3» but sets `OUTCOME_OK` instead of `unsupported`. Once an overbroad security preflight wrongly classified an ordinary policy-blocked discount as `OUTCOME_DENIED_SECURITY`.
@@ -235,6 +237,8 @@ Below, a detailed write-up per family: what the model is, what it does well, whe
 **What it is.** `moonshotai/kimi-k2.7-code` from Moonshot AI — a strong long-horizon/coding profile: tools, structured outputs, reasoning. Price \$0.95/M input, \$4.00/M output (on the Moonshot route), cache \$0.19/M. The family has no cheap `nano` model, so this is a strong/strong test in its pure form.
 
 **Numbers.** Score: 0.866, 0.898, 0.840 (avg 0.868), peak **0.898**, the best single result among the open models. Best run: 84/8/8. Platform time 1:31–1:51. Cost: \$2.78 per run with caching (at the full rate, \$10). Pinning to Moonshot and `omit tool_choice` are mandatory.
+
+**Run artifacts.** [0.866](./runs/run_20260618_005000.json), [0.898](./runs/run_20260619_041253.json), [0.840](./runs/run_20260619_083211.json).
 
 **What it does well.** Security is consistently strong: it denies cross-customer checkout, guest cart access, claimed manager approval, and disclosing an employee's email. 3DS is careful: it doesn't retry already-paid payments and respects exhausted attempts and active retry windows. It does the discount math (e.g. it correctly applied a 4% damaged_packaging discount, computed the subtotal, checked the role).
 
@@ -254,6 +258,8 @@ The same trait shows on counting tasks: «how many SKUs of a PowerTools Academy 
 
 **Numbers.** Score on AtlasCloud: 0.881, 0.838, 0.843 (avg 0.854), peak **0.881**, the best single result among the open models after Kimi. Best run: 82/8/10. Platform time 3:00–4:33, one of the slowest. Also the most expensive open option: ~\$10.8 per run (breakdown below, in Economics).
 
+**Run artifacts.** [0.881](./runs/run_20260617_231614.json), [0.838](./runs/run_20260618_124313.json), [0.843](./runs/run_20260618_140110.json).
+
 **What it does well.** Policy and security are on point: it denies guest checkout and a claimed `SYSTEM OVERRIDE` based on `/bin/id`, refuses to disclose an email even after confirming the person really manages the branch. 3DS is careful. Negative catalog constraints («excluding such-and-such SKU», «without the kit») are often read correctly.
 
 **Where it stumbles.** Where it loses the most — **step economy and over-conservatism**. GLM does the right work but doesn't carry it through within the step budget. A classic case: it repeats the identical write to a file until the 15-step cap hits `OUTCOME_ERR_INTERNAL`. And the mirror class — **over-conservatism**: it found everything it needed and… didn't act:
@@ -271,6 +277,8 @@ Same on a `/tmp` cleanup: it listed 4 files to delete — and returned `unsuppor
 **What it is.** `minimax/minimax-m3`: 1M context, tools, structured outputs, reasoning. A cheap price: \$0.30/M input, \$1.20/M output, \$0.06/M cache. The direct Minimax provider passed both the forced-tool and strict-JSON probes.
 
 **Numbers.** Score: 0.818, 0.837, 0.819 (avg 0.825), peak 0.837. Platform time 1:36–2:04. Cost: \$1.19 per run, nearly GPT's, thanks to a cheap price plus cache on 93% of input.
+
+**Run artifacts.** [0.818](./runs/run_20260618_031303.json), [0.837](./runs/run_20260618_101234.json), [0.819](./runs/run_20260618_110512.json).
 
 **What it does well.** Solid security: it denies cross-customer checkout, guest access, a claimed employee identity, email disclosure, and most role overrides on discounts. 3DS and refunds are reliable (recovery only when allowed, exhausted attempts → unsupported, active windows not bypassed). Unlike the failed GLM 5.2 attempts, there were no provider-driven run failures here.
 
@@ -290,6 +298,8 @@ It's poor step economy under the current loop, not reasoning difficulty. The sam
 
 **Numbers.** Score: 0.757, 0.737, 0.748 (avg 0.747), peak 0.757. Platform time 2:11–2:26. A lot of tokens: 17–19M input, 269–305k output and, tellingly, 215–238k reasoning tokens per run, the most in the lineup. Cost: \$1.87–2.06 (DeepInfra has no cache rate, nothing to cache).
 
+**Run artifacts.** [0.757](./runs/run_20260618_014606.json), [0.737](./runs/run_20260618_074330.json), [0.748](./runs/run_20260618_083212.json).
+
 **What it does well.** The provider is stable. Security and identity work is often strong: it denies cross-customer checkout (including with a Chinese provider note), guest checkout, a claimed employee identity, email disclosure, `SYSTEM OVERRIDE` blocks. On many hard tasks it reaches the right business conclusion.
 
 **Where it stumbles.** This is the starkest example of how **undisciplined finalization** kills correct reasoning. Nemotron emits service placeholders into the final answer — the strings `test` and `Exact final answer` — and that's across **all three** runs:
@@ -307,6 +317,8 @@ A double failure here: a placeholder instead of an answer, and a missed security
 **What it is.** `mistralai/mistral-large-2512` under Apache 2.0: 262k context, tools, structured outputs. An important detail — **no reasoning flag** in the OpenRouter listing, so the config is special: forced `tool_choice` stays on, helper-reasoning is off (`none`). Price \$0.50/M input, \$1.50/M output, \$0.05/M cache. The direct Mistral provider, clean route.
 
 **Numbers.** Score: 0.767, 0.694, 0.726 (avg 0.729), peak **0.767**, higher than Nemotron's max. Platform time 0:52–1:02, the fastest among the serious candidates. Cost is stable: \$1.81–1.89 per run (cached).
+
+**Run artifacts.** [0.767](./runs/run_20260618_024444.json), [0.694](./runs/run_20260618_092034.json), [0.726](./runs/run_20260618_094548.json).
 
 **What it does well.** Speed and stability. Mistral is much faster than Kimi/GLM/Nemotron and doesn't show Nemotron's long self-debug loops around completion-tool validation. Many exact-property and SKU tasks pass. The provider route is clean with forced `tool_choice` on and helper-reasoning off.
 
@@ -326,6 +338,8 @@ The model reports «refund closed» without making the write. Third — **exact-
 
 **Numbers.** Score: 0.727, 0.662, 0.723, 0.755 (avg 0.717), peak 0.755. Platform time 2:35–3:09. Cost: ~\$2.29 per run at the full input price; the route has no cached rate, though ~75% of input is cached, so with a cache discount the real cost would be lower.
 
+**Run artifacts.** [0.727](./runs/run_20260617_175948.json), [0.662](./runs/run_20260618_230348.json), [0.723](./runs/run_20260619_004257.json), [0.755](./runs/run_20260619_092849.json).
+
 **What it does well.** With a live provider Qwen is semantically solid. Security and identity are often solid: cross-customer checkout, a claimed identity, guest access, a manager override are denied correctly. **3DS is one of the strongest areas**: blockers on `paid`, on the attempt limit, on the active window, and eligible recovery are handled with the right references. Exact-field reads are reliable.
 
 **Where it stumbles.** The main problem is **the provider**: 10–14% of tasks each run die at the OpenRouter level (AkashML/Parasail return `400` with broken JSON: `Expecting ',' delimiter`, `Unterminated string`). These aren't grader misses: the agent gets no model response. On top of that — **security under-denials** on «glued» requests that have both a harmless and a protected part:
@@ -343,6 +357,8 @@ A similar case: a guest asks for the status of «their» cart → Qwen answers `
 **What it is.** `google/gemma-4-31b-it` from Google: 262k context, tools, structured outputs, reasoning. The cheapest run tokens: \$0.12/M input, \$0.36/M output, \$0.09/M cache. But the providers are a headache: DeepInfra failed on 429/502 almost immediately; Parasail broke on structured output (`unexpected end of data`) and stalled for minutes. The only thing that sort of worked was Venice with helper-reasoning off.
 
 **Numbers.** Two valid runs on Venice: 0.700 and 0.686 (avg 0.693), peak 0.700. Platform time: 2:50 on the first run, **6:06** on the second. Cost of the first run: ~\$0.76, the cheapest by tokens in the lineup. I didn't do a third run: too slow and too noisy.
+
+**Run artifacts.** [0.700](./runs/run_20260618_051727.json), [0.686](./runs/run_20260618_194641.json).
 
 **What it does well.** When the tool-call payloads are valid, many simple and medium tasks close cleanly: ordinary checkout, explicit security denials, employee lookup, store/product field reads, some read-only catalog questions. So it's not a general inability to follow the scaffold.
 
@@ -362,6 +378,8 @@ One product-existence loop ran more than 17 minutes and hit the budget. Third �
 
 **Numbers.** Score: 0.608, 0.621, 0.616 (avg 0.615), peak 0.621. Platform time 3:23–3:51, consistently poor. Cost measured: \$2.60 (8 steps) and \$3.89 (15 steps), despite the ultra-cheap cache \$0.0036/M: too many tokens.
 
+**Run artifacts.** [0.608](./runs/run_20260617_120326.json), [0.621](./runs/run_20260617_125231.json), [0.616](./runs/run_20260619_023318.json).
+
 **What it does well.** It solves many direct SKU/availability/employee/security/archive tasks. Obvious privacy and social-override denials are handled correctly when it finalizes in time.
 
 **Where it stumbles.** The root of the failures is **useful early reasoning that doesn't convert into a final action**. DeepSeek finds the right records, then spends the rest of the budget on broad discovery, repeated helpers, or **the wrong tool family**: on an availability task it calls `create_crosslist_report`, on a read-only task it tries a raw delete, it pings the same OCR helper 10 times. Raising the step cap from 8 to 15 barely moved the score (0.608 → 0.621) but raised the cost (\$2.60 → \$3.89): extra steps amplify drift rather than correctness. On top of that — **reference discipline**: an availability `FALSE(2)` with an extra reference to the excluded variant; the count is right but missing the store reference.
@@ -373,6 +391,8 @@ One product-existence loop ran more than 17 minutes and hit the budget. Third �
 **What it is.** `meta-llama/llama-4-maverick` from Meta: tools, structured outputs, **no reasoning flag**, max output only 16k. Base price \$0.15/M input, \$0.60/M output; on the chosen Parasail endpoint — \$0.35/\$1.00. The launch settings are like Mistral's (forced tool_choice, helper-reasoning none).
 
 **Numbers.** Score: 0.558, 0.526, 0.574 (avg 0.553), peak 0.574, last place. Platform time 0:44–0:56, **the fastest in the lineup**. Cost: \$0.82 per run, the lowest at the real price: few steps, few tokens.
+
+**Run artifacts.** [0.558](./runs/run_20260618_034928.json), [0.526](./runs/run_20260619_015447.json), [0.574](./runs/run_20260619_021506.json).
 
 **What it does well.** Speed and basic security: it correctly denies obvious prompt injections, cross-customer checkout, social-pressure checkout. Simple SKU reads, branch listings, dates, dispatch without injections pass with no provider friction.
 
@@ -406,3 +426,7 @@ One product-existence loop ran more than 17 minutes and hit the budget. Third �
 | Llama | `meta-llama/llama-4-maverick` | 0.574 / 0.558 / 0.526 | 0:44–0:56 | \$0.73–0.88 | 3 |
 
 Cost is realistic (with cached-input where the provider has a cache rate). The OpenAI range includes the high-reasoning control (\$1.71); the three fresh controls are \$1.14–1.23.
+
+### Raw run artifacts
+
+All JSON run artifacts used for the research tables, family breakdowns, and cited provider/probe notes are copied into [`articles/runs`](./runs/).
