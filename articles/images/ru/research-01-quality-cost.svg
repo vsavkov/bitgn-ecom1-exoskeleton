@@ -37,6 +37,9 @@
 <circle cx="216.0" cy="180.3" r="7" fill="#a5a022" stroke="#0f172a" stroke-width="1.2"/>
 <text x="227.0" y="184.3" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">MiniMax M3</text>
 <text x="227.0" y="197.3" text-anchor="start" font-size="10.5" fill="#475569">0.825 · $1.19</text>
+<circle cx="580.0" cy="192.9" r="7" fill="#f59d0b" stroke="#0f172a" stroke-width="1.2"/>
+<text x="568.0" y="184.9" text-anchor="end" font-size="12" font-weight="600" fill="#0f172a">Qwen 3.6 27B</text>
+<text x="568.0" y="197.9" text-anchor="end" font-size="10.5" fill="#475569">0.809 · $5.65</text>
 <circle cx="331.4" cy="241.7" r="7" fill="#df9e11" stroke="#0f172a" stroke-width="1.2"/>
 <text x="342.4" y="233.7" text-anchor="start" font-size="12" font-weight="600" fill="#0f172a">Nemotron 3 Super</text>
 <text x="342.4" y="246.7" text-anchor="start" font-size="10.5" fill="#475569">0.747 · $1.95</text>

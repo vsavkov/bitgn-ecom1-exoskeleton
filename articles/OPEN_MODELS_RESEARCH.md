@@ -85,6 +85,7 @@ The article mentions a few model-call modes. What they mean:
 | **Kimi K2.7** | `moonshotai/kimi-k2.7-code` | **0.868** | **0.898** | 1:40 | \$2.78 |
 | **GLM 5.1** | `z-ai/glm-5.1` | **0.854** | **0.881** | 3:35 | **~\$10.8** |
 | **MiniMax M3** | `minimax/minimax-m3` | **0.825** | **0.837** | 1:54 | **\$1.19** |
+| **Qwen 3.6 27B** | `qwen/qwen3.6-27b` | **0.809** | **0.819** | 2:31 | \$5.65 |
 | **Nemotron 3 Super** | `nvidia/nemotron-3-super-120b-a12b` | **0.747** | **0.757** | 2:20 | \$1.95 |
 | **Mistral Large 3** | `mistralai/mistral-large-2512` | **0.729** | **0.767** | 0:58 | \$1.85 |
 | **Qwen 3.6** | `qwen/qwen3.6-35b-a3b` | **0.717** | **0.755** | 2:59 | \$2.29 |
@@ -97,7 +98,8 @@ The article mentions a few model-call modes. What they mean:
 By quality:
 * **baseline** — OpenAI;
 * **competitive open models** — Kimi, GLM, MiniMax (0.82–0.90);
-* **mid-tier** — Nemotron, Mistral, Qwen (0.72–0.76);
+* **upper-mid** — Qwen 27B on DeepInfra (0.81);
+* **mid-tier** — Nemotron, Mistral, Qwen 35B-A3B (0.72–0.76);
 * **not ready yet** — Gemma, DeepSeek, Llama (0.55–0.70).
 
 By time:
@@ -110,9 +112,9 @@ By time:
 
 **For most models, a high score comes at the cost of time.** Every open model with a score close to GPT runs 2–3× longer than the baseline.
 
-**Provider instability.** Kimi posts 0.898, close to the baseline. But Kimi needs pinning to Moonshot AI and forced `tool_choice` turned off, otherwise OpenRouter's auto-routing drops tasks on a reasoning + tool_choice incompatibility. Qwen loses 10–14% of tasks at the provider level every run. Gemma wouldn't start on two of three providers, and on the third (Venice) 24 of 100 tasks zeroed out on tool-call serialization. How stable a model + provider pairing is over the long run is a separate open question.
+**Provider instability.** Kimi posts 0.898, close to the baseline. But Kimi needs pinning to Moonshot AI and forced `tool_choice` turned off, otherwise OpenRouter's auto-routing drops tasks on a reasoning + tool_choice incompatibility. The original Qwen 35B-A3B route loses 10–14% of tasks at the provider level every run; the later Qwen 27B/DeepInfra follow-up fixed most provider noise, but exposed expensive context blow-ups and finalizer compatibility errors instead. Gemma wouldn't start on two of three providers, and on the third (Venice) 24 of 100 tasks zeroed out on tool-call serialization. How stable a model + provider pairing is over the long run is a separate open question.
 
-**A low token price doesn't guarantee a cheap run.** The native `mini/nano` pair proved both the most accurate and one of the cheapest: \$1.18 per run. The reason is the cheap `gpt-5.4-nano` in the helper role plus aggressive caching: about 95% of input comes from cache. Open models in strong/strong pay differently for a similar token volume, and the cost hinges on the cached rate. Kimi, MiniMax and Mistral have a cheap cache and over 90% of input lands in it, so a run costs \$1.2–2.8. Nemotron, Qwen and GLM have no cached rate, and every re-read context token is billed at the full price. Nemotron and Qwen stay within a reasonable budget thanks to a low base price (\$0.10–0.15) and hold around \$2. GLM, with the highest price among the open models (\$0.98/M) and no cache discount, burns up to \$11 per run, nine times more than GPT. MiniMax, meanwhile, came out the leader on «quality per dollar»: 0.82 at \$1.19.
+**A low token price doesn't guarantee a cheap run.** The native `mini/nano` pair proved both the most accurate and one of the cheapest: \$1.18 per run. The reason is the cheap `gpt-5.4-nano` in the helper role plus aggressive caching: about 95% of input comes from cache. Open models in strong/strong pay differently for a similar token volume, and the cost hinges on the cached rate. Kimi, MiniMax and Mistral have a cheap cache and over 90% of input lands in it, so a run costs \$1.2–2.8. Nemotron, Qwen and GLM have no cached rate, and every re-read context token is billed at the full price. Nemotron and the older Qwen 35B-A3B stay within a reasonable budget thanks to a low base price and hold around \$2. The Qwen 27B/DeepInfra route is more stable and scores higher, but one traced run cost \$5.65 because it read 14.9M input tokens and the endpoint has no cached-input discount. GLM, with the highest price among the open models (\$0.98/M) and no cache discount, burns up to \$11 per run, nine times more than GPT. MiniMax, meanwhile, came out the leader on «quality per dollar»: 0.82 at \$1.19.
 
 ![X axis — cost per run in dollars (log scale), Y axis — average score, point colour — speed](./images/en/research-01-quality-cost.png)
 
@@ -169,9 +171,10 @@ The least obvious result is about money. Cost of one full run (realistic, applyi
 | Qwen 3.6 | \$2.29 | 13.7–14.0M | none | 0.717 |
 | Kimi K2.7 | \$2.78 | 10.5–10.8M | \$0.19/M | 0.868 |
 | DeepSeek V4 Pro | \$3.06 | 9.7–15.8M | \$0.0036/M | 0.615 |
+| Qwen 3.6 27B | \$5.65 | 14.9M | none | 0.809 |
 | **GLM 5.1** | **~\$10.8** | 10.5–11.0M | none | 0.854 |
 
-**The cached rate decides everything.** Kimi, GLM, MiniMax and Qwen have a similar input-token volume (10–14M), yet the per-run cost spreads ninefold. The difference is whether there's a cache discount. The agent re-reads almost the same context at every step, so the cacheable share of input is huge (90%+). For Kimi, MiniMax and Mistral a cheap cached rate makes that share cheaper, and a run costs \$1.2–2.8. Qwen, Nemotron and GLM have no cached rate in the OpenRouter listing: every re-read token is billed at the full price. A low base price saves Nemotron and Qwen (\$0.10–0.15); GLM at \$0.98/M with no cache discount pays full price for all 11M of input and lands at ~\$11 per run. If AtlasCloud quietly applies a cache discount, GLM's real cost is lower, but the published price has none, and for budgeting it's more honest to count it at the full rate.
+**The cached rate decides everything.** Kimi, GLM, MiniMax and Qwen have a similar input-token volume (10–15M), yet the per-run cost spreads ninefold. The difference is whether there's a cache discount. The agent re-reads almost the same context at every step, so the cacheable share of input is huge (90%+). For Kimi, MiniMax and Mistral a cheap cached rate makes that share cheaper, and a run costs \$1.2–2.8. Qwen, Nemotron and GLM have no cached rate in the OpenRouter listing: every re-read token is billed at the full price. A low base price saves Nemotron and the old Qwen 35B-A3B route; Qwen 27B on DeepInfra is more expensive because the output tier is \$3.20/M and the traced run produced a large reasoning/output tail. GLM at \$0.98/M with no cache discount pays full price for all 11M of input and lands at ~\$11 per run. If AtlasCloud quietly applies a cache discount, GLM's real cost is lower, but the published price has none, and for budgeting it's more honest to count it at the full rate.
 
 **Token volume is about step discipline.** Llama burns 2.7–3.4M of input (few steps, fast, but weak), Nemotron 17–19M plus 215–238k reasoning tokens on its verbose self-debug loops. The worse the stop discipline, the more re-read context, and the pricier the run even at a cheap token.
 
@@ -184,7 +187,8 @@ The least obvious result is about money. Cost of one full run (realistic, applyi
 For an open model the question «can you even run it» is front and center, and sometimes outweighs quality:
 
 - **GLM 5.2** (the newest in the family) is **unavailable** through OpenRouter: the structural-tag grammar won't compile on one provider, and others throw 429 even at batch size 1. I had to fall back to 5.1.
-- **Qwen** loses 10–14% of tasks every run to provider `400`s with broken JSON. Pinning made it **worse** than the default route.
+- **Qwen 35B-A3B** loses 10–14% of tasks every run to provider `400`s with broken JSON. Pinning made it **worse** than the default route.
+- **Qwen 27B on DeepInfra** is the better Qwen route operationally: no mass provider fallback failures in the three full runs, but one traced run still hit a 262k context-limit `400` after the agent built a 289k-token request.
 - **Gemma** wouldn't start on DeepInfra or Parasail; on Venice 24 tasks zeroed out on tool-call serialization.
 - **Kimi** needs pinning to Moonshot AI and `omit tool_choice`, otherwise it hits `tool_choice 'required' is incompatible with thinking enabled` in the provider chain.
 - Stable out of the box with the right endpoint: **Nemotron** (DeepInfra), **Mistral** (Mistral), **MiniMax** (Minimax), **Llama** (Parasail).
@@ -332,7 +336,7 @@ The model reports «refund closed» without making the write. Third — **exact-
 
 **Verdict.** Operationally healthier than Nemotron: fast, stable, no structured-output loops. But quality is below Kimi/GLM/MiniMax, and the losses are semantic: keeping constraints, reference discipline, carrying the mutation through, modeling discount state. Valuable as a **fast reference point**; to become a replacement it needs the same general harness work (carry constraints into the structured query, validate the observable mutation before `OUTCOME_OK`).
 
-### Qwen 3.6 — strong on policy under provider noise
+### Qwen 3.6 35B-A3B — strong on policy under provider noise
 
 **What it is.** `qwen/qwen3.6-35b-a3b` from Alibaba — a MoE with a small number of active parameters (35B, ~3B active): tools, structured outputs, reasoning. Price \$0.15/M input, \$1.00/M output. The key problem is **the provider**: pinning (Parasail/AtlasCloud) gave even worse compatibility than OpenRouter's default route, so all valid runs are on the default (noisy) route.
 
@@ -350,7 +354,21 @@ The model reports «refund closed» without making the write. Third — **exact-
 
 A similar case: a guest asks for the status of «their» cart → Qwen answers `checked_out` instead of denying. That is, the model **answers the harmless part** instead of denying the whole request. Beyond that — **long catalog loops** (it calls `resolve_catalog_items` many times, re-reads the same folders), **format drift** (`ja`/`nein`/`<COUNT>`), and **risky file-mutation discipline** on cleanup (attempts at broad deletes like `rm -f *`).
 
-**Verdict.** A semantically capable model (especially security and 3DS) strangled by the provider infrastructure and a step-heavy style. The default route is the lesser evil, but it's a «provider-noisy» measurement of the family, not a clean one. Without a reliable endpoint with tool_choice and structured output, Qwen isn't fit for this agent in production.
+**Verdict.** A semantically capable model (especially security and 3DS) strangled by the provider infrastructure and a step-heavy style. The default route is the lesser evil, but it's a «provider-noisy» measurement of the family, not a clean one. Without a reliable endpoint with tool_choice and structured output, this route isn't fit for this agent in production.
+
+### Qwen 3.6 27B — stable DeepInfra route, expensive last mile
+
+**What it is.** `qwen/qwen3.6-27b` on DeepInfra. I checked for a hypothetical `qwen/qwen3.7-27b`, but it wasn't available; 3.7 Plus/Max existed but were different Alibaba-only routes. DeepInfra and WandB passed direct tool-call probes; DeepInfra was selected and pinned with fallbacks disabled. `OPENROUTER_PROVIDER_REQUIRE_PARAMETERS=true` should not be used for this endpoint: the provider can handle the calls, but the metadata check rejects the route.
+
+**Numbers.** Score: 0.811, 0.798, 0.819 (avg 0.809), peak 0.819. Platform time: 2:13, 2:41, 2:39 (avg 2:31). Cost: one traced run cost \$5.65 at DeepInfra's \$0.32/M input and \$3.20/M output price, with 14.9M input tokens, 280.6k output tokens, 99.4k reasoning tokens, and no cached-input discount.
+
+**Run artifacts.** [0.811](./runs/run_20260621_130100.json), [0.798](./runs/run_20260621_135611.json), [0.819](./runs/run_20260621_151201.json).
+
+**What improved over 35B-A3B.** The provider route is much cleaner. In the counted full runs I didn't see the previous pattern of random provider fallback collapses; DeepInfra is a reproducible route for this model. Security and identity remain strong, and 3DS is still a good area: ownership, retry windows, max attempts, already-paid payments, and eligible recovery are handled coherently.
+
+**Where it stumbles.** The failures moved from provider noise to agent-model compatibility. One inventory export built a 289k-token request and died on the endpoint's 262k context limit. A simple price lookup found and read the exact product record with `price_cents: 23990`, then final submission became empty `OUTCOME_ERR_INTERNAL`. A basket-add task resolved the correct identity, latest basket and SKU, tried raw writes, got blocked, and surrendered as `unsupported` instead of finding the supported mutation path. A discount prompt-injection task ignored the injected policy text but still applied a discount where the scorer expected no file changes.
+
+**Verdict.** This is the cleanest Qwen route I found, but it is not competitive. It scores better than Qwen 35B-A3B, yet costs more than Kimi and MiniMax while scoring below both. The useful finding is diagnostic: Qwen 27B exposes context blow-up, finalizer/output compatibility, and mutation-recovery weaknesses while keeping strong security and 3DS reasoning.
 
 ### Gemma 4 — cheap but operationally broken
 
@@ -421,6 +439,7 @@ One product-existence loop ran more than 17 minutes and hit the budget. Third �
 | Nemotron | `nvidia/nemotron-3-super-120b-a12b` | 0.757 / 0.748 / 0.737 | 2:11–2:26 | \$1.87–2.06 | 3 |
 | Mistral | `mistralai/mistral-large-2512` | 0.767 / 0.726 / 0.694 | 0:52–1:02 | \$1.81–1.89 | 3 |
 | Qwen | `qwen/qwen3.6-35b-a3b` | 0.755 / 0.727 / 0.723 / 0.662 | 2:35–3:09 | \$2.26–2.32 | 4 |
+| Qwen 27B | `qwen/qwen3.6-27b` | 0.819 / 0.811 / 0.798 | 2:13–2:41 | \$5.65 measured on traced run | 3 |
 | Gemma | `google/gemma-4-31b-it` | 0.700 / 0.686 | 2:50 / 6:06 | \$0.76 / n/a | 2 |
 | DeepSeek | `deepseek/deepseek-v4-pro` | 0.621 / 0.616 / 0.608 | 3:23–3:51 | \$2.60–3.89 | 3 |
 | Llama | `meta-llama/llama-4-maverick` | 0.574 / 0.558 / 0.526 | 0:44–0:56 | \$0.73–0.88 | 3 |
