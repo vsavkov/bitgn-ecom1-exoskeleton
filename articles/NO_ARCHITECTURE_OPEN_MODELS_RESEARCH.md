@@ -21,9 +21,13 @@ is to isolate **what the model itself contributes** when the architecture is min
 >   not the architecture. Reasoning lifts judgment (Qwen3-Thinking ≫ Instruct); reliably calling the
 >   finish tool separates a usable model (GLM, DeepSeek: 99–100% completion) from a stalled one
 >   (gpt-oss: 70%).
-> - **Best *local* (weights on a single DGX Spark, no data leaves the box): GLM-4.5-Air ≈ 68**, 100%
->   completion. The Spark's ~273 GB/s bandwidth caps it at ~68 and ~110 min/run — it's free per run
->   but slow.
+> - **A local model now reaches 83 and beats cloud.** **Gemma-4-31B (dense, thinking) = 83.3** on a
+>   single DGX Spark — **above gpt-5.4-mini (71.8) and deepseek-v4-flash (77.1)**, behind only
+>   deepseek-pro and gpt-5.5. The "local ceiling" jumped from ~68 (GLM/Gemma-A4B) to ~83. Cost: it's
+>   slow (~316 s/task, ~130 min/run, concurrency ≤ 4) but $0 and the data never leaves the box.
+> - **"Thinking" models can ship with reasoning off.** Gemma-4 scored 49.9 looking non-reasoning, 67.0
+>   (A4B) / 83.3 (31B) with `enable_thinking` turned on server-side — always check the default. (And a
+>   contiguous 25-task probe scored the 31B at 64%, ~19 pts low — **confirm with full runs, not subsets**.)
 > - **No open model needs an exoskeleton to be useful here.** A single capable model + deterministic
 >   tools gets DeepSeek-pro to ~90. The residual gap to gpt-5.5 is model class, not scaffolding.
 
@@ -72,9 +76,11 @@ model does everything.
 |---|---|---:|---:|---:|---:|---:|---:|
 | baseline (cloud) | **gpt-5.5** (low) | 90.8¹ | — | — | 98% | 25 s | **$10.04** |
 | **open (cloud)** | **deepseek-v4-pro** | **89.6** | 90.0 | 89.3 | 99% | 28 s | **$0.46** |
+| **open (local)** | **Gemma-4-31B-IT** (thinking) | **83.3** | 84.9 | 80.5 | **100%** | 316 s | **$0 API²** |
 | open (cloud) | **deepseek-v4-flash** | **77.1** | 79.1 | 75.1 | 95% | 26 s | **$0.17** |
 | baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 79.3 | 67.7 | 92% | 69 s | $3.64 |
 | **open (local)** | **GLM-4.5-Air** | **67.7** | 69.2 | 66.0 | **100%** | 520 s | $0 API² |
+| **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
 | open (local) | gpt-oss-120b | 52.8 | — | — | 70% | 149 s | $0 API² |
 | open (local) | Qwen3-Next-80B-A3B-Thinking | 51.5 | 52.4 | 50.6 | 95% | 443 s | $0 API² |
 | open (local) | Qwen3-Next-80B-A3B-Instruct | 40.6 | 43.1 | 36.7 | 87% | 210 s | $0 API² |
@@ -88,9 +94,11 @@ model does everything.
 - **One open model reaches frontier-adjacent quality without an architecture.** deepseek-v4-pro
   (89.6) sits between gpt-5.4-mini and gpt-5.5, completes 99%, and its residual is the solver's own
   structural ceilings (dispatch, citation) — not a capability gap a helper model would close.
-- **A clean ladder by class:** 80B-MoE local (Qwen3, gpt-oss, GLM) tops out ~52–68; mid cloud
-  (gpt-5.4-mini, deepseek-flash) ~72–77; large cloud (deepseek-pro, gpt-5.5) ~90–95. Architecture
-  didn't move a model between rungs; model size/class did.
+- **A clean ladder by class — but local now reaches higher than expected:** small/MoE local (Qwen3,
+  gpt-oss, GLM, Gemma-A4B) tops out ~52–68; **dense Gemma-4-31B local jumps to ~83**, into mid-cloud
+  territory (above gpt-5.4-mini 72 and deepseek-flash 77); large cloud (deepseek-pro, gpt-5.5) ~90–95.
+  Architecture didn't move a model between rungs; **active-parameter count did** — the dense 31B's
+  ~31B-active vs the MoE locals' 3–12B is the whole story (paid for in wall-clock, not dollars).
 - **Completion discipline is a hard gate**, separate from intelligence: gpt-oss is *capable*
   (76% pass-rate *when it completes*) but only completes 70% of tasks, so it scores like the weak
   Qwen3-Thinking. GLM and DeepSeek complete 99–100% and convert their capability into score.
@@ -102,7 +110,8 @@ model does everything.
 | Max quality | gpt-5.5 (94.8) | Highest, if the ~$10/run is fine. |
 | **Best quality / dollar** | **deepseek-v4-pro** | ~90 at $0.46/run — ~22× cheaper than gpt-5.5 for ~5 fewer points. |
 | Cheap + fast cloud | deepseek-v4-flash | 77, ~26 s/task, $0.17/run. |
-| **Local / data-stays-in-box** | **GLM-4.5-Air** | Best local (~68), 100% completion, $0 API — accept ~110 min/run. |
+| **Local — best quality** | **Gemma-4-31B-IT** (thinking) | **83.3**, $0 API, data stays on the box — beats gpt-5.4-mini & deepseek-flash. Slow: ~316 s/task, ~130 min/run, concurrency ≤ 4. |
+| **Local — best speed** | **Gemma-4-26B-A4B** (thinking) or **GLM-4.5-Air** | ~67, $0 API, ~3× the 31B's throughput. Enable `enable_thinking` for the A4B. |
 
 ![Quality vs cost per run — deepseek-v4-pro reaches ~90 at $0.46 while gpt-5.4-mini costs $3.64 for only 71.8; local models are free but lower](images/quality-vs-cost.svg)
 
@@ -111,15 +120,15 @@ model does everything.
 Inverting the per-model view — *where does each failure class show up* (● frequent ≳5/run,
 ○ occasional 1–5/run, blank ≲1):
 
-| Error class | Instruct | Thinking | gpt-oss | GLM-Air | ds-flash | ds-pro | 5.4-mini | gpt-5.5 |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | ○ | ○ | ○ |
-| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ● | ○ | ● | ○ |
-| Security under-denial (obeys injection) | ● | ○ | | ○ | | | | |
-| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | | ○ | ● | ○ |
-| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | | ○ | | ○ |
-| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | ds-flash | ds-pro | 5.4-mini | gpt-5.5 |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | ○ | ○ | ○ | ○ |
+| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ○ | ● | ○ |
+| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | | | | |
+| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | | ○ | ● | ○ |
+| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ |
+| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
 ![Cross-cutting error matrix — avg failures per run by class and model; gpt-oss completion 30 and gpt-5.4-mini arithmetic 14.7 stand out, deepseek-v4-pro and gpt-5.5 columns are clean](images/error-matrix.svg)
 
@@ -159,12 +168,14 @@ Why "cheap tokens ≠ cheap runs," and the inverse:
    deterministic helper tools puts deepseek-v4-pro at ~90 and GLM-4.5-Air at ~68. The architecture's
    job here is to *not get in the model's way* (reliable tool-calling, deterministic grounding) — not
    to compensate for the model.
-2. **Pick by class, not by tuning.** The score rungs map cleanly to model class; no amount of
-   prompt/aid engineering moved a model up a rung (the local ceiling is firmly ~68; gpt-5.4-mini's
-   ~72; deepseek-pro/gpt-5.5's ~90+).
+2. **Pick by class, not by tuning — and "local" reaches higher than we thought.** The rungs map to
+   model class (active-param count), but the local ceiling is **not** ~68: the dense Gemma-4-31B hits
+   **~83**, above two cloud models. Tuning still doesn't move a model between rungs; *more active
+   params* does — paid for in wall-clock on the Spark, not dollars.
 3. **deepseek-v4-pro is the value pick** — ~90 at a fraction of gpt-5.5's cost — if cloud + a
-   non-OpenAI provider are acceptable. **GLM-4.5-Air is the local pick** for data-residency, at the
-   cost of speed. **gpt-5.5 only if you need the last ~5 points.**
+   non-OpenAI provider are acceptable. **For local/data-residency, Gemma-4-31B (~83) is the new top
+   pick** if you can afford ~130 min/run; **GLM-4.5-Air or Gemma-4-A4B (~67)** when you need ~3× the
+   throughput. **gpt-5.5 only if you need the last ~5 points.**
 4. **Watch completion discipline before capability** when screening a new model: gpt-oss is the
    cautionary tale — strong per-task, but a serving-level stall capped it 20 points below its ability.
 
@@ -207,6 +218,45 @@ Why "cheap tokens ≠ cheap runs," and the inverse:
   plumbing.
 - **Verdict.** The local pick: data stays on the box, $0/run, ~68 — at the price of ~110 min/run. The
   Spark's bandwidth, not the model, is the ceiling.
+
+### Gemma-4-26B-A4B — reasoning, if you turn it on (≈67.0)
+- **What it is.** Google Gemma 4, multimodal MoE (25.2B/**3.8B-active**), NVFP4 on the DGX Spark — the
+  most bandwidth-friendly capable local model (~40 tok/s no-think). **A reasoning model whose thinking
+  is OFF by default.**
+- **Numbers.** 3 runs **thinking-on / temp 1.0**: 65.5 / 65.4 / 70.1 → avg **67.0 ± 2.2**, 96%
+  completion, ~233 s/task, $0 API. **No-think/greedy baseline: 49.9** — so reasoning is worth **+17**.
+- **What it does well.** Reasoning lifts judgment to GLM's level *and* fixes completion (87% → 96% —
+  it thinks its way to finishing). Fast per token; the lift comes from the thinking, not scale.
+- **Where it stumbles.** **Citation is the wall (19.3/run — the worst of the field)**: it reasons to a
+  correct answer but over/under-cites which record is load-bearing. Otherwise clean (security/arith/
+  outcome all ≤1.7).
+- **The trap.** `enable_thinking` is off by default and pi can't set `chat_template_kwargs`, so you
+  must enable it **server-side** (`--default-chat-template-kwargs '{"enable_thinking": true}'`) — miss
+  it and you measure 49.9, a 17-pt artifact. Greedy (`temperature 0`) also *hurts* a reasoning model;
+  use Gemma's native `temp 1.0`.
+- **Verdict.** Co-best local with GLM (~67), reached a different way — fewer active params + reasoning
+  vs GLM's bigger-but-bandwidth-bound MoE. ~2× faster than GLM per run, but thinking is ~4.4× its own
+  no-think speed.
+
+### Gemma-4-31B-IT — the best local model (≈83.3)
+- **What it is.** The **dense** Gemma 4 (~31B active, *not* MoE), multimodal, NVFP4 (~16 GB) on the
+  DGX Spark. Same reasoning model + `gemma4` parsers as the A4B; thinking must be enabled server-side.
+- **Numbers.** 3 full runs (thinking on): 84.5 / 80.5 / 84.9 → **83.3 ± 2.0**, **100% completion**,
+  ~316 s/task, $0 API.
+- **What it does well.** Everything the smaller locals can't: **+16 over the A4B/GLM and it beats two
+  cloud models** (gpt-5.4-mini 71.8, deepseek-v4-flash 77.1) — the dense model's extra active params
+  convert straight to score. The cleanest local profile here: completion ~0 failures, security/arith/
+  outcome all ≤1.7. Only deepseek-pro and gpt-5.5 outscore it.
+- **Where it stumbles.** Citation (8.3/run) — the same load-bearing-record judgment that walls every
+  model, just milder. The shared dispatch ceiling (5.0) accounts for most of the rest.
+- **The cost.** Dense → ~7 tok/s on the Spark's bandwidth → **~316 s/task, ~130 min/run, and a hard
+  concurrency ≤ 4** (at 8, the saturated server returns empty on every task with no error logged).
+- **Watch-out.** A 25-task probe (`t001–t025`) scored only **64%** and nearly buried this result —
+  that contiguous slice ran ~19 pts harder than the full set. **Subset probes can lie; confirm with
+  full runs.**
+- **Verdict.** The new local ceiling — **~83, frontier-adjacent, on a single workstation**. Use it
+  when you want the best local quality and can afford the hours; use the A4B (~67, ~3× faster) when
+  you need throughput.
 
 ### gpt-oss-120b — capable but stalls (≈52.8)
 - **What it is.** OpenAI open-weight 120B/5.1B-active MoE, MXFP4, harmony format, on the Spark.
@@ -261,6 +311,8 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 |---|---|---|---|
 | deepseek-v4-pro | `dspro1`, `dspro2` | 89.3, 90.0 | 2 |
 | deepseek-v4-flash | `dsflash1`, `dsflash2` | 75.1, 79.1 | 2 |
+| **Gemma-4-31B-IT** (thinking) | `g31prod1`–`g31prod3` | 84.5, 80.5, 84.9 | 3 |
+| Gemma-4-26B-A4B (thinking) | `gthinkprod1`–`gthinkprod3` | 65.5, 65.4, 70.1 | 3 |
 | GLM-4.5-Air (gen13) | `glmprod5`–`glmprod8` | 66.6, 66.0, 69.2, 67.5 | 4 |
 | GLM-4.5-Air (gen14) | `glmprod9`, `glmprod10` | 68.3, 68.4 | 2 |
 | gpt-oss-120b | `gptossprod1` | 52.8 | 1 |

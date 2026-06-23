@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="620" viewBox="0 0 980 620" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .box { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 2; }
+      .guard { fill: #eef2ff; stroke: #818cf8; stroke-width: 2; }
+      .repair { fill: #fef2f2; stroke: #f87171; stroke-width: 2; }
+      .out { fill: #fff7ed; stroke: #fb923c; stroke-width: 2; }
+      .text { fill: #111827; font-size: 17px; font-weight: 650; }
+      .sub { fill: #475569; font-size: 13px; }
+      .label { fill: #64748b; font-size: 12px; font-weight: 650; }
+      .line { fill: none; stroke: #475569; stroke-width: 2.5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect class="bg" width="980" height="620"/>
+  <text x="40" y="42" font-size="24" font-weight="750" fill="#111827">Finalization guard</text>
+  <text x="40" y="65" font-size="14" fill="#64748b">No formatter model, no evidence ledger: one guarded final tool call.</text>
+
+  <rect class="box" x="250" y="95" width="300" height="66" rx="8"/>
+  <text class="text" x="400" y="123" text-anchor="middle">Model calls report_completion</text>
+  <text class="sub" x="400" y="145" text-anchor="middle">outcome, message, grounding refs</text>
+
+  <rect class="guard" x="250" y="205" width="300" height="66" rx="8"/>
+  <text class="text" x="400" y="233" text-anchor="middle">Reference validation</text>
+  <text class="sub" x="400" y="255" text-anchor="middle">reject missing or fabricated paths</text>
+
+  <rect class="repair" x="685" y="205" width="230" height="92" rx="8"/>
+  <text class="text" x="800" y="236" text-anchor="middle">Repair prompt</text>
+  <text class="sub" x="800" y="260" text-anchor="middle">non-terminating result</text>
+  <text class="sub" x="800" y="282" text-anchor="middle">model retries final call</text>
+
+  <rect class="guard" x="250" y="320" width="300" height="66" rx="8"/>
+  <text class="text" x="400" y="348" text-anchor="middle">Yes/no normalization</text>
+  <text class="sub" x="400" y="370" text-anchor="middle">only for true polar questions</text>
+
+  <rect class="guard" x="250" y="430" width="300" height="66" rx="8"/>
+  <text class="text" x="400" y="458" text-anchor="middle">Narrow deterministic patches</text>
+  <text class="sub" x="400" y="480" text-anchor="middle">security token, helper refs, confidence</text>
+
+  <rect class="out" x="250" y="540" width="300" height="58" rx="8"/>
+  <text class="text" x="400" y="574" text-anchor="middle">Submit answer or dry-run draft</text>
+
+  <path class="line" d="M 400 161 L 400 198"/>
+  <path class="line" d="M 550 238 L 677 238"/>
+  <text class="label" x="613" y="228" text-anchor="middle">bad refs</text>
+  <path class="line" d="M 400 271 L 400 313"/>
+  <text class="label" x="428" y="300">valid refs</text>
+  <path class="line" d="M 400 386 L 400 423"/>
+  <path class="line" d="M 400 496 L 400 533"/>
+</svg>
