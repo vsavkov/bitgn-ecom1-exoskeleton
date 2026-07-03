@@ -86,12 +86,15 @@ model does everything.
 | **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
 | **open (local)** | **GLM-4.5-Air** | **67.7** | 69.2 | 66.0 | **100%** | 520 s | $0 API² |
 | **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
+| **open (cloud)** | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | **56.2** | 60.2 | 53.8 | 99% | 11 s³ | $0 API² |
+| **open (local)** | **ECOM1-32B-NVFP4A16** (ECOM1-32B-BF16 quantized) | **54.6** | 57.2 | 51.8 | 98% | 50 s³ | $0 API² |
 | open (local) | gpt-oss-120b | 52.8 | — | — | 70% | 149 s | $0 API² |
 | open (local) | Qwen3-Next-80B-A3B-Thinking | 51.5 | 52.4 | 50.6 | 95% | 443 s | $0 API² |
 | open (local) | Qwen3-Next-80B-A3B-Instruct | 40.6 | 43.1 | 36.7 | 87% | 210 s | $0 API² |
 
 ¹ gpt-5.5's measured cost-probe run was at `low` effort (90.8); at higher effort the reference is
 ~94.8. ² Local = free per run on owned hardware, but ~40–110 min wall-clock/run (bandwidth-bound).
+³ The two **ECOM1-32B** rows are *our fine-tune* of Olmo-3.1-32B-Think (see the Olmo-family section below), not raw open models: **BF16** measured on a rented Modal H200 (11 s/task); **NVFP4A16** on the owned GB10 Spark (50 s/task, ~30 min/run with `TASK_CAP_S=300`). Both `bitgn/ecom1-prod`; the ~1.6-pt BF16→NVFP4A16 gap is the quantization tax.
 
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models, GLM-4.5-Air 67.7 the local ones](images/leaderboard.svg)
 
@@ -313,6 +316,59 @@ rather than choosing actions. **Not run.** Serving + the three (non-competitive)
 `README-local-models.md`. *(Companion lesson to Magistral: a model strong in a different shape —
 world-modeling — doesn't transfer to agentic-ops solving.)*
 
+### Olmo 3.1 family (AllenAI) — considered, ruled out: no native tool-calling
+AllenAI's Olmo 3.1 open-*science* models were checked as solver candidates and **ruled out for lack of
+native tool-calling** — the one thing the ECOM1 solver runs on. Both **`Olmo-3.1-32B-Instruct`** and
+**`Olmo-3.1-32B-Think`** (reasoning, emitted as inline `<think>…</think>` tags) ship a plain
+`system`/`user`/`assistant` chat template with **no `tools` section and no vLLM `--tool-call-parser`**;
+**`Olmo-3.1-7B-RL-Zero-Math`** is a math-RL specialist, not an agent. They all *serve* on the Spark fine
+(7B trivially; 32B at ~32 GB FP8 / ~16 GB NVFP4) — they just emit no `tool_calls`, so the solver takes
+**0 tool steps → DENIED_SECURITY fallback**. The Think variant doesn't rescue it: per the Magistral
+result, reasoning ≠ tool-discipline, and Olmo is a step behind — it can't tool-call at all. **Not run.**
+(Using one would need a text-ReAct solver variant, which doesn't exist here.) Completes the trio of
+"why a capable model still can't solve ECOM1": **wrong shape** (Qwen-AgentWorld), **won't submit**
+(Magistral), **can't call tools** (Olmo).
+
+**…but SFT turns it into a usable agent — `ECOM1-32B` (56.2 / 54.6).** The "ruled out" verdict is
+about the *raw* base. We fine-tuned `Olmo-3.1-32B-Think` on **11,248 gpt-5.5 teacher trajectories**
+(LoRA r=32, 1 epoch) that *impose* the ChatML+Hermes tool-calling the base never learned →
+**`ECOM1-32B-BF16` = 56.2** (H200, 3-run), and the GB10-quantized **`ECOM1-32B-NVFP4A16` = 54.6**
+(10-run) — the fully-open Olmo, made to drive the loop. Two lessons: (1) the no-native-tool-calling
+wall is a *format* gap SFT closes, not a competence gap; (2) even so, ECOM1-32B lands **~21 pts below
+raw Qwen3.6-27B (77.4)** — a stronger *base* beats a fine-tuned weaker one, so **the base model is the
+ceiling** (Qwen does `export` natively at 0.64 where distilled Olmo is stuck at 0.00). Full recipe:
+`README-Hugging-Face.md`, `README-OPSD.md`.
+
+### Making a non-tool-calling model usable (remediation menu)
+
+The Olmo blocker is **format** (no parseable `tool_calls`) — separable from **competence** (choosing the
+right tool + finishing). Ways to add tool-calling, lightest to heaviest:
+
+**Without training — fix the *format*:**
+- **Prompt + parse (text-ReAct).** Tool specs + few-shot in the prompt; the model replies with a structured
+  block (`{"tool":…}` / `<tool_call>…</tool_call>`); the harness parses it. No model change; reliability is
+  the weak point (free-form drifts). This is the pre-SDK ECOM1 protocol.
+- **Guided / constrained decoding** *(the strong no-train option)*. vLLM `guided_json` / `guided_grammar` /
+  structured outputs force the model to emit **only** a valid tool call against a JSON schema — a model
+  never trained for it then *can't* produce unparseable output. (`outlines` / `guidance` / `instructor` do
+  the same at the client.)
+- **Custom chat template + generic parser.** Override the template (`--chat-template`) to render the tools in
+  e.g. Hermes format and serve with `--enable-auto-tool-choice --tool-call-parser hermes`; the *existing*
+  native-tool-calling solver then works unchanged. Only as reliable as the model mimics that format — back
+  it with guided decoding.
+
+**With training — fix the *competence*:**
+- **SFT / LoRA on function-calling data** (Glaive, ToolACE, Hermes-FC, xLAM, APIGen). QLoRA on a 32B is
+  tractable; yields native, parseable tool-calling *and* better tool choice.
+- **Agentic RL post-training** — RL on tool-use trajectories to push **completion discipline** (the exact
+  thing that sank Magistral). Heaviest, but it's what closes the competence gap.
+
+**The caveat (learned here):** the no-train tricks solve *format*, not *competence*. Magistral tool-called
+fine and still scored ~12 (wouldn't `report_completion`); a format-fixed Olmo with no agentic training would
+likewise *participate but underperform* — though ECOM1's local-model aids (citation/fraud/re-prompt) recover
+such models partway. **Cheap test:** guided-JSON + custom template → point the current solver at it → dev
+smoke. **Robust fix:** LoRA SFT.
+
 ### GLM-4.5-Air — best local (≈67.7)
 - **What it is.** Zhipu GLM-4.5-Air, agentic reasoning MoE (~106B/12B-active), FP8 on the DGX Spark.
 - **Numbers.** 6 runs (gen13–14): avg 67.7 (range 66.0–69.2; 4-run gen13 mean 67.3 ± 0.6), **100%
@@ -481,6 +537,8 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 | Gemma-4-26B-A4B (thinking) | `gthinkprod1`–`gthinkprod3` | 65.5, 65.4, 70.1 | 3 |
 | GLM-4.5-Air (gen13) | `glmprod5`–`glmprod8` | 66.6, 66.0, 69.2, 67.5 | 4 |
 | GLM-4.5-Air (gen14) | `glmprod9`, `glmprod10` | 68.3, 68.4 | 2 |
+| **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + gpt-5.5 SFT, H200) | `32bv4a`–`32bv4c` | 53.8, 54.7, 60.2 (mean 56.2) | 3 |
+| **ECOM1-32B-NVFP4A16** (GB10 Spark, `TASK_CAP_S=300`) | `sparkv4a`–`sparkv4j` | 51.8–57.2 (mean 54.6) | 10 |
 | gpt-oss-120b | `gptossprod1` | 52.8 | 1 |
 | Qwen3-Thinking | `thinkprod1`–`thinkprod3` | 50.6, 52.4, 51.4 | 3 |
 | Qwen3-Instruct (gen3–6) | `lg3prod`–`lg6prod` | 43.1, 36.7, 42.6, 40.0 | 4 |
