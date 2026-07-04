@@ -372,6 +372,27 @@ likewise *participate but underperform* — though ECOM1's local-model aids (cit
 such models partway. **Cheap test:** guided-JSON + custom template → point the current solver at it → dev
 smoke. **Robust fix:** LoRA SFT.
 
+### LFM2.5-8B-A1B (Liquid AI) — on-device; raw is unparseable, SFT rescues it to ECOM1-8B (44 / 37.5)
+Liquid AI's **`LFM2.5-8B-A1B`** (8.3B-total / **1.5B-active** hybrid conv+attention on-device MoE) was tested
+as the *smallest* viable base — a phone-/laptop-class model. Unlike Olmo it **does** emit tool calls, but in
+its own `<|tool_call_start|>[list(path="/docs")]<|tool_call_end|>` (pythonic) wrapper that **no packaged vLLM
+parser reads** — the `lfm2` parser is absent from every Spark image (26.05 / v0.14.0 / nightly all `KeyError`),
+and generic `pythonic` can't see the wrapper → `tool_calls:[]` → 0 steps. We built a reusable harness-side
+fallback (**`LOCAL_TOOLCALL_RECOVER`**, `src/lfm-toolcall.ts`) that parses the call the server couldn't — but
+even parsed, **raw tops out at ~7%**. The residue is *commitment*, not plumbing: it won't reliably emit a call
+or `report_completion` (reasoning ≠ tool-discipline — the Magistral lesson again), and
+`FORCE_TOOL_CHOICE_REQUIRED` backfires (1.2 — it loops to max-steps).
+
+**…but SFT turns it into a real on-device agent — `ECOM1-8B` (44.0 / 37.5).** Same recipe as ECOM1-32B: LoRA
+SFT on the gpt-5.5 teacher trajectories that *impose* ChatML+Hermes (the only new knob is
+`LORA_TARGETS=all-linear` for the MoE). The SFT'd model emits Hermes calls the **packaged** parser reads (no
+recovery) and commits — **0/100 zero-step tasks (raw: 43), 96/100 completed** → **`ECOM1-8B-A1B-BF16` = 44.0**
+(rented H100, 3-run) and **37.5** on the owned **DGX Spark GB10** (10-run; the ~6.5-pt gap is serving-stack —
+Blackwell + vLLM 26.05 vs Hopper — not capability). That's **above our SFT'd 7B Olmo (38)** and the
+Qwen3-Instruct floor (40.6), from **1.5B active params on a laptop-class box**. Same two lessons as Olmo: SFT
+closes the *format* gap; and active-param count is the ceiling (44 « the 3–4B-active MoEs at 67–72 « raw
+Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`.
+
 ### GLM-4.5-Air — best local (≈67.7)
 - **What it is.** Zhipu GLM-4.5-Air, agentic reasoning MoE (~106B/12B-active), FP8 on the DGX Spark.
 - **Numbers.** 6 runs (gen13–14): avg 67.7 (range 66.0–69.2; 4-run gen13 mean 67.3 ± 0.6), **100%
