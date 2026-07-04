@@ -90,11 +90,14 @@ model does everything.
 | **open (local)** | **ECOM1-32B-NVFP4A16** (ECOM1-32B-BF16 quantized) | **54.6** | 57.2 | 51.8 | 98% | 50 s³ | $0 API² |
 | open (local) | gpt-oss-120b | 52.8 | — | — | 70% | 149 s | $0 API² |
 | open (local) | Qwen3-Next-80B-A3B-Thinking | 51.5 | 52.4 | 50.6 | 95% | 443 s | $0 API² |
+| **open (cloud)** | **ECOM1-8B-A1B-BF16** (LFM2.5-8B-A1B + SFT; H100) | **44.0** | 46.0 | 42.0 | 96% | 10 s⁴ | $0 API² |
 | open (local) | Qwen3-Next-80B-A3B-Instruct | 40.6 | 43.1 | 36.7 | 87% | 210 s | $0 API² |
+| **open (local)** | **ECOM1-8B-A1B-BF16** (same weights, on-device; GB10) | **37.5** | 42.0 | 33.0 | 92% | 50 s⁴ | $0 API² |
 
 ¹ gpt-5.5's measured cost-probe run was at `low` effort (90.8); at higher effort the reference is
 ~94.8. ² Local = free per run on owned hardware, but ~40–110 min wall-clock/run (bandwidth-bound).
 ³ The two **ECOM1-32B** rows are *our fine-tune* of Olmo-3.1-32B-Think (see the Olmo-family section below), not raw open models: **BF16** measured on a rented Modal H200 (11 s/task); **NVFP4A16** on the owned GB10 Spark (50 s/task, ~30 min/run with `TASK_CAP_S=300`). Both `bitgn/ecom1-prod`; the ~1.6-pt BF16→NVFP4A16 gap is the quantization tax.
+⁴ The two **ECOM1-8B-A1B-BF16** rows are our LoRA SFT of **`LiquidAI/LFM2.5-8B-A1B`** (Liquid AI's 8.3B-total / **1.5B-active** on-device MoE) — the *same* gpt-5.5 ECOM1 trajectories and the *same* imposed ChatML+Hermes pipeline as ECOM1-32B (`LORA_TARGETS=all-linear` for the MoE, r=32, 1 epoch, BF16 merge; `scripts/train_modal.py --base LiquidAI/LFM2.5-8B-A1B`). **Raw** LFM2.5 scored ~7% (it wouldn't commit to tool calls); the SFT fixed exactly that → 44. **Same BF16 weights, two boxes:** a rented **H100** (44.0, 3-run) and the owned **DGX Spark GB10** (37.5, 10-run) — the ~6.5-pt gap is the serving stack (Blackwell + vLLM 26.05 vs Hopper), not capability. Because SFT taught the Hermes format, serve with the packaged `--tool-call-parser hermes` (no recovery). See `README-LFM2.5-8B-A1B.md`.
 
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models, GLM-4.5-Air 67.7 the local ones](images/leaderboard.svg)
 
@@ -122,7 +125,7 @@ model does everything.
 | **Local — 2nd / best value** | **Qwen3.6-27B** (thinking, **no-MTP**) | **77.4** — beats cloud deepseek-flash (77.1) & gpt-5.4-mini, free. **Turn MTP off** (it costs ~4 pts → 73.2). Dense, ~229 s/task, conc 4. |
 | **Local — fast (MoE, conc 8)** | **Qwen3.6-35B-A3B** (no-MTP) | **71.6** at conc-8 throughput — beats Gemma-A4B (67) on *both* quality and speed. **Turn MTP off** (it costs ~6 pts). Gemma-A4B is the alternative if you want `enable_thinking` simplicity. |
 
-![Quality vs cost per run — deepseek-v4-pro reaches ~90 at $0.46 while gpt-5.4-mini costs $3.64 for only 71.8; local models are free but lower](images/quality-vs-cost.svg)
+![Quality vs cost per run — deepseek-v4-pro reaches ~90 at $0.46 while gpt-5.4-mini costs $3.64 for only 71.8; self-hosted models, including our free ECOM1 fine-tunes (37–56), cost $0 but score lower](images/quality-vs-cost.svg)
 
 ## Cross-cutting error classes
 
@@ -539,6 +542,8 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 | GLM-4.5-Air (gen14) | `glmprod9`, `glmprod10` | 68.3, 68.4 | 2 |
 | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + gpt-5.5 SFT, H200) | `32bv4a`–`32bv4c` | 53.8, 54.7, 60.2 (mean 56.2) | 3 |
 | **ECOM1-32B-NVFP4A16** (GB10 Spark, `TASK_CAP_S=300`) | `sparkv4a`–`sparkv4j` | 51.8–57.2 (mean 54.6) | 10 |
+| **ECOM1-8B-A1B-BF16** (LFM2.5-8B-A1B + gpt-5.5 SFT, H100) | `lfmsft1`–`lfmsft3` | 44.0, 42.0, 46.0 (mean 44.0) | 3 |
+| **ECOM1-8B-A1B-BF16** (same weights, on the GB10) | `lfmsftgb1`–`lfmsftgb10` | 33.0–42.0 (mean 37.5) | 10 |
 | gpt-oss-120b | `gptossprod1` | 52.8 | 1 |
 | Qwen3-Thinking | `thinkprod1`–`thinkprod3` | 50.6, 52.4, 51.4 | 3 |
 | Qwen3-Instruct (gen3–6) | `lg3prod`–`lg6prod` | 43.1, 36.7, 42.6, 40.0 | 4 |
