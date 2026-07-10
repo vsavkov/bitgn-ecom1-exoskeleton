@@ -86,6 +86,7 @@ model does everything.
 | **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
 | **open (local)** | **GLM-4.5-Air** | **67.7** | 69.2 | 66.0 | **100%** | 520 s | $0 API² |
 | **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
+| **open (local)** | **deepseek-v4-flash** (q2, non-thinking; 1 Spark)⁵ | **63.4** | 67.7 | 61.3 | 82% | 375 s | $0 API² |
 | **open (cloud)** | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | **56.2** | 60.2 | 53.8 | 99% | 11 s³ | $0 API² |
 | **open (local)** | **ECOM1-32B-NVFP4A16** (ECOM1-32B-BF16 quantized) | **54.6** | 57.2 | 51.8 | 98% | 50 s³ | $0 API² |
 | open (local) | gpt-oss-120b | 52.8 | — | — | 70% | 149 s | $0 API² |
@@ -98,6 +99,8 @@ model does everything.
 ~94.8. ² Local = free per run on owned hardware, but ~40–110 min wall-clock/run (bandwidth-bound).
 ³ The two **ECOM1-32B** rows are *our fine-tune* of Olmo-3.1-32B-Think (see the Olmo-family section below), not raw open models: **BF16** measured on a rented Modal H200 (11 s/task); **NVFP4A16** on the owned GB10 Spark (50 s/task, ~30 min/run with `TASK_CAP_S=300`). Both `bitgn/ecom1-prod`; the ~1.6-pt BF16→NVFP4A16 gap is the quantization tax.
 ⁴ The two **ECOM1-8B-A1B-BF16** rows are our LoRA SFT of **`LiquidAI/LFM2.5-8B-A1B`** (Liquid AI's 8.3B-total / **1.5B-active** on-device MoE) — the *same* gpt-5.5 ECOM1 trajectories and the *same* imposed ChatML+Hermes pipeline as ECOM1-32B (`LORA_TARGETS=all-linear` for the MoE, r=32, 1 epoch, BF16 merge; `scripts/train_modal.py --base LiquidAI/LFM2.5-8B-A1B`). **Raw** LFM2.5 scored ~7% (it wouldn't commit to tool calls); the SFT fixed exactly that → 44. **Same BF16 weights, two boxes:** a rented **H100** (44.0, 3-run) and the owned **DGX Spark GB10** (37.5, 10-run) — the ~6.5-pt gap is the serving stack (Blackwell + vLLM 26.05 vs Hopper), not capability. Because SFT taught the Hermes format, serve with the packaged `--tool-call-parser hermes` (no recovery). See `README-LFM2.5-8B-A1B.md`.
+
+⁵ **deepseek-v4-flash local** = the *same* model as the 77.1 cloud (FP8) row, but self-hosted on **one DGX Spark GB10** at **q2-imatrix** (81 GB) via **ds4/DwarfStar** (llama.cpp's V4 arch = gibberish). Non-thinking (`model=deepseek-chat`) is mandatory to fit the cap. 3-run mean **63.4** (67.7/61.4/61.3; conc 2, `TASK_CAP_S=600`, ~5 h/run). The 82% completion / 63.4 is **serving-speed-bound** — score tracks the timeout rate almost linearly, so it's ~14 pts under its own cloud FP8 (77.1) purely on the slowest ~1-in-5 tasks capping at q2/13 t/s, not a competence gap. See its family-section subsection + `README-local-models.md`.
 
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models, GLM-4.5-Air 67.7 the local ones](images/leaderboard.svg)
 
@@ -291,6 +294,25 @@ deepseek-pro. *(Hypothesis — not yet measured; an aids-on GLM-5.2 run would co
   → answered `PT-HDG-STI-HSA50-BODY` (correct SKU) but **over-cited** sibling variants
   (`…-AK10.json` …), an extra-reference failure. A few not-completions (5.5/run).
 - **Verdict.** The cost/speed sweet spot below pro; loses ~12 pts to pro mostly on citation discipline.
+
+#### deepseek-v4-flash *run locally* on one DGX Spark — 63.4 (q2), a poor trade vs the API
+The 77.1 above is the **cloud FP8** endpoint. We also ran the *same model* **locally on a single GB10 Spark** to
+see whether a 284B / 13B-active MoE is viable self-hosted. It is — barely — and it isn't worth it:
+- **Fit.** Full FP8 needs two Sparks; one node caps you at 2–3-bit. Unsloth's **UD-IQ3_XXS (103 GB)** fits the
+  128 GB box (MLA keeps the KV compact — the *weights* are the limit), but **llama.cpp's DeepSeek-V4 arch is
+  broken** (coherent-looking load, then **gibberish** at the raw `/completion` level; not just the tool path).
+  The engine that works is **ds4 / DwarfStar** (antirez's purpose-built V4 engine, `make cuda-spark`), which
+  needs its **own q2-imatrix GGUF** (81 GB) — coherent, and OpenAI `tool_calls` parse correctly.
+- **Non-thinking is mandatory** to fit the task cap — thinking mode cap-storms. It's a *per-request* control in
+  ds4 (`model=deepseek-chat` / `think:false`), not a server flag.
+- **Result: 63.4 mean** (3× `bitgn/ecom1-prod`: 67.7 / 61.4 / 61.3; caps 17/22/28; conc 2, `TASK_CAP_S=600`,
+  **~5 h/run** at ~13 t/s). The score tracks the **cap rate** almost linearly — each cap is a hard 0 — so this is
+  **serving-speed-bound, not a competence ceiling**: it answers correctly when it finishes, but the slowest ~1-in-5
+  tasks time out at q2/13 t/s.
+- **Verdict.** Local q2 loses **~14 pts to its own cloud FP8 (77.1)** and sits **~20 pts under the local crown
+  `Gemma-4-31B` NVFP4** (83.3, ~9× smaller, ~40 t/s, ~10 GB). A faster serve recovers a few points but can't
+  close either gap. **Use the API for V4-Flash's 77.1; use Gemma-4-31B for the best local.** (Details +
+  scripts in `README-local-models.md`.)
 
 ### Magistral Medium (Mistral) — tested, UNUSABLE: can't drive the agentic loop (~12, not ranked)
 - **What it is.** Mistral's *reasoning* model (`magistral-medium-2509`) via `api.mistral.ai`, wired as the
