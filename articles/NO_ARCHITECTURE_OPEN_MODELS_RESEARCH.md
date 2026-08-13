@@ -79,6 +79,8 @@ model does everything.
 | **open (cloud)** | **Kimi K2.6** (Moonshot) | **86.6 ± 1.0** | 90.0 | 79.6 | 99% | 79 s | $2.62 |
 | **open (local)** | **Gemma-4-31B-IT** (thinking) | **83.3** | 84.9 | 80.5 | **100%** | 316 s | **$0 API²** |
 | open (cloud) | **GLM-5.2** (Together) | **81.5 ± 1.3** | 88.9 | 74.7 | 99% | 43 s | $3.63 |
+| **open (local)** | **Muse-Glimmer-30B-NVFP4** (dense, thinking)⁷ | **79.9 ± 0.8** | 83.4 | 76.4 | 98% | **322 s** | **$0 API²** |
+| **open (local)** | **Muse-Glimmer-30B** (dense, thinking, BF16) | **77.9**⁶ | 79.1 | 76.7 | 97%⁶ | 776 s | **$0 API²** |
 | **open (local)** | **Qwen3.6-27B** (thinking, no-MTP) | **77.4 ± 0.7** | 79.2 | 74.3 | 99% | 229 s | **$0 API²** |
 | open (cloud) | **deepseek-v4-flash** | **77.1** | 79.1 | 75.1 | 95% | 26 s | **$0.17** |
 | baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 79.3 | 67.7 | 92% | 69 s | $3.64 |
@@ -102,7 +104,26 @@ model does everything.
 
 ⁵ **deepseek-v4-flash local** = the *same* model as the 77.1 cloud (FP8) row, but self-hosted on **one DGX Spark GB10** at **q2-imatrix** (81 GB) via **ds4/DwarfStar** (llama.cpp's V4 arch = gibberish). Non-thinking (`model=deepseek-chat`) is mandatory to fit the cap. 3-run mean **63.4** (67.7/61.4/61.3; conc 2, `TASK_CAP_S=600`, ~5 h/run). The 82% completion / 63.4 is **serving-speed-bound** — score tracks the timeout rate almost linearly, so it's ~14 pts under its own cloud FP8 (77.1) purely on the slowest ~1-in-5 tasks timing out on the ~9 K-seed prefill (decode measures ~16 t/s), not a competence gap. See its family-section subsection + `README-local-models.md`.
 
-![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models, GLM-4.5-Air 67.7 the local ones](images/leaderboard.svg)
+⁶ **Muse-Glimmer-30B** is a **2-run mean** (79.1 / 76.7) — with ±5–7 re-seed noise and only 2 runs, its
+77.9 and Qwen3.6-27B's 77.4 are a **statistical tie**, not a ranking. Unlike every other sub-100% row, its
+non-completions are **not stalls**: in *both* runs every one is *exactly* the `TASK_CAP_S=2400` wall-clock
+cap (run 1: t002/t035/t055/t079; run 2: t024/t079), each a hard 0. Uncapped, those would likely score near
+the runs' ~0.8 average → **~79–82 estimated** (an estimate, not a measurement). See its family section.
+**The NVFP4 row settles this empirically**: at 2.9× the speed it hits 0 caps and 100%/98% completion.
+
+⁷ **Muse-Glimmer-30B-NVFP4** = the *same* model as the BF16 row, quantized W4A4 by **RedHatAI**
+(`RedHatAI/Muse-Glimmer-30B-NVFP4`, `compressed-tensors` / `nvfp4-pack-quantized`, 23 GB vs 56 GB;
+vision tower + `lm_head` left in BF16), same image and flags, same solver config (conc 16,
+`TASK_CAP_S=2400`). **10 runs: 79.94 ± 0.80** (sd 2.51, 76.4–83.4), **0.0 cap-timeouts per run**.
+**It is strictly the better way to run this model** — ~2.9× decode, ~2.6× prefill, ~45 min/run vs ~105,
+and the wall-clock cap failures vanish entirely. **No quantization penalty is detectable**: per-attempted-task
+quality is **0.813 (NVFP4, 10 runs) vs 0.804 (BF16, 2 runs)** — i.e. 4-bit measures *slightly ahead*, and
+BF16's 2-run mean (77.9) sits inside NVFP4's 10-run range. *(An earlier 2-run NVFP4 sample suggested a
+~1.1-pt tax; that **reversed sign** once the sample reached 10 — a caution about 2-run quantization
+comparisons, and the reason the BF16 leg, still only 2 runs, is the weak side of this comparison rather
+than evidence of parity in the other direction.)*
+
+![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
 
 **Takeaways.**
 - **One open model reaches frontier-adjacent quality without an architecture.** deepseek-v4-pro
@@ -113,6 +134,13 @@ model does everything.
   territory (above gpt-5.4-mini 72 and deepseek-flash 77); large cloud (deepseek-pro, gpt-5.5) ~90–95.
   Architecture didn't move a model between rungs; **active-parameter count did** — the dense 31B's
   ~31B-active vs the MoE locals' 3–12B is the whole story (paid for in wall-clock, not dollars).
+  Muse-Glimmer-30B (79.9, 10 runs) is the second dense-30B-class local to land on that upper rung,
+  confirming the pattern from a different lineage — and it reaches *cloud GLM-5.2's* level for free.
+- **Wall-clock is set by the *KV/attention* design, not the parameter count.** The two dense ~30B
+  locals score similarly but run very differently: Gemma-4-31B is capped at **concurrency 4**, while
+  Muse-Glimmer's 2-KV-head + sliding-window layout leaves KV nearly free (6.07M cached tokens at
+  NVFP4) and scales ~linearly to **conc 32**. Same box, same rung, ~4× the concurrency and ~3× the
+  run throughput — when picking a local model, read the attention config, not just the size.
 - **Completion discipline is a hard gate**, separate from intelligence: gpt-oss is *capable*
   (76% pass-rate *when it completes*) but only completes 70% of tasks, so it scores like the weak
   Qwen3-Thinking. GLM and DeepSeek complete 99–100% and convert their capability into score.
@@ -125,7 +153,8 @@ model does everything.
 | **Best quality / dollar** | **deepseek-v4-pro** | ~90 at $0.46/run — ~22× cheaper than gpt-5.5 for ~5 fewer points. |
 | Cheap + fast cloud | deepseek-v4-flash | 77, ~26 s/task, $0.17/run. |
 | **Local — best quality** | **Gemma-4-31B-IT** (thinking) | **83.3**, $0 API, data stays on the box — beats gpt-5.4-mini & deepseek-flash. Slow: ~316 s/task, ~130 min/run, concurrency ≤ 4. |
-| **Local — 2nd / best value** | **Qwen3.6-27B** (thinking, **no-MTP**) | **77.4** — beats cloud deepseek-flash (77.1) & gpt-5.4-mini, free. **Turn MTP off** (it costs ~4 pts → 73.2). Dense, ~229 s/task, conc 4. |
+| **Local — 2nd, and fastest *run*** | **Muse-Glimmer-30B-NVFP4** (dense, thinking) | **79.9 ± 0.8** (10 runs) — clears Qwen3.6-27B and cloud deepseek-flash, level with cloud GLM-5.2, and finishes a run in **~45 min**: the only big local that **batches** (conc 16–32) at 12.7 tok/s/stream. **Serve it NVFP4, not BF16.** |
+| **Local — 3rd / best value** | **Qwen3.6-27B** (thinking, **no-MTP**) | **77.4** — beats cloud deepseek-flash (77.1) & gpt-5.4-mini, free. **Turn MTP off** (it costs ~4 pts → 73.2). Dense, ~229 s/task, conc 4. |
 | **Local — fast (MoE, conc 8)** | **Qwen3.6-35B-A3B** (no-MTP) | **71.6** at conc-8 throughput — beats Gemma-A4B (67) on *both* quality and speed. **Turn MTP off** (it costs ~6 pts). Gemma-A4B is the alternative if you want `enable_thinking` simplicity. |
 
 ![Quality vs cost per run — deepseek-v4-pro reaches ~90 at $0.46 while gpt-5.4-mini costs $3.64 for only 71.8; self-hosted models, including our free ECOM1 fine-tunes (37–56), cost $0 but score lower](images/quality-vs-cost.svg)
@@ -135,15 +164,21 @@ model does everything.
 Inverting the per-model view — *where does each failure class show up* (● frequent ≳5/run,
 ○ occasional 1–5/run, blank ≲1):
 
-| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-27B | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | | ○ | ○ | ○ | ○ | ○ | ○ | | |
-| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● |
-| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | | ○ |
-| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ○ | | ○ | ● | ○ | ○ | ○ | ○ |
-| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ |
-| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-27B | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* |
+| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● |
+| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | | ○ | |
+| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ○ | | ○ | ● | ○ | ○ | ○ | ○ | ● |
+| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ |
+| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+
+\* Muse column = the 10 NVFP4 runs (citation 9.0/run, arithmetic 5.4, dispatch 4.9, fraud 3.6,
+completion 1.6, outcome 1.2, security 0.4). Its completion figure is **not** a `report_completion`
+discipline failure like every other model's: **0.0 of it is stalling and 0.0 is timeouts** — the residue
+is step-loops (`MAX_STEPS`) and the solver's own injection-refusal short-circuit. On the BF16 serve the
+same column was 3.0/run and was **entirely** wall-clock caps (footnote ⁶).
 
 ![Cross-cutting error matrix — avg failures per run by class and model; gpt-oss completion 30 and gpt-5.4-mini arithmetic 14.7 stand out, deepseek-v4-pro and gpt-5.5 columns are clean](images/error-matrix.svg)
 
@@ -285,6 +320,97 @@ aids would partly repair, and ~5/run is the shared benchmark ceiling. So **81.5 
 ceiling on this solver** — fixing the echo and/or enabling the citation+fraud aids (it's `localProvider`
 that gates them, trivially flippable for a cloud model) would likely close much of the gap to
 deepseek-pro. *(Hypothesis — not yet measured; an aids-on GLM-5.2 run would confirm it.)*
+
+### Muse-Glimmer-30B — 2nd-best local, and the only one that batches (≈79.9 NVFP4 / 77.9 BF16)
+- **What it is.** A **dense ~30B** multimodal reasoning model (`meta-models/Muse-Glimmer-30B`), served
+  **BF16 (~56 GB)** on the DGX Spark from a purpose-built image (`vllm/vllm-openai:muse-glimmer`) with
+  its own **`muse_glimmer` tool-call *and* reasoning parsers**. Architecturally Gemma-shaped: 52 layers,
+  hidden 6656, **2 KV heads**, sliding-window 2048 with every-4th layer global, logit softcapping,
+  131K context, native sampling `temp 1.0 / top_p 0.95 / top_k 64` (via `--generation-config auto`).
+  **Reasoning is on by default** — no `enable_thinking` trap like Gemma-4.
+- **Numbers.** **NVFP4, 10 runs: 79.94 ± 0.80** (sd 2.51, range 76.4–83.4), **98% completion**,
+  ~322 s/task, ~45 min/run at **concurrency 16**, $0 API. (BF16, 2 runs: 77.9 — see the NVFP4
+  subsection; serve it quantized.) At 10 runs the **gap over Qwen3.6-27B (77.4 ± 0.7) is real**
+  — ~2.5 pts, ≈2.4 combined SE — where the first 2 runs had looked like a tie.
+- **It works on the bare native loop.** First contact was clean: correct `tool_calls` on the first
+  request, thinking split into a separate `reasoning` field with `content` left clean. **No
+  `LOCAL_TOOLCALL_RECOVER`, no `FORCE_TOOL_CHOICE_REQUIRED`, no custom template** — contrast Olmo
+  (can't tool-call), LFM2.5 (unparseable wrapper), Magistral (won't submit). A 4-task smoke scored
+  **4/4**, including a correct `NONE_UNSUPPORTED` judgment.
+- **The headline: it batches, and no other big local does.** Per-stream decode is slow (~4.3 tok/s —
+  56 GB of BF16 weights against ~273 GB/s) but aggregate throughput scales **~linearly to conc 32**
+  (17 → 34 → 67 → 124 tok/s at conc 4/8/16/32; per-stream latency degrades only ~10% across that
+  range). Two properties cause it: the **2-KV-head + sliding-window design makes KV nearly free**
+  (vLLM allocates **3.83M tokens / 54 GiB** of cache — 29× concurrency at *full* 131K context), and
+  **prefill is healthy at ~1255 tok/s** (16.2K-token prompt in 12.9 s). So it sidesteps *both* local
+  walls seen earlier: Gemma-4-31B's hard **concurrency ≤ 4** (its smaller KV pool returned empty at 8)
+  and DeepSeek-V4-flash's **prefill** bottleneck. **21.6 GPU-hours of task time compressed into ~1.75 h
+  wall-clock.** For a dense model on one Spark, that is the interesting result — not the score.
+- **Where it stumbles.** Over 10 NVFP4 runs: **citation 9.0/run is the wall**, as for every model, then
+  arithmetic/value 5.4, the shared dispatch (4.9) and fraud (3.6) ceilings, completion 1.6,
+  outcome 1.2, and **security under-denial just 0.4** — among the cleanest security columns of any
+  local, cloud-tier rather than small-model.
+  **A caution this model taught us twice.** (1) Run 1 showed *zero* security and *zero* outcome errors
+  and looked like the cleanest local profile ever measured; run 2 surfaced 2 and 3. (2) Its first two
+  NVFP4 runs (79.1, 77.8) turned out to be the two *lowest* of the eventual ten, dragging the 2-run mean
+  to 78.5 against a true 79.9. **On a 100-task set that re-seeds, neither a score nor a clean error
+  bucket means anything at n=2** — the same trap as the doc's 25-task-probe warning, one level up.
+- **The lost tasks are the cap, not the model.** In *both* runs, **every** non-completion hit
+  `TASK_CAP_S=2400` *exactly* → hard 0 (run 1: t002/t035/t055/t079; run 2: t024/t079; t079 both times).
+  Two of run 1's (t035, t055) burned the entire 40 min on a **single step**: at ~3.5 tok/s a runaway
+  chain against `LOCAL_LLM_MAXTOK=24576` cannot finish inside any sane cap. **Fix before re-running:
+  lower `LOCAL_LLM_MAXTOK` to bound one generation, and/or raise the cap** — worth ~1.5–3 pts. Same
+  lesson as local DeepSeek-V4-flash: **score tracks cap rate**, so this is serving-bound, not a
+  competence ceiling. On `report_completion` *discipline* it never fails.
+- **Verdict.** **~80 — the 2nd-best local**, clearly above Qwen3.6-27B (77.4) and *cloud*
+  deepseek-flash (77.1), and **statistically level with cloud GLM-5.2** (81.5 ± 1.3; the 1.6-pt gap is
+  ~1.0 combined SE). Gemma-4-31B (83.3) still leads it by ~3.4, but on only 3 runs (SE ~1.4) that
+  separation is borderline (~2.1 SE) rather than settled. And it gets there **~3× faster per run**
+  (~45 min vs ~130): Gemma-4-31B is stuck at conc 4, this batches at 16–32. Best local pick when a
+  *run* has to finish; Gemma-4-31B if you want the top *score* and can spend the hours.
+
+#### NVFP4 (W4A4) — same score, 2.9× the speed: **serve it quantized**
+The BF16 row above is the *wrong* way to run this model. Quantized to **NVFP4 by RedHatAI**
+(`compressed-tensors`/`nvfp4-pack-quantized`, **23 GB vs 56 GB**), same image, flags and solver config:
+
+| | BF16 (2 runs) | **NVFP4 (10 runs)** | |
+|---|---:|---:|---|
+| Score | 77.9 (76.7–79.1) | **79.9 ± 0.8** (76.4–83.4) | +2.0 |
+| Quality per *attempted* task | 0.804 | **0.813** | no tax detectable |
+| Completion | 97% | **98%** | |
+| Wall-clock caps / run | 3.0 | **0.0** | failure mode gone |
+| Decode (1 stream) | 4.4 tok/s | **12.7 tok/s** | **2.9×** |
+| Aggregate @ conc 16 / 32 | 67 / 124 tok/s | **194 / 365** | 2.9× |
+| Prefill | 1255 tok/s | **3273 tok/s** | 2.6× |
+| GPU-h of task time / run | 21.6 | **8.9** | 2.4× |
+| Wall-clock / run | ~105 min | **~45 min** | 2.3× |
+| KV cache | 54 GiB / 3.83M tok | **86 GiB / 6.07M tok** | 46× conc @131K |
+
+- **It lands on the real FP4 path.** vLLM logs `Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM`
+  — Blackwell FP4 tensor cores, not emulation. That's why the gain tracks the 2.5× weight-size
+  reduction instead of falling short of it. Loaded first try; correctness, the `reasoning`/`content`
+  split, and native tool-calling all survived unchanged.
+- **No quantization tax is detectable — and the first estimate of one was an artifact.** On the initial
+  2 NVFP4 runs, quality per *attempted* task read 0.793 vs BF16's 0.804, which we reported as a ~1.1-pt
+  tax offset by recovered timeouts. **At 10 runs it reversed to 0.813 — 4-bit measures slightly ahead**,
+  and BF16's 2-run mean sits inside the NVFP4 range. The honest reading is *no measurable penalty*,
+  with the **BF16 leg (still n=2) now the weak side** — not evidence that 4-bit is genuinely better.
+  Two-run quantization comparisons on this benchmark are worthless; the swing here was ~2 pts and it
+  changed the sign of the conclusion.
+- **Speed exposed a real bug the cap was hiding.** t079 timed out in *both* BF16 runs; at 2.9× it no
+  longer runs out of clock — it runs out of **`MAX_STEPS=35`** instead. So t079 is a **step-loop**, not
+  a slow task, which the BF16 wall-clock cap had misattributed. General lesson: **a wall-clock cap
+  masks the difference between "slow" and "looping"** — speed up the serve before concluding a task is
+  merely slow.
+- **Which quant.** Prefer **RedHatAI** (`compressed-tensors`) over the `modelopt`-format alternatives
+  (e.g. `Inferact/…-NVFP4-W4A4`, 25.4 GB): compressed-tensors is vLLM's *native* quantization path, the
+  repo is tagged `vllm`, and the campaign has already been bitten by a modelopt-format quant failing on
+  this box (NVIDIA's official Qwen3.6-35B-A3B NVFP4 → needed the `unsloth` rebuild). **Untested here:**
+  Inferact was never benchmarked, so this recommendation rests on the format argument plus the fact
+  that the RedHatAI build loaded first try onto the fast kernel — not on a head-to-head score.
+- **Verdict.** **Always serve this model NVFP4.** No measurable quality cost, 2.9× faster, 2.3× shorter
+  runs, and it removes the cap failure mode outright (0.0 caps across all 10 runs). The BF16 numbers are
+  kept above only as the quantization baseline.
 
 ### deepseek-v4-flash — fast & cheap (≈77.1)
 - **What it is.** DeepSeek V4 "flash", reasoning, ~$0.14/M in / $0.28/M out.
@@ -577,6 +703,8 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 | GLM-5.2 (Together, `zai-org/GLM-5.2`) | `glm52tgprod1`–`glm52tgprod10` | 74.7–88.9 (mean 81.5, $3.63/run) | 10 |
 | deepseek-v4-flash | `dsflash1`, `dsflash2` | 75.1, 79.1 | 2 |
 | **Gemma-4-31B-IT** (thinking) | `g31prod1`–`g31prod3` | 84.5, 80.5, 84.9 | 3 |
+| **Muse-Glimmer-30B-NVFP4** (RedHatAI W4A4, conc 16, `TASK_CAP_S=2400`) | `musenvfp4a`–`musenvfp4j` | 76.4–83.4 (mean 79.94 ± 0.80) | 10 |
+| **Muse-Glimmer-30B** (dense, BF16, conc 16, `TASK_CAP_S=2400`) | `museprod1`, `museprod2` | 79.1, 76.7 (mean 77.9) | 2 |
 | **Qwen3.6-27B-NVFP4** (thinking, **no-MTP**) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 | 6 |
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
 | **Qwen3.6-35B-A3B-NVFP4** (thinking, MoE, **no-MTP**) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 | 6 |
