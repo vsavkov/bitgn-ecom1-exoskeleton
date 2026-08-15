@@ -83,6 +83,7 @@ model does everything.
 | **open (local)** | **Muse-Glimmer-30B** (dense, thinking, BF16) | **77.9**⁶ | 79.1 | 76.7 | 97%⁶ | 776 s | **$0 API²** |
 | **open (local)** | **Qwen3.6-27B** (thinking, no-MTP) | **77.4 ± 0.7** | 79.2 | 74.3 | 99% | 229 s | **$0 API²** |
 | open (cloud) | **deepseek-v4-flash** | **77.1** | 79.1 | 75.1 | 95% | 26 s | **$0.17** |
+| **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking)⁸ | **75.2 ± 1.1** | 80.4 | 68.9 | **100%** | 375 s | **$0 API²** |
 | baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 79.3 | 67.7 | 92% | 69 s | $3.64 |
 | **open (local)** | **Qwen3.6-35B-A3B** (thinking, MoE, no-MTP) | **71.6** | 76.7 | 65.8 | 98% | 123 s | $0 API² |
 | **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
@@ -123,6 +124,17 @@ BF16's 2-run mean (77.9) sits inside NVFP4's 10-run range. *(An earlier 2-run NV
 comparisons, and the reason the BF16 leg, still only 2 runs, is the weak side of this comparison rather
 than evidence of parity in the other direction.)*
 
+⁸ **Qwen3.8-27B-NVFP4** — a **brand-new architecture** (released 2026-08-14, Apache-2.0,
+`Qwen3_5ForConditionalGeneration`, dense 27B, 64 layers, **head_dim 256 / 4 KV heads**, 262K native
+context, multimodal), benchmarked the same day. Served from `Inferact/Qwen3.8-27B-NVFP4` (modelopt,
+**~25 GB**; BF16 ~52 GB) with `qwen3_coder` + `qwen3` parsers, `--kv-cache-dtype fp8`, MTP off, same
+solver config as the Muse rows (conc 16, `TASK_CAP_S=2400`). **10 runs: 75.22 ± 1.07** (sd 3.37,
+68.9–80.4), **99.9% completion**, 0.1 caps/run. **It is dominated by Muse-Glimmer-30B-NVFP4 on every
+axis measured** — larger on disk (25 vs 23 GB), ~16% slower per task (375 vs 322 s) and 4.7 pts lower
+— so there is no size/speed trade to recommend it on; it is ranked here purely on its merits.
+**Caveat:** unlike the Muse rows there is **no BF16 leg** — only the 4-bit build was benchmarked, so
+its quantization tax (if any) is unmeasured and the 75.2 could understate the unquantized model.
+
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
 
 **Takeaways.**
@@ -136,6 +148,10 @@ than evidence of parity in the other direction.)*
   ~31B-active vs the MoE locals' 3–12B is the whole story (paid for in wall-clock, not dollars).
   Muse-Glimmer-30B (79.9, 10 runs) is the second dense-30B-class local to land on that upper rung,
   confirming the pattern from a different lineage — and it reaches *cloud GLM-5.2's* level for free.
+  **A newer architecture, on its own, buys nothing.** Qwen3.8-27B — a day-old release with 262K native
+  context — lands at **75.2 ± 1.1**, *below* its own predecessor Qwen3.6-27B (77.4 ± 0.7) and 4.7 below
+  the same-class Muse-Glimmer. Three dense ~27–31B locals now span 75–83 on this solver, and where each
+  falls is set by citation discipline, not by recency or context length.
 - **Wall-clock is set by the *KV/attention* design, not the parameter count.** The two dense ~30B
   locals score similarly but run very differently: Gemma-4-31B is capped at **concurrency 4**, while
   Muse-Glimmer's 2-KV-head + sliding-window layout leaves KV nearly free (6.07M cached tokens at
@@ -164,21 +180,29 @@ than evidence of parity in the other direction.)*
 Inverting the per-model view — *where does each failure class show up* (● frequent ≳5/run,
 ○ occasional 1–5/run, blank ≲1):
 
-| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-27B | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* |
-| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● |
-| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | | ○ | |
-| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ○ | | ○ | ● | ○ | ○ | ○ | ○ | ● |
-| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ |
-| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-27B | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38⁸ |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | |
+| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● |
+| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | | ○ | | ○ |
+| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ○ | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● |
+| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ | |
+| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
 \* Muse column = the 10 NVFP4 runs (citation 9.0/run, arithmetic 5.4, dispatch 4.9, fraud 3.6,
 completion 1.6, outcome 1.2, security 0.4). Its completion figure is **not** a `report_completion`
 discipline failure like every other model's: **0.0 of it is stalling and 0.0 is timeouts** — the residue
 is step-loops (`MAX_STEPS`) and the solver's own injection-refusal short-circuit. On the BF16 serve the
 same column was 3.0/run and was **entirely** wall-clock caps (footnote ⁶).
+
+The **Q38 column** = Qwen3.8-27B-NVFP4's 10 runs (citation 15.5/run, arithmetic 7.0, dispatch 5.0,
+fraud 3.8, security 2.2, outcome 0.7, completion 0.1). Its shape is the clearest illustration in the
+table of **what actually moves a local model's score**: dispatch (5.0) and fraud (3.8) are the shared
+solver ceilings and sit within 0.1–0.2 of every other column, while **citation alone tracks the score
+almost monotonically across its own runs** — 12 citation failures → 79–80, 19 → 69–72. The 4.7-pt gap
+to Muse-Glimmer is essentially the 6.5-citation-failures/run gap; on every other class the two are
+within ~1.6.
 
 ![Cross-cutting error matrix — avg failures per run by class and model; gpt-oss completion 30 and gpt-5.4-mini arithmetic 14.7 stand out, deepseek-v4-pro and gpt-5.5 columns are clean](images/error-matrix.svg)
 
@@ -595,6 +619,47 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   when you want the best local quality and can afford the hours; use the A4B (~67, ~3× faster) when
   you need throughput.
 
+### Qwen3.8-27B — newest architecture tested, but it doesn't beat its own predecessor (≈75.2)
+- **What it is.** Qwen's **brand-new dense 27B** (`Qwen/Qwen3.8-27B`, released **2026-08-14**,
+  Apache-2.0), `Qwen3_5ForConditionalGeneration` / `qwen3_5`: 64 layers, **4 KV heads at head_dim
+  256**, 262K native context, multimodal, **reasoning on by default**. Benchmarked the day it shipped,
+  NVFP4 (`Inferact/Qwen3.8-27B-NVFP4`, modelopt, **~25 GB**; BF16 ~52 GB) on the Spark, MTP left off
+  per the official vLLM recipe (and per this campaign's repeated finding that MTP costs 4–6 pts).
+- **Numbers.** **10 runs: 75.22 ± 1.07** (sd 3.37, range 68.9–80.4), **99.9% completion**
+  (999/1000 tasks; the single miss is one `TASK_CAP_S=2400` wall), ~375 s/task, ~46 min/run at
+  concurrency 16, $0 API.
+- **It works on the bare native loop** — correct `tool_calls` first request, `<think>` split into a
+  separate `reasoning` field with `content` left clean. No `LOCAL_TOOLCALL_RECOVER`, no forced tool
+  choice, no custom template.
+- **The parser names are a trap.** The vLLM modules are called `qwen3_engine_tool_parser` /
+  `qwen3_engine_reasoning_parser`, but **`qwen3_engine` is not a registered parser name** — the server
+  dies at arg-parse with `invalid tool call parser`. The chat template emits **nested XML**
+  (`<tool_call><function=name><parameter=key>…`), not Hermes JSON, so serve with
+  `--tool-call-parser qwen3_coder` (or `qwen3_xml`) `--reasoning-parser qwen3`.
+- **`--max-model-len` *is* the concurrency knob.** head_dim 256 × 4 KV heads × 64 layers ≈ **256 KB per
+  token** — roughly **4× a normal 27B's** KV cost, the one architectural fact that dictates how you
+  serve it. At the model's native 262K context a *single* sequence would need ~68 GB, so the default
+  full-context serve is not viable on a 128 GB box. At `--max-model-len 65536 --kv-cache-dtype fp8`
+  vLLM reports **79.0 GiB KV = 2,252,800 tokens → 34.4× concurrency** (12.1× without the fp8 KV).
+- **Throughput.** ~8.0 tok/s/stream decode at conc 16, aggregate **71.6 / 127.6 / 208.3 tok/s** at conc
+  8/16/32 — about **2× the BF16 build** (33.5 / 63.1). Healthy, but *below* Muse-Glimmer-30B-NVFP4's
+  194/365 at conc 16/32, which is why its runs come in at ~46 min despite a similar nominal size.
+- **Where it stumbles.** **Citation 15.5/run is the wall, and it is the whole story of this model's
+  spread**: across the 10 runs citation failures track score almost monotonically (12 → 79–80,
+  19 → 69–72), while dispatch (5.0) and fraud (3.8) sit at the shared solver ceilings in *every* run.
+  Then arithmetic/value 7.0, security 2.2, outcome 0.7. Completion discipline is excellent (0.1/run).
+- **It does not improve on Qwen3.6-27B.** The older, smaller-on-disk 27B scores **77.4 ± 0.7** against
+  this model's **75.2 ± 1.1** — a 2.2-pt deficit at ~1.7 combined SE, so *statistically borderline
+  rather than a settled regression*, but there is certainly no generational gain here on this workload.
+  A newer architecture and 262K context did not convert into agentic score.
+- **Verdict.** **Dominated by Muse-Glimmer-30B-NVFP4 on every axis measured** — bigger on disk (25 vs
+  23 GB), ~16% slower per task (375 vs 322 s), and 4.7 pts lower (75.2 vs 79.9). There is no
+  VRAM-or-speed argument that recovers it, so it is **not a recommended local pick**: it lands 4th
+  among locals, behind Gemma-4-31B (83.3), Muse-Glimmer (79.9) and Qwen3.6-27B (77.4). What it *is*
+  worth: a clean, no-workaround serve on a day-old architecture, above cloud gpt-5.4-mini (71.8) and
+  every MoE local tested. **Caveat:** only the 4-bit build was run — there is **no BF16 leg**, so any
+  quantization tax is unmeasured and 75.2 may understate the unquantized model.
+
 ### Qwen3.6-27B — 2nd-best local, beats deepseek-flash; turn MTP OFF (≈77.4)
 - **What it is.** Dense 27B, multimodal, NVFP4 (~19 GB, community `unsloth` quant) on the Spark —
   reasoning **on by default**. `qwen3_coder` / `qwen3` parsers.
@@ -705,6 +770,7 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 | **Gemma-4-31B-IT** (thinking) | `g31prod1`–`g31prod3` | 84.5, 80.5, 84.9 | 3 |
 | **Muse-Glimmer-30B-NVFP4** (RedHatAI W4A4, conc 16, `TASK_CAP_S=2400`) | `musenvfp4a`–`musenvfp4j` | 76.4–83.4 (mean 79.94 ± 0.80) | 10 |
 | **Muse-Glimmer-30B** (dense, BF16, conc 16, `TASK_CAP_S=2400`) | `museprod1`, `museprod2` | 79.1, 76.7 (mean 77.9) | 2 |
+| **Qwen3.8-27B-NVFP4** (Inferact modelopt W4A4, thinking, no-MTP, conc 16, `TASK_CAP_S=2400`) | `qwen38a`–`qwen38j` | 68.9–80.4 (mean 75.22 ± 1.07) | 10 |
 | **Qwen3.6-27B-NVFP4** (thinking, **no-MTP**) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 | 6 |
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
 | **Qwen3.6-35B-A3B-NVFP4** (thinking, MoE, **no-MTP**) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 | 6 |
