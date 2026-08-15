@@ -151,7 +151,11 @@ together**; isolating them needs the June revision served on the new engine, whi
 Serve with `--revision` pinned: `refs/main` moved under us mid-campaign, which is how the split was
 discovered.
 
-![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
+![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3, Qwen3.6-27B-NVFP4-0815 80.2 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
+
+*The charts show **one row per model**: where a model has been measured in more than one build, the
+representative build is charted and the superseded one lives in the table above. Qwen3.6-27B is
+charted as its **0815** build (80.2); the June build (77.4) is table-only.*
 
 **Takeaways.**
 - **One open model reaches frontier-adjacent quality without an architecture.** deepseek-v4-pro
