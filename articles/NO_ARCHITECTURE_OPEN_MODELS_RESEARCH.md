@@ -136,8 +136,9 @@ axis measured** — larger on disk (25 vs 23 GB), ~16% slower per task (375 vs 3
 **Caveat:** unlike the Muse rows there is **no BF16 leg** — only the 4-bit build was benchmarked, so
 its quantization tax (if any) is unmeasured and the 75.2 could understate the unquantized model.
 
-⁹ **Qwen3.6-27B-NVFP4-0815** = the **2026-08-15 re-upload** of `unsloth/Qwen3.6-27B-NVFP4`
-(revision `ccdaab7e`), treated as a separate model version from the June build (`890bdef7`) in the
+⁹ **Qwen3.6-27B-NVFP4-0815** = revision **`ccdaab7e`** (dated **2026-07-12**) of `unsloth/Qwen3.6-27B-NVFP4`
+— the "0815" label records the date we *fetched* it, not the date it was built — treated as a
+separate model version from the June build (`890bdef7`) in the
 77.4 row. **10 runs: 80.23 ± 0.81** (sd 2.57, 75.7–83.4), 99.9% completion, 0.0 caps, ~204 s/task,
 ~87 min/run at conc 4. That is **+2.84 over the June build at 2.61 combined SE** — one of the few
 deltas in this campaign that clears the noise band — and the gain sits exactly where a better model
@@ -148,8 +149,8 @@ cannot be split:** the re-upload quantizes `lm_head` (the June build left it in 
 with `no module or parameter named 'lm_head.weight_scale'` — so this version also had to move to a
 newer engine (`vllm/vllm-openai:muse-glimmer`, 0.26.1rc1). **Weights and serving stack moved
 together**; isolating them needs the June revision served on the new engine, which has not been run.
-Serve with `--revision` pinned: `refs/main` moved under us mid-campaign, which is how the split was
-discovered.
+Serve with `--revision` pinned: our cache followed `refs/main` mid-campaign — the newer revision had
+already been HEAD for a month, so the swap was decoupled from anything we changed.
 
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3, Qwen3.6-27B-NVFP4-0815 80.2 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
 
@@ -190,7 +191,7 @@ charted as its **0815** build (80.2); the June build (77.4) is table-only.*
 | Cheap + fast cloud | deepseek-v4-flash | 77, ~26 s/task, $0.17/run. |
 | **Local — best quality** | **Gemma-4-31B-IT** (thinking) | **83.3**, $0 API, data stays on the box — beats gpt-5.4-mini & deepseek-flash. Slow: ~316 s/task, ~130 min/run, concurrency ≤ 4. |
 | **Local — 2nd, and fastest *run*** | **Muse-Glimmer-30B-NVFP4** (dense, thinking) | **79.9 ± 0.8** (10 runs) — clears Qwen3.6-27B and cloud deepseek-flash, level with cloud GLM-5.2, and finishes a run in **~45 min**: the only big local that **batches** (conc 16–32) at 12.7 tok/s/stream. **Serve it NVFP4, not BF16.** |
-| **Local — 2nd (tied)** | **Qwen3.6-27B-NVFP4-0815** (thinking, **no-MTP**) | **80.2 ± 0.8** (10 runs) — the August re-upload; **statistically level with Muse-Glimmer** (79.9) and +2.8 over its own June build at 2.6 SE. Free. **Pin `--revision ccdaab7e`** and serve on vLLM ≥ 0.26.1rc1 (NGC 26.05 cannot load its quantized `lm_head`). Dense, ~204 s/task, conc 4, ~87 min/run — pick Muse-Glimmer instead if run wall-clock matters. |
+| **Local — 2nd (tied)** | **Qwen3.6-27B-NVFP4-0815** (thinking, **no-MTP**) | **80.2 ± 0.8** (10 runs) — rev `ccdaab7e` (dated 2026-07-12); **statistically level with Muse-Glimmer** (79.9) and +2.8 over its own June build at 2.6 SE. Free. **Pin `--revision ccdaab7e`** and serve on vLLM ≥ 0.26.1rc1 (NGC 26.05 cannot load its quantized `lm_head`). Dense, ~204 s/task, conc 4, ~87 min/run — pick Muse-Glimmer instead if run wall-clock matters. |
 | **Local — 3rd / best value** | **Qwen3.6-27B** (June build, thinking, **no-MTP**) | **77.4** — beats cloud deepseek-flash (77.1) & gpt-5.4-mini, free. **Turn MTP off** (it costs ~4 pts → 73.2). Dense, ~229 s/task, conc 4. Superseded by the 0815 build above. |
 | **Local — fast (MoE, conc 8)** | **Qwen3.6-35B-A3B** (no-MTP) | **71.6** at conc-8 throughput — beats Gemma-A4B (67) on *both* quality and speed. **Turn MTP off** (it costs ~6 pts). Gemma-A4B is the alternative if you want `enable_thinking` simplicity. |
 
@@ -690,8 +691,8 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   every MoE local tested. **Caveat:** only the 4-bit build was run — there is **no BF16 leg**, so any
   quantization tax is unmeasured and 75.2 may understate the unquantized model.
 
-### Qwen3.6-27B-NVFP4-0815 — the August re-upload, and a rare *real* gain (≈80.2)
-- **What it is.** The **same model** as the row below, but the **2026-08-15 re-upload** of
+### Qwen3.6-27B-NVFP4-0815 — a newer revision, and a rare *real* gain (≈80.2)
+- **What it is.** The **same model** as the row below, but a **newer revision** (dated 2026-07-12) of
   `unsloth/Qwen3.6-27B-NVFP4` (revision `ccdaab7e`, 5 shards) instead of the June build
   (`890bdef7`, single `model.safetensors`). Tracked as a **separate version** because two things
   changed together — see the caveat below.
@@ -711,7 +712,8 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   `vllm/vllm-openai:muse-glimmer` (vLLM 0.26.1rc1). **Weights and serving stack changed together, and
   the +2.84 cannot be attributed to either alone.** The control arm that would split them — June
   revision `890bdef7` served on the *new* engine — has not been run.
-- **Operational lesson: pin `--revision`.** `refs/main` moved under this campaign mid-flight. An
+- **Operational lesson: pin `--revision`.** The newer revision had been HEAD for a month; our cache
+  simply followed `refs/main` mid-campaign, so the swap was triggered by nothing we did. An
   unpinned serve silently swaps the weights, which here would have meant a "continuation" of the
   June series that was quietly a different model. The failure was only *visible* because the new
   checkpoint happened to crash the old engine; had it loaded, the swap would have been invisible and
