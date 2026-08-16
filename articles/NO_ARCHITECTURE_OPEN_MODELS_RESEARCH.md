@@ -87,7 +87,6 @@ model does everything.
 | **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **xhigh**)⁸ | **75.2 ± 1.1** | 80.4 | 68.9 | **100%** | 375 s | **$0 API²** |
 | baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 79.3 | 67.7 | 92% | 69 s | $3.64 |
 | **open (local)** | **Qwen3.6-35B-A3B-NVFP4-0712** (thinking, MoE, no-MTP)¹⁰ | **73.8 ± 0.7** | 77.6 | 70.2 | 98% | **106 s** | **$0 API²** |
-| **open (local)** | **Qwen3.6-35B-A3B** (June build, thinking, MoE, no-MTP) | **71.6** | 76.7 | 65.8 | 98% | 123 s | $0 API² |
 | **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
 | **open (local)** | **GLM-4.5-Air** | **67.7** | 69.2 | 66.0 | **100%** | 520 s | $0 API² |
 | **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
@@ -166,7 +165,7 @@ already been HEAD for a month, so the swap was decoupled from anything we change
 
 ¹⁰ **Qwen3.6-35B-A3B-NVFP4-0712** = revision **`739af1e7`** (dated 2026-07-12) of
 `unsloth/Qwen3.6-35B-A3B-NVFP4` — the current HEAD of the quant repo whose *older* cached revision
-`612d523c` produced the 71.6 row below. Found by checking whether the 27B's revision trap also
+`612d523c` produced the superseded 71.64 ± 1.77 (6 runs), now retired from the tables. Found by checking whether the 27B's revision trap also
 applied one size down: it did, and the local cache had been a revision behind for two months.
 **10 runs: 73.78 ± 0.67** (sd 2.12, 70.2–77.6), 97.9% completion, 0.0 caps, **106 s/task** (−14%).
 **+2.14 over the June build at 1.13 combined SE — directionally positive but NOT conclusive**
@@ -183,9 +182,9 @@ re-quantization alone; a control arm was considered and deliberately not run. (2
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3, Qwen3.6-27B-NVFP4-0712 80.2 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
 
 *The charts show **one row per model**: where a model has been measured in more than one build, the
-representative build is charted. Where a superseded build is still useful as the before-side of a
-comparison it is described in the footnotes rather than ranked: Qwen3.6-27B's June build (77.4) has
-been retired from the tables entirely, and Qwen3.6-35B-A3B's June build (71.6) remains table-only.*
+representative build is charted **and ranked**. Superseded builds are retired from the tables and
+described in the footnotes instead, where they are still needed as the before-side of a comparison —
+Qwen3.6-27B's June build (77.4) and Qwen3.6-35B-A3B's (71.6) are both handled that way.*
 
 **Takeaways.**
 - **One open model reaches frontier-adjacent quality without an architecture.** deepseek-v4-pro
@@ -222,7 +221,7 @@ been retired from the tables entirely, and Qwen3.6-35B-A3B's June build (71.6) r
 | **Local — best quality** | **Gemma-4-31B-IT** (thinking) | **83.3**, $0 API, data stays on the box — beats gpt-5.4-mini & deepseek-flash. Slow: ~316 s/task, ~130 min/run, concurrency ≤ 4. |
 | **Local — 2nd, and fastest *run*** | **Muse-Glimmer-30B-NVFP4** (dense, thinking) | **79.9 ± 0.8** (10 runs) — clears Qwen3.6-27B and cloud deepseek-flash, level with cloud GLM-5.2, and finishes a run in **~45 min**: the only big local that **batches** (conc 16–32) at 12.7 tok/s/stream. **Serve it NVFP4, not BF16.** |
 | **Local — 2nd (tied)** | **Qwen3.6-27B-NVFP4-0712** (thinking, **no-MTP**) | **80.2 ± 0.8** (10 runs) — rev `ccdaab7e` (dated 2026-07-12); **statistically level with Muse-Glimmer** (79.9) and +2.8 over its own June build at 2.6 SE. Free. **Pin `--revision ccdaab7e`** and serve on vLLM ≥ 0.26.1rc1 (NGC 26.05 cannot load its quantized `lm_head`). Dense, ~204 s/task, conc 4, ~87 min/run — pick Muse-Glimmer instead if run wall-clock matters. |
-| **Local — fast (MoE, conc 8)** | **Qwen3.6-35B-A3B** (no-MTP) | **71.6** at conc-8 throughput — beats Gemma-A4B (67) on *both* quality and speed. **Turn MTP off** (it costs ~6 pts). Gemma-A4B is the alternative if you want `enable_thinking` simplicity. |
+| **Local — fastest per task** | **Qwen3.6-35B-A3B-NVFP4-0712** (MoE, no-MTP) | **73.8 ± 0.7** at **106 s/task** — the fastest capable local measured, ~22 min/run at conc 8, and above gpt-5.4-mini (71.8). **Pin `--revision 739af1e7`** (needs vLLM ≥ 0.26.1rc1) and **turn MTP off** (it costs this model 6.5 pts). |
 
 ![Quality vs cost per run — deepseek-v4-pro reaches ~90 at $0.46 while gpt-5.4-mini costs $3.64 for only 71.8; self-hosted models, including our free ECOM1 fine-tunes (37–56), cost $0 but score lower](images/quality-vs-cost.svg)
 
@@ -231,13 +230,13 @@ been retired from the tables entirely, and Qwen3.6-35B-A3B's June build (71.6) r
 Inverting the per-model view — *where does each failure class show up* (● frequent ≳5/run,
 ○ occasional 1–5/run, blank ≲1):
 
-| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ |
+| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q35B-0712 | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | |
 | Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● |
-| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | | | | | | | | ○ | | ○ | ○ | ○ |
+| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | ○ | | ○ | ○ | ○ |
 | Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ● | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● |
-| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ | | | ○ |
+| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | | | ○ | | ○ | | | ○ | ○ | | | ○ |
 | Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
@@ -799,23 +798,6 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   and roughly 6 behind Muse-Glimmer/Qwen3.6-27B-0712 for a fraction of the wall-clock. **Pin
   `--revision 739af1e7`** and keep **MTP off** (it costs this model 6.47 pts).
 
-### Qwen3.6-35B-A3B — the June build (≈71.6); turn MTP OFF
-- **What it is.** The **MoE** sibling of the 27B (35B total / **3B active**), multimodal, NVFP4
-  (`unsloth/Qwen3.6-35B-A3B-NVFP4`), thinking on by default. MoE → runs at **concurrency 8**.
-- **Numbers.** 6 full runs **without MTP**: 75.9/65.8/68.4/73.2/69.8/76.7 → **71.6 ± 4.0**, 98%
-  completion, **~123 s/task** (fastest local reasoner), $0 API.
-- **MTP is a trap here.** Enabling the MTP speculative-decoding head **drops the score to 65.2** (3-run)
-  for only ~10 s/task of speedup — a bad trade (speculative tokens occasionally accepted wrongly). At
-  greedy-ish thinking sampling, **`--speculative-config` costs ~6 points; leave it off.**
-- **What it does well.** No-MTP, it's **3rd-best local** — beats GLM/Gemma-A4B (~67) *and* is faster
-  than them (123 s vs 233 s), nearly ties the 27B (73.2) and cloud gpt-5.4-mini (71.8). The MoE makes
-  it the **fastest** local reasoner per-task at conc 8.
-- **Where it stumbles.** Citation (16/run — still high) and higher run-to-run variance (sd 4.0) than
-  the Gemmas. Like the 27B it lands **~6 below muxx (0.717)** — the Qwen3.6 family suits this solver a
-  bit less than the Gemmas/DeepSeeks.
-- **Verdict.** A real fast-local option once MTP is off: ~72 at conc-8 speed, free, data on the box.
-  Just behind the 27B (73.2) and slightly faster.
-
 ### Nemotron-3-Super-120B-A12B — NVIDIA's "best Spark agent", doesn't win here (≈71.0)
 - **What it is.** NVIDIA's flagship agentic model and its **officially recommended best agent for the DGX
   Spark** (hybrid Latent-MoE: Mamba-2 + MoE, 120B total / 12B active, NVFP4). Served via the official
@@ -897,15 +879,16 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 | **Qwen3.6-27B-NVFP4-0712** (rev `ccdaab7e`, vLLM 0.26.1rc1, thinking, no-MTP, conc 4) | `q270815a`–`q270815j`† | 75.7–83.4 (mean 80.23 ± 0.81) | 10 |
 
 ‡ Retired from the leaderboard, decision matrix, error matrix and family sections as superseded by
-the `-0712` build. The runs stay listed here because they are the before-side of that build's
-+2.84, and deleting them would leave the claim unevidenced.
+the corresponding `-0712` build. The runs stay listed here because they are the before-side of those
+builds' comparisons (+2.84 at 2.61 SE for the 27B; +2.14 at 1.13 SE — inconclusive — for the 35B),
+and deleting them would leave those claims unevidenced.
 
 † Model **`-0712`** (revision date) but run labels **`q270815*`** (execution date, 2026-08-15). The labels name the runs, not the build; the records were written under them and are left unchanged so the audit trail from score to artifact stays intact.
 
 | Qwen3.6-27B-NVFP4 (June rev `890bdef7`, NGC vLLM 26.05, **superseded**‡) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 (mean 77.38 ± 0.72) | 6 |
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
 | **Qwen3.6-35B-A3B-NVFP4-0712** (rev `739af1e7`, vLLM 0.26.1rc1, thinking, MoE, no-MTP, conc 8) | `q35b0712a`–`q35b0712j` | 70.2–77.6 (mean 73.78 ± 0.67) | 10 |
-| **Qwen3.6-35B-A3B-NVFP4** (June rev `612d523c`, NGC 26.05, thinking, MoE, **no-MTP**) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 (mean 71.64 ± 1.77) | 6 |
+| Qwen3.6-35B-A3B-NVFP4 (June rev `612d523c`, NGC 26.05, **superseded**‡) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 (mean 71.64 ± 1.77) | 6 |
 | Qwen3.6-35B-A3B-NVFP4 (thinking, MoE, MTP — worse) | `q36mprod1`–`q36mprod3` | 63.9, 63.2, 68.4 | 3 |
 | Gemma-4-26B-A4B (thinking) | `gthinkprod1`–`gthinkprod3` | 65.5, 65.4, 70.1 | 3 |
 | GLM-4.5-Air (gen13) | `glmprod5`–`glmprod8` | 66.6, 66.0, 69.2, 67.5 | 4 |
