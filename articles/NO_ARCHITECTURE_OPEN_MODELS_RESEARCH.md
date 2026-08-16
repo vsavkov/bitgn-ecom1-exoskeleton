@@ -82,7 +82,6 @@ model does everything.
 | **open (local)** | **Qwen3.6-27B-NVFP4-0712** (dense, thinking)⁹ | **80.2 ± 0.8** | 83.4 | 75.7 | **100%** | 204 s | **$0 API²** |
 | **open (local)** | **Muse-Glimmer-30B-NVFP4** (dense, thinking)⁷ | **79.9 ± 0.8** | 83.4 | 76.4 | 98% | **322 s** | **$0 API²** |
 | **open (local)** | **Muse-Glimmer-30B** (dense, thinking, BF16) | **77.9**⁶ | 79.1 | 76.7 | 97%⁶ | 776 s | **$0 API²** |
-| **open (local)** | **Qwen3.6-27B** (thinking, no-MTP) | **77.4 ± 0.7** | 79.2 | 74.3 | 99% | 229 s | **$0 API²** |
 | open (cloud) | **deepseek-v4-flash** | **77.1** | 79.1 | 75.1 | 95% | 26 s | **$0.17** |
 | **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **low**)⁸ | **75.7 ± 1.0** | 79.7 | 69.5 | **100%** | **299 s** | **$0 API²** |
 | **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **xhigh**)⁸ | **75.2 ± 1.1** | 80.4 | 68.9 | **100%** | 375 s | **$0 API²** |
@@ -109,7 +108,7 @@ model does everything.
 ⁵ **deepseek-v4-flash local** = the *same* model as the 77.1 cloud (FP8) row, but self-hosted on **one DGX Spark GB10** at **q2-imatrix** (81 GB) via **ds4/DwarfStar** (llama.cpp's V4 arch = gibberish). Non-thinking (`model=deepseek-chat`) is mandatory to fit the cap. 3-run mean **63.4** (67.7/61.4/61.3; conc 2, `TASK_CAP_S=600`, ~5 h/run). The 82% completion / 63.4 is **serving-speed-bound** — score tracks the timeout rate almost linearly, so it's ~14 pts under its own cloud FP8 (77.1) purely on the slowest ~1-in-5 tasks timing out on the ~9 K-seed prefill (decode measures ~16 t/s), not a competence gap. See its family-section subsection + `README-local-models.md`.
 
 ⁶ **Muse-Glimmer-30B** is a **2-run mean** (79.1 / 76.7) — with ±5–7 re-seed noise and only 2 runs, its
-77.9 and Qwen3.6-27B's 77.4 are a **statistical tie**, not a ranking. Unlike every other sub-100% row, its
+77.9 is a soft number, not a ranking. Unlike every other sub-100% row, its
 non-completions are **not stalls**: in *both* runs every one is *exactly* the `TASK_CAP_S=2400` wall-clock
 cap (run 1: t002/t035/t055/t079; run 2: t024/t079), each a hard 0. Uncapped, those would likely score near
 the runs' ~0.8 average → **~79–82 estimated** (an estimate, not a measurement). See its family section.
@@ -151,8 +150,8 @@ its quantization tax (if any) is unmeasured and the 75.2 could understate the un
 
 ⁹ **Qwen3.6-27B-NVFP4-0712** = revision **`ccdaab7e`** (dated **2026-07-12**) of `unsloth/Qwen3.6-27B-NVFP4`
 — named for revision `ccdaab7e`, dated 2026-07-12 — treated as a
-separate model version from the June build (`890bdef7`) in the
-77.4 row. **10 runs: 80.23 ± 0.81** (sd 2.57, 75.7–83.4), 99.9% completion, 0.0 caps, ~204 s/task,
+separate model version from the June build (`890bdef7`, 6 runs, **77.38 ± 0.72**), which has been
+retired from the tables as superseded. **10 runs: 80.23 ± 0.81** (sd 2.57, 75.7–83.4), 99.9% completion, 0.0 caps, ~204 s/task,
 ~87 min/run at conc 4. That is **+2.84 over the June build at 2.61 combined SE** — one of the few
 deltas in this campaign that clears the noise band — and the gain sits exactly where a better model
 should show it: **citation 12.5 → 11.3/run and arithmetic 8.8 → 7.2/run**, while the solver-ceiling
@@ -184,8 +183,9 @@ re-quantization alone; a control arm was considered and deliberately not run. (2
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3, Qwen3.6-27B-NVFP4-0712 80.2 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
 
 *The charts show **one row per model**: where a model has been measured in more than one build, the
-representative build is charted and the superseded one lives in the table above. Qwen3.6-27B is
-charted as its **0712** build (80.2); the June build (77.4) is table-only.*
+representative build is charted. Where a superseded build is still useful as the before-side of a
+comparison it is described in the footnotes rather than ranked: Qwen3.6-27B's June build (77.4) has
+been retired from the tables entirely, and Qwen3.6-35B-A3B's June build (71.6) remains table-only.*
 
 **Takeaways.**
 - **One open model reaches frontier-adjacent quality without an architecture.** deepseek-v4-pro
@@ -199,7 +199,8 @@ charted as its **0712** build (80.2); the June build (77.4) is table-only.*
   Muse-Glimmer-30B (79.9, 10 runs) is the second dense-30B-class local to land on that upper rung,
   confirming the pattern from a different lineage — and it reaches *cloud GLM-5.2's* level for free.
   **A newer architecture, on its own, buys nothing.** Qwen3.8-27B — a day-old release with 262K native
-  context — lands at **75.2 ± 1.1**, *below* its own predecessor Qwen3.6-27B (77.4 ± 0.7) and 4.7 below
+  context — lands at **75.2 ± 1.1**, a full **5 points below its own predecessor** Qwen3.6-27B-NVFP4-0712
+  (80.2 ± 0.8) and 4.7 below
   the same-class Muse-Glimmer. Three dense ~27–31B locals now span 75–83 on this solver, and where each
   falls is set by citation discipline, not by recency or context length.
 - **Wall-clock is set by the *KV/attention* design, not the parameter count.** The two dense ~30B
@@ -221,7 +222,6 @@ charted as its **0712** build (80.2); the June build (77.4) is table-only.*
 | **Local — best quality** | **Gemma-4-31B-IT** (thinking) | **83.3**, $0 API, data stays on the box — beats gpt-5.4-mini & deepseek-flash. Slow: ~316 s/task, ~130 min/run, concurrency ≤ 4. |
 | **Local — 2nd, and fastest *run*** | **Muse-Glimmer-30B-NVFP4** (dense, thinking) | **79.9 ± 0.8** (10 runs) — clears Qwen3.6-27B and cloud deepseek-flash, level with cloud GLM-5.2, and finishes a run in **~45 min**: the only big local that **batches** (conc 16–32) at 12.7 tok/s/stream. **Serve it NVFP4, not BF16.** |
 | **Local — 2nd (tied)** | **Qwen3.6-27B-NVFP4-0712** (thinking, **no-MTP**) | **80.2 ± 0.8** (10 runs) — rev `ccdaab7e` (dated 2026-07-12); **statistically level with Muse-Glimmer** (79.9) and +2.8 over its own June build at 2.6 SE. Free. **Pin `--revision ccdaab7e`** and serve on vLLM ≥ 0.26.1rc1 (NGC 26.05 cannot load its quantized `lm_head`). Dense, ~204 s/task, conc 4, ~87 min/run — pick Muse-Glimmer instead if run wall-clock matters. |
-| **Local — 3rd / best value** | **Qwen3.6-27B** (June build `890bdef7`, thinking, **no-MTP**) | **77.4** — beats cloud deepseek-flash (77.1) & gpt-5.4-mini, free. **Turn MTP off** (it costs ~4 pts → 73.2). Dense, ~229 s/task, conc 4. Superseded by the 0815 build above. |
 | **Local — fast (MoE, conc 8)** | **Qwen3.6-35B-A3B** (no-MTP) | **71.6** at conc-8 throughput — beats Gemma-A4B (67) on *both* quality and speed. **Turn MTP off** (it costs ~6 pts). Gemma-A4B is the alternative if you want `enable_thinking` simplicity. |
 
 ![Quality vs cost per run — deepseek-v4-pro reaches ~90 at $0.46 while gpt-5.4-mini costs $3.64 for only 71.8; self-hosted models, including our free ECOM1 fine-tunes (37–56), cost $0 but score lower](images/quality-vs-cost.svg)
@@ -231,15 +231,15 @@ charted as its **0712** build (80.2); the June build (77.4) is table-only.*
 Inverting the per-model view — *where does each failure class show up* (● frequent ≳5/run,
 ○ occasional 1–5/run, blank ≲1):
 
-| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-27B | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | |
-| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● |
-| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | | ○ | | ○ | ○ | ○ |
-| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ● | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● |
-| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ | | | ○ |
-| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | |
+| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● |
+| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | | | | | | | | ○ | | ○ | ○ | ○ |
+| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ● | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● |
+| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ | | | ○ |
+| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
 \* Muse column = the 10 NVFP4 runs (citation 9.0/run, arithmetic 5.4, dispatch 4.9, fraud 3.6,
 completion 1.6, outcome 1.2, security 0.4). Its completion figure is **not** a `report_completion`
@@ -263,8 +263,8 @@ everything else about equally — which is why the aggregate hides it.
 
 The **Q27-0712 column** = the 10 runs of the newer Qwen3.6-27B build (citation 11.3/run,
 arithmetic 7.2, dispatch 5.0, fraud 3.4, outcome 1.1, security 1.0, completion 0.1) and it is the
-cleanest before/after in the table. Against the June build of *the same model* (Q36-27B column:
-citation 12.5, arithmetic 8.8) the two **model-driven** classes fall while the two **solver-ceiling**
+cleanest before/after available. Against the June build of *the same model* (retired from the table
+as superseded; it ran citation 12.5, arithmetic 8.8 per run) the two **model-driven** classes fall while the two **solver-ceiling**
 classes do not move at all (dispatch 5.0 → 5.0, fraud 3.8 → 3.4). That is the signature of a real
 model improvement rather than a lucky seed draw — and it is a useful sanity check on the matrix
 itself: a change that moved dispatch or fraud would indicate a measurement artifact, not a better
@@ -420,8 +420,10 @@ deepseek-pro. *(Hypothesis — not yet measured; an aids-on GLM-5.2 run would co
   **Reasoning is on by default** — no `enable_thinking` trap like Gemma-4.
 - **Numbers.** **NVFP4, 10 runs: 79.94 ± 0.80** (sd 2.51, range 76.4–83.4), **98% completion**,
   ~322 s/task, ~45 min/run at **concurrency 16**, $0 API. (BF16, 2 runs: 77.9 — see the NVFP4
-  subsection; serve it quantized.) At 10 runs the **gap over Qwen3.6-27B (77.4 ± 0.7) is real**
-  — ~2.5 pts, ≈2.4 combined SE — where the first 2 runs had looked like a tie.
+  subsection; serve it quantized.) **Note the ranking against Qwen3.6-27B has since reversed**: on
+  the June build (77.4 ± 0.7) Muse led by ~2.5 pts, but that model's current `-0712` build scores
+  **80.2 ± 0.8**, so the two are now a statistical tie with the 27B nominally ahead (0.3 pts, ~0.3
+  combined SE).
 - **It works on the bare native loop.** First contact was clean: correct `tool_calls` on the first
   request, thinking split into a separate `reasoning` field with `content` left clean. **No
   `LOCAL_TOOLCALL_RECOVER`, no `FORCE_TOOL_CHOICE_REQUIRED`, no custom template** — contrast Olmo
@@ -452,8 +454,8 @@ deepseek-pro. *(Hypothesis — not yet measured; an aids-on GLM-5.2 run would co
   lower `LOCAL_LLM_MAXTOK` to bound one generation, and/or raise the cap** — worth ~1.5–3 pts. Same
   lesson as local DeepSeek-V4-flash: **score tracks cap rate**, so this is serving-bound, not a
   competence ceiling. On `report_completion` *discipline* it never fails.
-- **Verdict.** **~80 — the 2nd-best local**, clearly above Qwen3.6-27B (77.4) and *cloud*
-  deepseek-flash (77.1), and **statistically level with cloud GLM-5.2** (81.5 ± 1.3; the 1.6-pt gap is
+- **Verdict.** **~80 — joint-2nd local**, tied with Qwen3.6-27B-NVFP4-0712 (80.2 ± 0.8) and above
+  *cloud* deepseek-flash (77.1), and **statistically level with cloud GLM-5.2** (81.5 ± 1.3; the 1.6-pt gap is
   ~1.0 combined SE). Gemma-4-31B (83.3) still leads it by ~3.4, but on only 3 runs (SE ~1.4) that
   separation is borderline (~2.1 SE) rather than settled. And it gets there **~3× faster per run**
   (~45 min vs ~130): Gemma-4-31B is stuck at conc 4, this batches at 16–32. Best local pick when a
@@ -577,7 +579,7 @@ about the *raw* base. We fine-tuned `Olmo-3.1-32B-Think` on **11,248 gpt-5.5 tea
 **`ECOM1-32B-BF16` = 56.2** (H200, 3-run), and the GB10-quantized **`ECOM1-32B-NVFP4A16` = 54.6**
 (10-run) — the fully-open Olmo, made to drive the loop. Two lessons: (1) the no-native-tool-calling
 wall is a *format* gap SFT closes, not a competence gap; (2) even so, ECOM1-32B lands **~21 pts below
-raw Qwen3.6-27B (77.4)** — a stronger *base* beats a fine-tuned weaker one, so **the base model is the
+raw Qwen3.6-27B (77.4 on the June build it was measured against)** — a stronger *base* beats a fine-tuned weaker one, so **the base model is the
 ceiling** (Qwen does `export` natively at 0.64 where distilled Olmo is stuck at 0.00). Full recipe:
 `README-Hugging-Face.md`, `README-OPSD.md`.
 
@@ -630,7 +632,7 @@ recovery) and commits — **0/100 zero-step tasks (raw: 43), 96/100 completed** 
 Blackwell + vLLM 26.05 vs Hopper — not capability). That's **above our SFT'd 7B Olmo (38)** and the
 Qwen3-Instruct floor (40.6), from **1.5B active params on a laptop-class box**. Same two lessons as Olmo: SFT
 closes the *format* gap; and active-param count is the ceiling (44 « the 3–4B-active MoEs at 67–72 « raw
-Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`.
+Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`.
 
 ### GLM-4.5-Air — best local (≈67.7)
 - **What it is.** Zhipu GLM-4.5-Air, agentic reasoning MoE (~106B/12B-active), FP8 on the DGX Spark.
@@ -714,9 +716,10 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   spread**: across the 10 runs citation failures track score almost monotonically (12 → 79–80,
   19 → 69–72), while dispatch (5.0) and fraud (3.8) sit at the shared solver ceilings in *every* run.
   Then arithmetic/value 7.0, security 2.2, outcome 0.7. Completion discipline is excellent (0.1/run).
-- **It does not improve on Qwen3.6-27B.** The older, smaller-on-disk 27B scores **77.4 ± 0.7** against
-  this model's **75.2 ± 1.1** — a 2.2-pt deficit at ~1.7 combined SE, so *statistically borderline
-  rather than a settled regression*, but there is certainly no generational gain here on this workload.
+- **It does not improve on Qwen3.6-27B.** The older 27B's current build scores **80.2 ± 0.8** against
+  this model's **75.2 ± 1.1** — a **5.0-pt deficit at ~3.6 combined SE, a settled regression**, not a
+  borderline one. (Against the 27B's *June* build, 77.4 ± 0.7, the deficit was 2.2 pts at ~1.7 SE and
+  read as inconclusive; re-measuring the 27B on its current revision resolved it.)
   A newer architecture and 262K context did not convert into agentic score.
 - **Reasoning effort was never chosen — and choosing it changes nothing.** The campaign ran at the
   template default **`xhigh`**, the most expensive of `xhigh`/`medium`/`low`. A matched 10-run
@@ -730,7 +733,7 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
 - **Verdict.** **Dominated by Muse-Glimmer-30B-NVFP4 on every axis measured** — bigger on disk (25 vs
   23 GB), ~16% slower per task (375 vs 322 s), and 4.7 pts lower (75.2 vs 79.9). There is no
   VRAM-or-speed argument that recovers it, so it is **not a recommended local pick**: it lands 4th
-  among locals, behind Gemma-4-31B (83.3), Muse-Glimmer (79.9) and Qwen3.6-27B (77.4). What it *is*
+  among locals, behind Gemma-4-31B (83.3), Qwen3.6-27B-NVFP4-0712 (80.2) and Muse-Glimmer (79.9). What it *is*
   worth: a clean, no-workaround serve on a day-old architecture, above cloud gpt-5.4-mini (71.8) and
   every MoE local tested. **Caveat:** only the 4-bit build was run — there is **no BF16 leg**, so any
   quantization tax is unmeasured and 75.2 may understate the unquantized model.
@@ -770,26 +773,6 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   both of its builds. Slower per run than Muse-Glimmer (~87 min vs ~45) because it is dense and
   capped at concurrency 4.
 
-### Qwen3.6-27B — 2nd-best local, beats deepseek-flash; turn MTP OFF (≈77.4)
-- **What it is.** Dense 27B, multimodal, NVFP4 (~19 GB, community `unsloth` quant) on the Spark —
-  reasoning **on by default**. `qwen3_coder` / `qwen3` parsers.
-- **Numbers.** 6 full runs **without MTP**: 78.4/77.0/74.3/79.2/76.8/78.6 → **77.4 ± 0.7**, 99%
-  completion, ~229 s/task, $0 API.
-- **MTP is a trap here too.** Enabling the MTP speculative head **drops it to 73.2** (3-run) — the same
-  ~+4–6 accuracy tax MTP imposed on the 35B-A3B sibling. **Leave `--speculative-config` off** (you also
-  lose the speedup — no-MTP is ~229 s/task vs ~146 with MTP — but the accuracy is worth it).
-- **What it does well.** **2nd-best local — and it now beats *cloud* deepseek-flash (77.1)** and
-  gpt-5.4-mini (71.8), free and on the box. Clears GLM/Gemma-A4B (~67) by ~10.
-- **Where it stumbles.** Citation (12.5/run — higher than Gemma-31B's 8.3); a few more tool-call slips
-  (missing tool / relative path) than the Gemmas. Still ~5 below the local champ Gemma-4-31B (83.3).
-- **Note.** Even at 77.4 it lands **below muxx's 0.809** — the Qwen3.6 family suits this solver a touch
-  less than the Gemmas/DeepSeeks (consistent across both Qwen3.6 sizes).
-- **Verdict.** The clear local #2: ~77, free, beats the cheap cloud tier; just slower (dense, conc 4)
-  and ~5 behind Gemma-4-31B.
-- **Superseded.** These 6 runs are the **June revision `890bdef7`** on NGC vLLM 26.05. The August
-  re-upload of the same repo scores **80.2** (section above) and is the build to use; this row is
-  kept as the before-side of that comparison, not as a current recommendation.
-
 ### Qwen3.6-35B-A3B-NVFP4-0712 — the fastest capable local, re-measured on the current revision (≈73.8)
 - **What it is.** The **same quant repo** as the row below, at its **current HEAD** — revision
   `739af1e7`, dated 2026-07-12 — instead of the `612d523c` snapshot cached on 2026-06-23 that
@@ -813,7 +796,7 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   combined SE 1.89 is dominated by the June arm's 1.77 (n=6) against the new arm's 0.67, so
   settling it requires *more June runs*, not more new ones.
 - **Verdict.** The **speed pick among locals**: ~74 at 106 s/task, well clear of gpt-5.4-mini (71.8)
-  and roughly 8 behind Muse-Glimmer/Qwen3.6-27B for a fraction of the wall-clock. **Pin
+  and roughly 6 behind Muse-Glimmer/Qwen3.6-27B-0712 for a fraction of the wall-clock. **Pin
   `--revision 739af1e7`** and keep **MTP off** (it costs this model 6.47 pts).
 
 ### Qwen3.6-35B-A3B — the June build (≈71.6); turn MTP OFF
@@ -842,13 +825,13 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   s/task** (max 3221 s — 53 min on one task), the **slowest local we measured** despite only 12B active —
   the 120B of resident weights are bandwidth-bound on the Spark's ~273 GB/s.
 - **The headline.** NVIDIA's pick **lands below our best local Gemma-4-31B (83.3)** by ~12, and below
-  Qwen3.6-27B (77.4); it roughly **ties the much smaller Qwen3.6-35B-A3B (71.6)**. Agent-tuning that tops
+  Qwen3.6-27B (80.2 on its current build); it roughly **ties the much smaller Qwen3.6-35B-A3B**. Agent-tuning that tops
   *NVIDIA's own* agent benchmarks doesn't translate to ECOM1's demands.
 - **Where it stumbles.** **Citation/grounding (14.7/run) is its wall** — the highest of the upper-half
   models, the same failure every local hits but more so. Otherwise a clean spread (security 3.2, fraud 3.8,
   dispatch 4.5, completion 0.8).
 - **Verdict.** Capable and 99%-completing, but **no reason to pick it on the Spark**: Gemma-4-31B is +12
-  and faster, the Qwen3.6-27B is +6 and ~2× faster. NVIDIA's "best Spark agent" claim rests on different
+  and faster, the Qwen3.6-27B is +9 and ~2× faster. NVIDIA's "best Spark agent" claim rests on different
   benchmarks than grounding-heavy ops.
 
 ### gpt-oss-120b — capable but stalls (≈52.8)
@@ -913,9 +896,13 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 | **Qwen3.8-27B-NVFP4 (low)** (same build/config; effort forced server-side) | `qwen38low`, `qwen38lowb`–`qwen38lowj` | 69.5–79.7 (mean 75.70 ± 1.00) | 10 |
 | **Qwen3.6-27B-NVFP4-0712** (rev `ccdaab7e`, vLLM 0.26.1rc1, thinking, no-MTP, conc 4) | `q270815a`–`q270815j`† | 75.7–83.4 (mean 80.23 ± 0.81) | 10 |
 
+‡ Retired from the leaderboard, decision matrix, error matrix and family sections as superseded by
+the `-0712` build. The runs stay listed here because they are the before-side of that build's
++2.84, and deleting them would leave the claim unevidenced.
+
 † Model **`-0712`** (revision date) but run labels **`q270815*`** (execution date, 2026-08-15). The labels name the runs, not the build; the records were written under them and are left unchanged so the audit trail from score to artifact stays intact.
 
-| **Qwen3.6-27B-NVFP4** (June rev `890bdef7`, NGC vLLM 26.05, thinking, **no-MTP**) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 (mean 77.38 ± 0.72) | 6 |
+| Qwen3.6-27B-NVFP4 (June rev `890bdef7`, NGC vLLM 26.05, **superseded**‡) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 (mean 77.38 ± 0.72) | 6 |
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
 | **Qwen3.6-35B-A3B-NVFP4-0712** (rev `739af1e7`, vLLM 0.26.1rc1, thinking, MoE, no-MTP, conc 8) | `q35b0712a`–`q35b0712j` | 70.2–77.6 (mean 73.78 ± 0.67) | 10 |
 | **Qwen3.6-35B-A3B-NVFP4** (June rev `612d523c`, NGC 26.05, thinking, MoE, **no-MTP**) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 (mean 71.64 ± 1.77) | 6 |
