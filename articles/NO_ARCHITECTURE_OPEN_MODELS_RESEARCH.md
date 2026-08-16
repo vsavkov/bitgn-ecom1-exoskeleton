@@ -79,12 +79,13 @@ model does everything.
 | **open (cloud)** | **Kimi K2.6** (Moonshot) | **86.6 ± 1.0** | 90.0 | 79.6 | 99% | 79 s | $2.62 |
 | **open (local)** | **Gemma-4-31B-IT** (thinking) | **83.3** | 84.9 | 80.5 | **100%** | 316 s | **$0 API²** |
 | open (cloud) | **GLM-5.2** (Together) | **81.5 ± 1.3** | 88.9 | 74.7 | 99% | 43 s | $3.63 |
-| **open (local)** | **Qwen3.6-27B-NVFP4-0815** (dense, thinking)⁹ | **80.2 ± 0.8** | 83.4 | 75.7 | **100%** | 204 s | **$0 API²** |
+| **open (local)** | **Qwen3.6-27B-NVFP4-0712** (dense, thinking)⁹ | **80.2 ± 0.8** | 83.4 | 75.7 | **100%** | 204 s | **$0 API²** |
 | **open (local)** | **Muse-Glimmer-30B-NVFP4** (dense, thinking)⁷ | **79.9 ± 0.8** | 83.4 | 76.4 | 98% | **322 s** | **$0 API²** |
 | **open (local)** | **Muse-Glimmer-30B** (dense, thinking, BF16) | **77.9**⁶ | 79.1 | 76.7 | 97%⁶ | 776 s | **$0 API²** |
 | **open (local)** | **Qwen3.6-27B** (thinking, no-MTP) | **77.4 ± 0.7** | 79.2 | 74.3 | 99% | 229 s | **$0 API²** |
 | open (cloud) | **deepseek-v4-flash** | **77.1** | 79.1 | 75.1 | 95% | 26 s | **$0.17** |
-| **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking)⁸ | **75.2 ± 1.1** | 80.4 | 68.9 | **100%** | 375 s | **$0 API²** |
+| **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **low**)⁸ | **75.7 ± 1.0** | 79.7 | 69.5 | **100%** | **299 s** | **$0 API²** |
+| **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **xhigh**)⁸ | **75.2 ± 1.1** | 80.4 | 68.9 | **100%** | 375 s | **$0 API²** |
 | baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 79.3 | 67.7 | 92% | 69 s | $3.64 |
 | **open (local)** | **Qwen3.6-35B-A3B** (thinking, MoE, no-MTP) | **71.6** | 76.7 | 65.8 | 98% | 123 s | $0 API² |
 | **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
@@ -133,11 +134,22 @@ solver config as the Muse rows (conc 16, `TASK_CAP_S=2400`). **10 runs: 75.22 ±
 68.9–80.4), **99.9% completion**, 0.1 caps/run. **It is dominated by Muse-Glimmer-30B-NVFP4 on every
 axis measured** — larger on disk (25 vs 23 GB), ~16% slower per task (375 vs 322 s) and 4.7 pts lower
 — so there is no size/speed trade to recommend it on; it is ranked here purely on its merits.
+**Reasoning effort.** These runs were served at the model's *default* effort, which its chat
+template sets to **`xhigh`** — the most expensive of its three levels (`xhigh`/`medium`/`low`).
+Nobody chose it; the solver never sends `reasoning_effort` (`compat.supportsReasoningEffort=false`),
+so the template's `default('xhigh')` applied silently. A matched 10-run campaign at **`low`** (forced
+server-side via `--default-chat-template-kwargs`, everything else identical) scores **75.70 ± 1.00 vs
+75.22 ± 1.07 — +0.49 at 0.33 combined SE, i.e. indistinguishable — while running 20% faster**
+(299 vs 375 s/task, 1,822 vs ~2,320 output tokens/task). The *profile* differs even though the total
+does not: `low` is worse at citation (17.6 vs 15.5/run) and better at arithmetic (5.9 vs 7.0),
+outcome (0.2 vs 0.7) and other (0.6 vs 1.6). **On this workload maximum reasoning effort buys nothing
+and costs a fifth of the wall-clock.** See `README-tps.md`.
+
 **Caveat:** unlike the Muse rows there is **no BF16 leg** — only the 4-bit build was benchmarked, so
 its quantization tax (if any) is unmeasured and the 75.2 could understate the unquantized model.
 
-⁹ **Qwen3.6-27B-NVFP4-0815** = revision **`ccdaab7e`** (dated **2026-07-12**) of `unsloth/Qwen3.6-27B-NVFP4`
-— the "0815" label records the date we *fetched* it, not the date it was built — treated as a
+⁹ **Qwen3.6-27B-NVFP4-0712** = revision **`ccdaab7e`** (dated **2026-07-12**) of `unsloth/Qwen3.6-27B-NVFP4`
+— named for revision `ccdaab7e`, dated 2026-07-12 — treated as a
 separate model version from the June build (`890bdef7`) in the
 77.4 row. **10 runs: 80.23 ± 0.81** (sd 2.57, 75.7–83.4), 99.9% completion, 0.0 caps, ~204 s/task,
 ~87 min/run at conc 4. That is **+2.84 over the June build at 2.61 combined SE** — one of the few
@@ -152,11 +164,11 @@ together**; isolating them needs the June revision served on the new engine, whi
 Serve with `--revision` pinned: our cache followed `refs/main` mid-campaign — the newer revision had
 already been HEAD for a month, so the swap was decoupled from anything we changed.
 
-![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3, Qwen3.6-27B-NVFP4-0815 80.2 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
+![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3, Qwen3.6-27B-NVFP4-0712 80.2 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
 
 *The charts show **one row per model**: where a model has been measured in more than one build, the
 representative build is charted and the superseded one lives in the table above. Qwen3.6-27B is
-charted as its **0815** build (80.2); the June build (77.4) is table-only.*
+charted as its **0712** build (80.2); the June build (77.4) is table-only.*
 
 **Takeaways.**
 - **One open model reaches frontier-adjacent quality without an architecture.** deepseek-v4-pro
@@ -191,8 +203,8 @@ charted as its **0815** build (80.2); the June build (77.4) is table-only.*
 | Cheap + fast cloud | deepseek-v4-flash | 77, ~26 s/task, $0.17/run. |
 | **Local — best quality** | **Gemma-4-31B-IT** (thinking) | **83.3**, $0 API, data stays on the box — beats gpt-5.4-mini & deepseek-flash. Slow: ~316 s/task, ~130 min/run, concurrency ≤ 4. |
 | **Local — 2nd, and fastest *run*** | **Muse-Glimmer-30B-NVFP4** (dense, thinking) | **79.9 ± 0.8** (10 runs) — clears Qwen3.6-27B and cloud deepseek-flash, level with cloud GLM-5.2, and finishes a run in **~45 min**: the only big local that **batches** (conc 16–32) at 12.7 tok/s/stream. **Serve it NVFP4, not BF16.** |
-| **Local — 2nd (tied)** | **Qwen3.6-27B-NVFP4-0815** (thinking, **no-MTP**) | **80.2 ± 0.8** (10 runs) — rev `ccdaab7e` (dated 2026-07-12); **statistically level with Muse-Glimmer** (79.9) and +2.8 over its own June build at 2.6 SE. Free. **Pin `--revision ccdaab7e`** and serve on vLLM ≥ 0.26.1rc1 (NGC 26.05 cannot load its quantized `lm_head`). Dense, ~204 s/task, conc 4, ~87 min/run — pick Muse-Glimmer instead if run wall-clock matters. |
-| **Local — 3rd / best value** | **Qwen3.6-27B** (June build, thinking, **no-MTP**) | **77.4** — beats cloud deepseek-flash (77.1) & gpt-5.4-mini, free. **Turn MTP off** (it costs ~4 pts → 73.2). Dense, ~229 s/task, conc 4. Superseded by the 0815 build above. |
+| **Local — 2nd (tied)** | **Qwen3.6-27B-NVFP4-0712** (thinking, **no-MTP**) | **80.2 ± 0.8** (10 runs) — rev `ccdaab7e` (dated 2026-07-12); **statistically level with Muse-Glimmer** (79.9) and +2.8 over its own June build at 2.6 SE. Free. **Pin `--revision ccdaab7e`** and serve on vLLM ≥ 0.26.1rc1 (NGC 26.05 cannot load its quantized `lm_head`). Dense, ~204 s/task, conc 4, ~87 min/run — pick Muse-Glimmer instead if run wall-clock matters. |
+| **Local — 3rd / best value** | **Qwen3.6-27B** (June build `890bdef7`, thinking, **no-MTP**) | **77.4** — beats cloud deepseek-flash (77.1) & gpt-5.4-mini, free. **Turn MTP off** (it costs ~4 pts → 73.2). Dense, ~229 s/task, conc 4. Superseded by the 0815 build above. |
 | **Local — fast (MoE, conc 8)** | **Qwen3.6-35B-A3B** (no-MTP) | **71.6** at conc-8 throughput — beats Gemma-A4B (67) on *both* quality and speed. **Turn MTP off** (it costs ~6 pts). Gemma-A4B is the alternative if you want `enable_thinking` simplicity. |
 
 ![Quality vs cost per run — deepseek-v4-pro reaches ~90 at $0.46 while gpt-5.4-mini costs $3.64 for only 71.8; self-hosted models, including our free ECOM1 fine-tunes (37–56), cost $0 but score lower](images/quality-vs-cost.svg)
@@ -202,15 +214,15 @@ charted as its **0815** build (80.2); the June build (77.4) is table-only.*
 Inverting the per-model view — *where does each failure class show up* (● frequent ≳5/run,
 ○ occasional 1–5/run, blank ≲1):
 
-| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-27B | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38⁸ | Q27-0815⁹ |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | |
-| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ● |
-| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | | ○ | | ○ | ○ |
-| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ○ | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● |
-| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ | | ○ |
-| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q36-27B | Q36-35B | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | |
+| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● |
+| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | | ○ | | ○ | ○ | ○ |
+| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ○ | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● |
+| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ | | | ○ |
+| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
 \* Muse column = the 10 NVFP4 runs (citation 9.0/run, arithmetic 5.4, dispatch 4.9, fraud 3.6,
 completion 1.6, outcome 1.2, security 0.4). Its completion figure is **not** a `report_completion`
@@ -226,7 +238,13 @@ almost monotonically across its own runs** — 12 citation failures → 79–80,
 to Muse-Glimmer is essentially the 6.5-citation-failures/run gap; on every other class the two are
 within ~1.6.
 
-The **Q27-0815 column** = the 10 runs of the August Qwen3.6-27B build (citation 11.3/run,
+**`Q38-xhi` vs `Q38-low`** are the *same weights at different reasoning effort* — the cleanest
+single-variable pair in the table. The totals are a wash (75.22 vs 75.70, 0.33 SE) but the columns
+are visibly different: `low` trades **citation (15.5 → 17.6)** for **arithmetic (7.0 → 5.9), outcome
+(0.7 → 0.2) and other (1.6 → 0.6)**. Extra deliberation buys grounding discipline and costs
+everything else about equally — which is why the aggregate hides it.
+
+The **Q27-0712 column** = the 10 runs of the newer Qwen3.6-27B build (citation 11.3/run,
 arithmetic 7.2, dispatch 5.0, fraud 3.4, outcome 1.1, security 1.0, completion 0.1) and it is the
 cleanest before/after in the table. Against the June build of *the same model* (Q36-27B column:
 citation 12.5, arithmetic 8.8) the two **model-driven** classes fall while the two **solver-ceiling**
@@ -650,7 +668,7 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   when you want the best local quality and can afford the hours; use the A4B (~67, ~3× faster) when
   you need throughput.
 
-### Qwen3.8-27B — newest architecture tested, but it doesn't beat its own predecessor (≈75.2)
+### Qwen3.8-27B — newest architecture tested, but it doesn't beat its own predecessor (≈75.2 xhigh / 75.7 low)
 - **What it is.** Qwen's **brand-new dense 27B** (`Qwen/Qwen3.8-27B`, released **2026-08-14**,
   Apache-2.0), `Qwen3_5ForConditionalGeneration` / `qwen3_5`: 64 layers, **4 KV heads at head_dim
   256**, 262K native context, multimodal, **reasoning on by default**. Benchmarked the day it shipped,
@@ -683,6 +701,15 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   this model's **75.2 ± 1.1** — a 2.2-pt deficit at ~1.7 combined SE, so *statistically borderline
   rather than a settled regression*, but there is certainly no generational gain here on this workload.
   A newer architecture and 262K context did not convert into agentic score.
+- **Reasoning effort was never chosen — and choosing it changes nothing.** The campaign ran at the
+  template default **`xhigh`**, the most expensive of `xhigh`/`medium`/`low`. A matched 10-run
+  campaign at **`low`** scores **75.70 ± 1.00** against xhigh's 75.22 ± 1.07: **+0.49 at 0.33
+  combined SE, indistinguishable — at 20% less wall-clock** (299 vs 375 s/task) and 21% fewer
+  output tokens. The error profile is not identical even though the score is: `low` is worse at
+  citation (17.6 vs 15.5/run) and better at arithmetic, outcome and other. So the extra
+  deliberation is real, it simply buys grounding discipline and loses an equal amount elsewhere.
+  **Serve this model at `low`**; note `medium` injects no instruction at all, so it is "no
+  directive" rather than a midpoint.
 - **Verdict.** **Dominated by Muse-Glimmer-30B-NVFP4 on every axis measured** — bigger on disk (25 vs
   23 GB), ~16% slower per task (375 vs 322 s), and 4.7 pts lower (75.2 vs 79.9). There is no
   VRAM-or-speed argument that recovers it, so it is **not a recommended local pick**: it lands 4th
@@ -691,7 +718,7 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   every MoE local tested. **Caveat:** only the 4-bit build was run — there is **no BF16 leg**, so any
   quantization tax is unmeasured and 75.2 may understate the unquantized model.
 
-### Qwen3.6-27B-NVFP4-0815 — a newer revision, and a rare *real* gain (≈80.2)
+### Qwen3.6-27B-NVFP4-0712 — a newer revision, and a rare *real* gain (≈80.2)
 - **What it is.** The **same model** as the row below, but a **newer revision** (dated 2026-07-12) of
   `unsloth/Qwen3.6-27B-NVFP4` (revision `ccdaab7e`, 5 shards) instead of the June build
   (`890bdef7`, single `model.safetensors`). Tracked as a **separate version** because two things
@@ -839,8 +866,12 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 | **Gemma-4-31B-IT** (thinking) | `g31prod1`–`g31prod3` | 84.5, 80.5, 84.9 | 3 |
 | **Muse-Glimmer-30B-NVFP4** (RedHatAI W4A4, conc 16, `TASK_CAP_S=2400`) | `musenvfp4a`–`musenvfp4j` | 76.4–83.4 (mean 79.94 ± 0.80) | 10 |
 | **Muse-Glimmer-30B** (dense, BF16, conc 16, `TASK_CAP_S=2400`) | `museprod1`, `museprod2` | 79.1, 76.7 (mean 77.9) | 2 |
-| **Qwen3.8-27B-NVFP4** (Inferact modelopt W4A4, thinking, no-MTP, conc 16, `TASK_CAP_S=2400`) | `qwen38a`–`qwen38j` | 68.9–80.4 (mean 75.22 ± 1.07) | 10 |
-| **Qwen3.6-27B-NVFP4-0815** (rev `ccdaab7e`, vLLM 0.26.1rc1, thinking, no-MTP, conc 4) | `q270815a`–`q270815j` | 75.7–83.4 (mean 80.23 ± 0.81) | 10 |
+| **Qwen3.8-27B-NVFP4 (xhigh)** (Inferact modelopt W4A4, thinking, no-MTP, conc 16, `TASK_CAP_S=2400`) | `qwen38a`–`qwen38j` | 68.9–80.4 (mean 75.22 ± 1.07) | 10 |
+| **Qwen3.8-27B-NVFP4 (low)** (same build/config; effort forced server-side) | `qwen38low`, `qwen38lowb`–`qwen38lowj` | 69.5–79.7 (mean 75.70 ± 1.00) | 10 |
+| **Qwen3.6-27B-NVFP4-0712** (rev `ccdaab7e`, vLLM 0.26.1rc1, thinking, no-MTP, conc 4) | `q270815a`–`q270815j`† | 75.7–83.4 (mean 80.23 ± 0.81) | 10 |
+
+† Model **`-0712`** (revision date) but run labels **`q270815*`** (execution date, 2026-08-15). The labels name the runs, not the build; the records were written under them and are left unchanged so the audit trail from score to artifact stays intact.
+
 | **Qwen3.6-27B-NVFP4** (June rev `890bdef7`, NGC vLLM 26.05, thinking, **no-MTP**) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 (mean 77.38 ± 0.72) | 6 |
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
 | **Qwen3.6-35B-A3B-NVFP4** (thinking, MoE, **no-MTP**) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 | 6 |
