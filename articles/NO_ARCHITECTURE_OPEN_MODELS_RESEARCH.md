@@ -87,7 +87,8 @@ model does everything.
 | **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **low**)⁸ | **75.7 ± 1.0** | 79.7 | 69.5 | **100%** | **299 s** | **$0 API²** |
 | **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **xhigh**)⁸ | **75.2 ± 1.1** | 80.4 | 68.9 | **100%** | 375 s | **$0 API²** |
 | baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 79.3 | 67.7 | 92% | 69 s | $3.64 |
-| **open (local)** | **Qwen3.6-35B-A3B** (thinking, MoE, no-MTP) | **71.6** | 76.7 | 65.8 | 98% | 123 s | $0 API² |
+| **open (local)** | **Qwen3.6-35B-A3B-NVFP4-0712** (thinking, MoE, no-MTP)¹⁰ | **73.8 ± 0.7** | 77.6 | 70.2 | 98% | **106 s** | **$0 API²** |
+| **open (local)** | **Qwen3.6-35B-A3B** (June build, thinking, MoE, no-MTP) | **71.6** | 76.7 | 65.8 | 98% | 123 s | $0 API² |
 | **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
 | **open (local)** | **GLM-4.5-Air** | **67.7** | 69.2 | 66.0 | **100%** | 520 s | $0 API² |
 | **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
@@ -164,6 +165,22 @@ together**; isolating them needs the June revision served on the new engine, whi
 Serve with `--revision` pinned: our cache followed `refs/main` mid-campaign — the newer revision had
 already been HEAD for a month, so the swap was decoupled from anything we changed.
 
+¹⁰ **Qwen3.6-35B-A3B-NVFP4-0712** = revision **`739af1e7`** (dated 2026-07-12) of
+`unsloth/Qwen3.6-35B-A3B-NVFP4` — the current HEAD of the quant repo whose *older* cached revision
+`612d523c` produced the 71.6 row below. Found by checking whether the 27B's revision trap also
+applied one size down: it did, and the local cache had been a revision behind for two months.
+**10 runs: 73.78 ± 0.67** (sd 2.12, 70.2–77.6), 97.9% completion, 0.0 caps, **106 s/task** (−14%).
+**+2.14 over the June build at 1.13 combined SE — directionally positive but NOT conclusive**
+(the bar used elsewhere in this study is ~2 SE). The **variance** result is arguably the stronger
+one: **sd 4.33 → 2.12**, and the new build's *worst* run (70.2) beats three of the June build's six
+— though an sd estimated from n=6 is itself unreliable. Error profile: arithmetic **9.3 → 6.6**/run
+is the big mover, plus citation 16.3 → 15.1 and fraud 4.0 → 3.0; security moves the wrong way
+(0.8 → 2.3). **Two caveats.** (1) Like the 27B 0712 row, **weights and engine moved together** —
+the quantized `lm_head` forces vLLM 0.26.1rc1 — so the gain is not attributable to the
+re-quantization alone; a control arm was considered and deliberately not run. (2) The comparison is
+**limited by the baseline, not the new arm**: combined SE 1.89 is dominated by the June arm's 1.77
+(n=6, sd 4.33) against the new arm's 0.67, so resolving it needs *more June runs*, not more new ones.
+
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 83.3, Qwen3.6-27B-NVFP4-0712 80.2 and Muse-Glimmer-30B-NVFP4 79.9 lead the local ones](images/leaderboard.svg)
 
 *The charts show **one row per model**: where a model has been measured in more than one build, the
@@ -219,7 +236,7 @@ Inverting the per-model view — *where does each failure class show up* (● fr
 | Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | | | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | |
 | Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ● | ● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● |
 | Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | | ○ | | ○ | ○ | ○ |
-| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ○ | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● |
+| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ○ | ○ | ● | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● |
 | Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | ○ | | ○ | | | ○ | ○ | | | ○ |
 | Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 | Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
@@ -773,7 +790,33 @@ Qwen3.6-27B at 77.4). Full recipe + both measurements: `README-LFM2.5-8B-A1B.md`
   re-upload of the same repo scores **80.2** (section above) and is the build to use; this row is
   kept as the before-side of that comparison, not as a current recommendation.
 
-### Qwen3.6-35B-A3B — fast local 3rd place, but turn MTP OFF (≈71.6)
+### Qwen3.6-35B-A3B-NVFP4-0712 — the fastest capable local, re-measured on the current revision (≈73.8)
+- **What it is.** The **same quant repo** as the row below, at its **current HEAD** — revision
+  `739af1e7`, dated 2026-07-12 — instead of the `612d523c` snapshot cached on 2026-06-23 that
+  produced the 71.6. Found by asking whether the 27B's revision trap applied one size down; it did,
+  and the cache had been a revision behind for two months.
+- **Numbers.** **10 runs: 73.78 ± 0.67** (sd 2.12, range 70.2–77.6), 97.9% completion, 0.0 caps,
+  **106 s/task** — the **fastest capable local measured here**, ~3.5× faster per task than
+  Qwen3.8-27B and ~2× the dense 27B, because it is an MoE with ~3B active.
+- **+2.14 over the June build, at 1.13 combined SE — not conclusive.** Directionally consistent with
+  the 27B's +2.84, but it does not clear the ~2 SE bar this study uses, and it should not be quoted
+  as a demonstrated gain.
+- **The variance result may matter more than the mean.** sd **4.33 → 2.12**, and the new build's
+  *worst* run (70.2) beats three of the June build's six; the 65.8 outlier is gone. Caveat: an sd
+  from n=6 is unreliable, so this is suggestive rather than established.
+- **Where it improved.** Arithmetic **9.3 → 6.6**/run is the big mover, then citation 16.3 → 15.1
+  and fraud 4.0 → 3.0. **Security moved the wrong way** (0.8 → 2.3). Dispatch is 5.0 in both, as in
+  every model here.
+- **Two caveats.** (1) **Weights and engine moved together** — the newer revision quantizes
+  `lm_head`, which forces vLLM 0.26.1rc1 — so the delta is not attributable to the re-quantization
+  alone; the control arm was deliberately not run. (2) **The comparison is baseline-limited**:
+  combined SE 1.89 is dominated by the June arm's 1.77 (n=6) against the new arm's 0.67, so
+  settling it requires *more June runs*, not more new ones.
+- **Verdict.** The **speed pick among locals**: ~74 at 106 s/task, well clear of gpt-5.4-mini (71.8)
+  and roughly 8 behind Muse-Glimmer/Qwen3.6-27B for a fraction of the wall-clock. **Pin
+  `--revision 739af1e7`** and keep **MTP off** (it costs this model 6.47 pts).
+
+### Qwen3.6-35B-A3B — the June build (≈71.6); turn MTP OFF
 - **What it is.** The **MoE** sibling of the 27B (35B total / **3B active**), multimodal, NVFP4
   (`unsloth/Qwen3.6-35B-A3B-NVFP4`), thinking on by default. MoE → runs at **concurrency 8**.
 - **Numbers.** 6 full runs **without MTP**: 75.9/65.8/68.4/73.2/69.8/76.7 → **71.6 ± 4.0**, 98%
@@ -874,7 +917,8 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 
 | **Qwen3.6-27B-NVFP4** (June rev `890bdef7`, NGC vLLM 26.05, thinking, **no-MTP**) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 (mean 77.38 ± 0.72) | 6 |
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
-| **Qwen3.6-35B-A3B-NVFP4** (thinking, MoE, **no-MTP**) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 | 6 |
+| **Qwen3.6-35B-A3B-NVFP4-0712** (rev `739af1e7`, vLLM 0.26.1rc1, thinking, MoE, no-MTP, conc 8) | `q35b0712a`–`q35b0712j` | 70.2–77.6 (mean 73.78 ± 0.67) | 10 |
+| **Qwen3.6-35B-A3B-NVFP4** (June rev `612d523c`, NGC 26.05, thinking, MoE, **no-MTP**) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 (mean 71.64 ± 1.77) | 6 |
 | Qwen3.6-35B-A3B-NVFP4 (thinking, MoE, MTP — worse) | `q36mprod1`–`q36mprod3` | 63.9, 63.2, 68.4 | 3 |
 | Gemma-4-26B-A4B (thinking) | `gthinkprod1`–`gthinkprod3` | 65.5, 65.4, 70.1 | 3 |
 | GLM-4.5-Air (gen13) | `glmprod5`–`glmprod8` | 66.6, 66.0, 69.2, 67.5 | 4 |
