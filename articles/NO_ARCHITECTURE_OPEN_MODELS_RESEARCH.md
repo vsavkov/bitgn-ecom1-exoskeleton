@@ -126,9 +126,14 @@ BF16's 2-run mean (77.9) sits inside NVFP4's 10-run range. *(An earlier 2-run NV
 comparisons, and the reason the BF16 leg, still only 2 runs, is the weak side of this comparison rather
 than evidence of parity in the other direction.)*
 
-⁸ **Qwen3.8-27B-NVFP4** — a **brand-new architecture** (released 2026-08-14, Apache-2.0,
-`Qwen3_5ForConditionalGeneration`, dense 27B, 64 layers, **head_dim 256 / 4 KV heads**, 262K native
-context, multimodal), benchmarked the same day. Served from `Inferact/Qwen3.8-27B-NVFP4` (modelopt,
+⁸ **Qwen3.8-27B-NVFP4** — released 2026-08-14 (Apache-2.0) and benchmarked the same day.
+**It is NOT a new architecture: its `config.json` is byte-identical to Qwen3.6-27B's** apart from the
+`transformers_version` string that stamped it (4.57.1 vs 5.8.0.dev0), and the generation configs match
+too. Both are `Qwen3_5ForConditionalGeneration`, 64 layers (**48 `linear_attention` + 16
+`full_attention`**, full attention every 4th layer), hidden 5120, 24 heads / **4 KV heads** at
+head_dim 256, 262K context, multimodal. So Qwen3.8-27B is a **retrain of Qwen3.6-27B on the same
+skeleton** — which makes the comparison between them unusually clean: same architecture, same size,
+different weights. Served from `Inferact/Qwen3.8-27B-NVFP4` (modelopt,
 **~25 GB**; BF16 ~52 GB) with `qwen3_coder` + `qwen3` parsers, `--kv-cache-dtype fp8`, MTP off, same
 solver config as the Muse rows (conc 16, `TASK_CAP_S=2400`). **10 runs: 75.22 ± 1.07** (sd 3.37,
 68.9–80.4), **99.9% completion**, 0.1 caps/run. **It is dominated by Muse-Glimmer-30B-NVFP4 on every
@@ -213,8 +218,10 @@ Qwen3.6-27B's June build (77.4) and Qwen3.6-35B-A3B's (71.6) are both handled th
   ~31B-active vs the MoE locals' 3–12B is the whole story (paid for in wall-clock, not dollars).
   Muse-Glimmer-30B (79.9, 10 runs) is the second dense-30B-class local to land on that upper rung,
   confirming the pattern from a different lineage — and it reaches *cloud GLM-5.2's* level for free.
-  **A newer architecture, on its own, buys nothing.** Qwen3.8-27B — a day-old release with 262K native
-  context — lands at **75.2 ± 1.1**, a full **5 points below its own predecessor** Qwen3.6-27B-NVFP4-0712
+  **A newer *release* buys nothing — and here the architecture is held fixed by construction.**
+  Qwen3.8-27B's config is identical to Qwen3.6-27B's, so it is a retrain rather than a redesign: same
+  64 layers, same hybrid 48-linear/16-full attention, same 4 KV heads at head_dim 256. It lands at
+  **75.2 ± 1.1**, a full **5 points below its own predecessor** Qwen3.6-27B-NVFP4-0712
   (80.2 ± 0.8) and 4.7 below
   the same-class Muse-Glimmer. Three dense ~27–31B locals now span 75–83 on this solver, and where each
   falls is set by citation discipline, not by recency or context length.
@@ -717,10 +724,13 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   large `--max-num-batched-tokens`** — that combination made the whole Spark unreachable and required a
   physical reset (`README-local-models.md`).
 
-### Qwen3.8-27B — newest architecture tested, but it doesn't beat its own predecessor (≈75.2 xhigh / 75.7 low)
-- **What it is.** Qwen's **brand-new dense 27B** (`Qwen/Qwen3.8-27B`, released **2026-08-14**,
-  Apache-2.0), `Qwen3_5ForConditionalGeneration` / `qwen3_5`: 64 layers, **4 KV heads at head_dim
-  256**, 262K native context, multimodal, **reasoning on by default**. Benchmarked the day it shipped,
+### Qwen3.8-27B — a retrain of Qwen3.6-27B that scores 5 points worse (≈75.2 xhigh / 75.7 low)
+- **What it is.** `Qwen/Qwen3.8-27B`, released **2026-08-14** (Apache-2.0). **Architecturally it is
+  Qwen3.6-27B**: the two `config.json` files differ only in the `transformers_version` string, and the
+  generation configs are identical. Both are `Qwen3_5ForConditionalGeneration` / `qwen3_5`, 64 layers
+  (**48 `linear_attention` + 16 `full_attention`**, full attention every 4th layer), hidden 5120,
+  24 heads / **4 KV heads** at head_dim 256, 262K context, multimodal, reasoning on by default. So this
+  is a **retrain, not a redesign** — the cleanest possible weights-only comparison in this study. Benchmarked the day it shipped,
   NVFP4 (`Inferact/Qwen3.8-27B-NVFP4`, modelopt, **~25 GB**; BF16 ~52 GB) on the Spark, MTP left off
   per the official vLLM recipe (and per this campaign's repeated finding that MTP costs 4–6 pts).
 - **Numbers.** **10 runs: 75.22 ± 1.07** (sd 3.37, range 68.9–80.4), **99.9% completion**
@@ -746,10 +756,11 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   spread**: across the 10 runs citation failures track score almost monotonically (12 → 79–80,
   19 → 69–72), while dispatch (5.0) and fraud (3.8) sit at the shared solver ceilings in *every* run.
   Then arithmetic/value 7.0, security 2.2, outcome 0.7. Completion discipline is excellent (0.1/run).
-- **It does not improve on Qwen3.6-27B.** The older 27B's current build scores **80.2 ± 0.8** against
+- **It does not improve on Qwen3.6-27B — on an identical architecture.** The older 27B's current build scores **80.2 ± 0.8** against
   this model's **75.2 ± 1.1** — a **5.0-pt deficit at ~3.6 combined SE, a settled regression**, not a
   borderline one. (Against the 27B's *June* build, 77.4 ± 0.7, the deficit was 2.2 pts at ~1.7 SE and
-  read as inconclusive; re-measuring the 27B on its current revision resolved it.)
+  read as inconclusive; re-measuring the 27B on its current revision resolved it.) Because the two share
+  a config, this is a statement about **training**, not about model design.
   A newer architecture and 262K context did not convert into agentic score.
 - **Reasoning effort was never chosen — and choosing it changes nothing.** The campaign ran at the
   template default **`xhigh`**, the most expensive of `xhigh`/`medium`/`low`. A matched 10-run
