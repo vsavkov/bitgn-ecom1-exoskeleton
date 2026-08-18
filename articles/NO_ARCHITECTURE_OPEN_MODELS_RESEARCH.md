@@ -93,6 +93,7 @@ model does everything.
 | **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
 | **open (local)** | **Qwen-AgentWorld-35B-A3B-NVFP4** (world model, MoE)¹² | **66.4 ± 1.0** | 70.7 | 60.7 | 96% | 614 s | **$0 API²** |
 | **open (local)** | **deepseek-v4-flash** (q2, non-thinking; 1 Spark)⁵ | **63.4** | 67.7 | 61.3 | 82% | 375 s | $0 API² |
+| **open (local)** | **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (Mamba-2/MoE)¹³ | **60.9 ± 1.1** | 66.9 | 55.2 | 97% | 392 s | **$0 API²** |
 | **open (cloud)** | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | **56.2** | 60.2 | 53.8 | 99% | 11 s³ | $0 API² |
 | **open (local)** | **ECOM1-32B-NVFP4A16** (ECOM1-32B-BF16 quantized) | **54.6** | 57.2 | 51.8 | 98% | 50 s³ | $0 API² |
 | open (local) | gpt-oss-120b | 52.8 | — | — | 70% | 149 s | $0 API² |
@@ -212,6 +213,21 @@ benchmark **that claim holds up**. It is not competitive with the ~80 tier and i
 next-state-prediction reasoning traces are expensive), so it is not a recommended pick; but
 "cannot act" was simply false.
 
+¹³ **Nemotron-3.5-Lightning-30B-A3B-NVFP4** — NVIDIA's newest Spark-targeted release
+(`NemotronHForCausalLM`, hybrid **Mamba-2 + MoE**, 52 layers, **2 KV heads**, 128 experts / 6 active,
+30B total / 3B active, 1M context, 21.6 GB NVFP4). **10 runs: 60.89 ± 1.14** (sd 3.59, 55.2–66.9),
+97% completion, 0.0 caps, ~392 s/task at concurrency 16. **It lands 10 points *below* NVIDIA's older
+Nemotron-3-Super-120B-A12B (71.0)** and below every mid-field local — the second time an NVIDIA
+model has underperformed its Spark positioning here. Its distinguishing failure is
+**arithmetic/value at 16.9/run — the highest of any model in this study**, ahead of even
+gpt-5.4-mini's 14.7; citation (17.0) is merely typical by comparison. **Two caveats.** It was served
+on **vLLM v0.27.1** (the version NVIDIA's own recipe specifies) rather than the 0.26.1rc1 image the
+rest of the field uses. And it was run **without speculative decoding**: NVIDIA's Spark recipe pairs
+it with the 967M `-NVFP4-DSpark` *draft* checkpoint via `--speculative_config`, which was left off
+because speculative decoding measured as harmful on both Qwen3.6 sizes here (`README-MTP.md`) — so
+this is the model's own baseline, not the vendor's tuned configuration. KV was never a constraint:
+**253.88x concurrency** at 65536 ctx, the roomiest measured.
+
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 80.7, Qwen3.6-27B-NVFP4-0712 80.2 and Muse-Glimmer-30B-NVFP4 79.9 are a three-way tie at the top of local](images/leaderboard.svg)
 
 *The charts show **one row per model**: where a model has been measured in more than one build, the
@@ -269,15 +285,15 @@ Qwen3.6-27B's June build (77.4) and Qwen3.6-35B-A3B's (71.6) are both handled th
 Inverting the per-model view — *where does each failure class show up* (● frequent ≳5/run,
 ○ occasional 1–5/run, blank ≲1):
 
-| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q35B-0712 | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ | AgtWorld¹² |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | | ○ |
-| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ●● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● | ●● |
-| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | ○ | | ○ | ○ | ○ | |
-| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ● | ● | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● | ●● |
-| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | | | | ○ | | ○ | | | ○ | ○ | | | ○ | ○ |
-| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q35B-0712 | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ | AgtWorld¹² | Nemo3.5¹³ |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | | ○ | ○ |
+| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ●● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● | ●● | ●● |
+| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | ○ | | ○ | ○ | ○ | | ○ |
+| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ● | ● | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● | ●● | ●● |
+| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | | | | ○ | | ○ | | | ○ | ○ | | | ○ | ○ | ○ |
+| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
 \* Muse column = the 10 NVFP4 runs (citation 9.0/run, arithmetic 5.4, dispatch 4.9, fraud 3.6,
 completion 1.6, outcome 1.2, security 0.4). Its completion figure is **not** a `report_completion`
@@ -872,6 +888,33 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   and roughly 6 behind Muse-Glimmer/Qwen3.6-27B-0712 for a fraction of the wall-clock. **Pin
   `--revision 739af1e7`** and keep **MTP off** (it costs this model 6.47 pts).
 
+### Nemotron-3.5-Lightning-30B-A3B — NVIDIA's newest Spark model, and it loses to its own predecessor (≈60.9)
+- **What it is.** `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4` (21.6 GB) — hybrid
+  **Mamba-2 + MoE**, `NemotronHForCausalLM`, 52 layers, **2 KV heads** at head_dim 128, 128 experts /
+  6 active, 30B total / **3B active**, **1M context**. NVIDIA ships a documented DGX Spark recipe for it.
+- **Numbers.** **10 runs: 60.89 ± 1.14** (sd 3.59, range 55.2–66.9), **97% completion**, **0.0
+  cap-timeouts**, ~392 s/task at concurrency 16, ~8 h for the campaign.
+- **It is 10 points below NVIDIA's older Nemotron-3-Super-120B-A12B (71.0)** and below every
+  mid-field local — GLM-4.5-Air (67.7), Gemma-4-26B-A4B (67.0), even the Qwen-AgentWorld *world
+  model* (66.4). That is the **second** NVIDIA release to underperform its Spark positioning here.
+- **Its failure is arithmetic, not citation.** **Arithmetic/value 16.9/run is the highest column in
+  this study** — above gpt-5.4-mini's 14.7, which was previously the outlier — while citation (17.0)
+  is unremarkable and completion is clean. Every other model measured here is citation-bound; this one
+  is not, which makes it the one genuine profile outlier in the matrix.
+- **KV is a non-issue.** 72.8 GiB → **253.88x concurrency** at 65536 ctx, the roomiest of any model
+  measured (AgentWorld 88.7x, Gemma-4-31B 2.5x). Concurrency never constrains this model.
+- **Two caveats on the configuration.** (1) Served on **vLLM v0.27.1**, the version NVIDIA's recipe
+  specifies, rather than the 0.26.1rc1 image the rest of the field runs on. (2) Run **without
+  speculative decoding**: NVIDIA's Spark recipe pairs it with the 967M `-NVFP4-DSpark` **draft**
+  checkpoint via `--speculative_config`, deliberately omitted because speculative decoding measured
+  as harmful on both Qwen3.6 sizes (`README-MTP.md`). So this is the model's own baseline rather than
+  the vendor's tuned setup — spec-dec would have to *raise* the score by 10 points to reach the older
+  Nemotron, which nothing in our MTP data suggests is plausible.
+- **Note on `-DSpark`.** It is **not** a Spark-optimised model, despite the name: it is a 967M draft
+  checkpoint for speculative decoding. The model to serve is the plain `-NVFP4` repo.
+- **Verdict.** **Not recommended.** Newer, smaller and far roomier on KV than Nemotron-3-Super, and
+  10 points worse. NVIDIA's Spark-targeted line has now been measured twice and lost twice.
+
 ### Nemotron-3-Super-120B-A12B — NVIDIA's "best Spark agent", doesn't win here (≈71.0)
 - **What it is.** NVIDIA's flagship agentic model and its **officially recommended best agent for the DGX
   Spark** (hybrid Latent-MoE: Mamba-2 + MoE, 120B total / 12B active, NVFP4). Served via the official
@@ -962,6 +1005,7 @@ for Gemma — the latter two inconclusive), and deleting them would leave those 
 
 | Qwen3.6-27B-NVFP4 (June rev `890bdef7`, NGC vLLM 26.05, **superseded**‡) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 (mean 77.38 ± 0.72) | 6 |
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
+| **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (vLLM v0.27.1, no spec-dec, conc 16) | `nemo35a`–`nemo35j` | 55.2–66.9 (mean 60.89 ± 1.14) | 10 |
 | **Qwen-AgentWorld-35B-A3B-NVFP4** (lovedheart NVFP4, world model, conc 16) | `awa`–`awj` | 60.7–70.7 (mean 66.40 ± 0.99) | 10 |
 | **Qwen3.6-35B-A3B-NVFP4-0712** (rev `739af1e7`, vLLM 0.26.1rc1, thinking, MoE, no-MTP, conc 8) | `q35b0712a`–`q35b0712j` | 70.2–77.6 (mean 73.78 ± 0.67) | 10 |
 | Qwen3.6-35B-A3B-NVFP4 (June rev `612d523c`, NGC 26.05, **superseded**‡) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 (mean 71.64 ± 1.77) | 6 |
