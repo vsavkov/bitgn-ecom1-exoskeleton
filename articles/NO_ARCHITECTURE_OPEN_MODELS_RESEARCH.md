@@ -91,6 +91,7 @@ model does everything.
 | **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
 | **open (local)** | **GLM-4.5-Air** | **67.7** | 69.2 | 66.0 | **100%** | 520 s | $0 API² |
 | **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
+| **open (local)** | **Qwen-AgentWorld-35B-A3B-NVFP4** (world model, MoE)¹² | **66.4 ± 1.0** | 70.7 | 60.7 | 96% | 614 s | **$0 API²** |
 | **open (local)** | **deepseek-v4-flash** (q2, non-thinking; 1 Spark)⁵ | **63.4** | 67.7 | 61.3 | 82% | 375 s | $0 API² |
 | **open (cloud)** | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | **56.2** | 60.2 | 53.8 | 99% | 11 s³ | $0 API² |
 | **open (local)** | **ECOM1-32B-NVFP4A16** (ECOM1-32B-BF16 quantized) | **54.6** | 57.2 | 51.8 | 98% | 50 s³ | $0 API² |
@@ -197,6 +198,20 @@ charted score comes from conc 8. Re-measuring at conc 4 on the current revision 
 has not been run. Serving analysis, including why conc 12 is unreachable on this model's hybrid
 attention, in `README-local-models.md`.
 
+¹² **Qwen-AgentWorld-35B-A3B-NVFP4** is a **language world model**, not an agent: it is trained
+(CPT → SFT → RL) to *predict the next environment state* given an agent's action, across seven
+interaction domains. This study previously listed it as **"considered, NOT benchmarked — it does not
+do function/tool calling, so it cannot drive the ECOM1 solver"**, inferred from Qwen's serve command
+omitting the tool flags. **That was wrong, and the correction is the interesting part.** Served on the
+`lovedheart` NVFP4 build (21.9 GB) with `qwen3_coder`/`qwen3` parsers it tool-calls cleanly and
+scores **66.40 ± 0.99** over 10 runs (sd 3.13, 60.7–70.7) — mid-field among locals, a shade under
+GLM-4.5-Air (67.7) and Gemma-4-26B-A4B (67.0), and far above the small-model floor (~40). Its own
+card claims world-model RL warm-up "transfers to multi-turn, tool-calling agentic tasks"; on this
+benchmark **that claim holds up**. It is not competitive with the ~80 tier and is slow
+(614 s/task, ~11 h for 10 runs at conc 16, 3.2 cap-timeouts/run, 96% completion — its long
+next-state-prediction reasoning traces are expensive), so it is not a recommended pick; but
+"cannot act" was simply false.
+
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 80.7, Qwen3.6-27B-NVFP4-0712 80.2 and Muse-Glimmer-30B-NVFP4 79.9 are a three-way tie at the top of local](images/leaderboard.svg)
 
 *The charts show **one row per model**: where a model has been measured in more than one build, the
@@ -254,15 +269,15 @@ Qwen3.6-27B's June build (77.4) and Qwen3.6-35B-A3B's (71.6) are both handled th
 Inverting the per-model view — *where does each failure class show up* (● frequent ≳5/run,
 ○ occasional 1–5/run, blank ≲1):
 
-| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q35B-0712 | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | |
-| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ●● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● |
-| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | ○ | | ○ | ○ | ○ |
-| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ● | ● | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● |
-| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | | | | ○ | | ○ | | | ○ | ○ | | | ○ |
-| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
-| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Error class | Instruct | Thinking | gpt-oss | GLM-Air | Gemma | Gemma31 | Q35B-0712 | ds-flash | ds-pro | 5.4-mini | gpt-5.5 | GLM-5.2 | Kimi | Nemo | Muse⁶ | Q38-xhi⁸ | Q38-low⁸ | Q27-0712⁹ | AgtWorld¹² |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Completion failure (no `report_completion`) | ● | ○ | ●● | | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | | | ○* | | | | ○ |
+| Citation / grounding (missing·extra·wrong ref) | ● | ● | ● | ● | ●● | ●● | ●● | ● | ○ | ● | ○ | ● | ● | ●● | ● | ●● | ●● | ● | ●● |
+| Security under-denial (obeys injection) | ● | ○ | | ○ | ○ | ○ | ○ | | | | | | | ○ | | ○ | ○ | ○ | |
+| Arithmetic / value (wrong count·amount·date) | ● | ○ | | ○ | ○ | ● | ● | | ○ | ● | ○ | ○ | ○ | ○ | ● | ● | ● | ● | ●● |
+| Outcome judgment (OK vs clarify vs unsupported) | ● | ○ | ○ | ○ | ○ | | | | ○ | | ○ | | | ○ | ○ | | | ○ | ○ |
+| Dispatch sub-optimal (shared solver ceiling) | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
+| Fraud detection | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ |
 
 \* Muse column = the 10 NVFP4 runs (citation 9.0/run, arithmetic 5.4, dispatch 4.9, fraud 3.6,
 completion 1.6, outcome 1.2, security 0.4). Its completion figure is **not** a `report_completion`
@@ -574,16 +589,33 @@ see whether a 284B / 13B-active MoE is viable self-hosted. It is — barely — 
   "reliably drives a tool-calling ops loop" are orthogonal; ECOM1 grades the latter, and Magistral fails it.
   **Left off the leaderboard** — ~12 measures the protocol failure, not the model's reasoning.
 
-### Qwen-AgentWorld-35B-A3B (Qwen) — considered, NOT benchmarked: a world model, not an agent
-A "language **world** model" — given an action + history it predicts the **next environment state** (7
-domains: MCP/Search/Terminal/SWE/Android/Web/OS); it does **not** tool-call (the official serve command has
-no tool-call parser). It's the *environment* half of an agent loop, not the agent, so it can't drive the
-ECOM1 solver (native tools + `report_completion`). Its strength is also moot here — a world model is for
-when you *can't* query the real environment, but ECOM1's `/proc`·`/bin`·`/docs` is available and cheap. The
-only direct path — a text-ReAct loop using it as a plain LLM — would underperform, since it predicts outputs
-rather than choosing actions. **Not run.** Serving + the three (non-competitive) usage options are in
-`README-local-models.md`. *(Companion lesson to Magistral: a model strong in a different shape —
-world-modeling — doesn't transfer to agentic-ops solving.)*
+### Qwen-AgentWorld-35B-A3B — a world model that *can* act (≈66.4). Previously written off in error.
+- **What it is.** `Qwen/Qwen-AgentWorld-35B-A3B` — a **language world model**: given an agent's action
+  and interaction history it predicts the **next environment state**, across seven domains (MCP,
+  Search, Terminal, SWE, Android, Web, OS). Trained CPT → SFT → RL with environment modelling as the
+  objective from CPT onward. 35B total / **3B active** MoE, `Qwen3_5MoeForConditionalGeneration`,
+  **2 KV heads**, 256 experts. Benchmarked on the `lovedheart` NVFP4 build (**21.9 GB**).
+- **This study previously ruled it out without testing it.** The earlier entry read *"it does NOT do
+  function/tool calling … so it cannot drive the ECOM1 solver"*, inferred from Qwen's serve command
+  omitting `--tool-call-parser`/`--enable-auto-tool-choice`. **A five-minute probe refuted it**: with
+  `qwen3_coder`/`qwen3` parsers it returns `finish_reason: tool_calls` with well-formed arguments.
+  The tool syntax is in its chat template, inherited from `Qwen3.5-35B-A3B-Base`.
+- **Numbers.** **10 runs: 66.40 ± 0.99** (sd 3.13, range 60.7–70.7), 96% completion,
+  3.2 cap-timeouts/run, ~614 s/task, ~11 h for the campaign at concurrency 16.
+- **It genuinely acts.** In the initial smoke every failure was a *grounding-reference* error — it
+  emitted the right outcome tokens (`FALSE(0)`, `OUTCOME_NONE_CLARIFICATION`, `[QTY:2]`), reasoned
+  correctly about an exclusion, and produced a dispatch plan delivering 10/10. Not one instance of the
+  predicted world-model failure (narrating environment responses instead of acting).
+- **Where it stumbles.** Citation **20.2/run** — the highest of any model here — then arithmetic/value
+  11.9, completion 4.0 and 3.2 cap-timeouts/run. The last two are the same thing: its
+  next-state-prediction reasoning traces are long, so tasks run out of clock.
+- **Qwen's transfer claim holds.** The model card says world-model RL warm-up "transfers to
+  multi-turn, tool-calling agentic tasks". A model never trained to *choose* actions scoring 66.4 at
+  *taking* them is real evidence for that, and the most interesting thing this entry contributes.
+- **Verdict.** **Not a recommended pick** — 14 points below the ~80 tier and ~11 h per 10-run campaign
+  — but a legitimate mid-field local, level with GLM-4.5-Air and Gemma-4-26B-A4B. **The lesson is
+  methodological: this was ruled out on a plausible inference from a vendor's serve command, and the
+  inference was wrong. Probe before ruling out; it costs minutes.**
 
 ### Olmo 3.1 family (AllenAI) — considered, ruled out: no native tool-calling
 AllenAI's Olmo 3.1 open-*science* models were checked as solver candidates and **ruled out for lack of
@@ -930,6 +962,7 @@ for Gemma — the latter two inconclusive), and deleting them would leave those 
 
 | Qwen3.6-27B-NVFP4 (June rev `890bdef7`, NGC vLLM 26.05, **superseded**‡) | `q27nomtp1`–`q27nomtp6` | 78.4, 77.0, 74.3, 79.2, 76.8, 78.6 (mean 77.38 ± 0.72) | 6 |
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
+| **Qwen-AgentWorld-35B-A3B-NVFP4** (lovedheart NVFP4, world model, conc 16) | `awa`–`awj` | 60.7–70.7 (mean 66.40 ± 0.99) | 10 |
 | **Qwen3.6-35B-A3B-NVFP4-0712** (rev `739af1e7`, vLLM 0.26.1rc1, thinking, MoE, no-MTP, conc 8) | `q35b0712a`–`q35b0712j` | 70.2–77.6 (mean 73.78 ± 0.67) | 10 |
 | Qwen3.6-35B-A3B-NVFP4 (June rev `612d523c`, NGC 26.05, **superseded**‡) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 (mean 71.64 ± 1.77) | 6 |
 | Qwen3.6-35B-A3B-NVFP4 (thinking, MoE, MTP — worse) | `q36mprod1`–`q36mprod3` | 63.9, 63.2, 68.4 | 3 |
