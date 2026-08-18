@@ -64,6 +64,15 @@ model does everything.
   earlier models (Qwen3 Instruct/Thinking, gpt-oss) ran on fewer deterministic aids than the later
   ones (GLM, DeepSeek). The aids are worth a few points, so the *earliest* models are mildly
   understated — but the ranking gaps are far larger than that.
+- **Solver aids are not uniform across local models — a real comparability caveat.** The
+  `LOCAL_LLM_REASONING` env var sets `model.reasoning`, and `agent.ts` uses it to *withhold* three
+  aids from models marked as reasoning: the `ACTION_BINARY_GUIDE` system block (how to invoke `/bin/*`
+  via `exec`), the `localModel` re-prompt/salvage crutches, and the injection-security guide. It does
+  **not** enable reasoning — that is server-side, via the chat template and `--reasoning-parser`.
+  **Aids ON** (flag unset, auto-detects false): Muse-Glimmer, Qwen3.8-27B, Qwen-AgentWorld,
+  Nemotron-3.5. **Aids OFF** (`=1`): the Qwen3.6 pair, Gemma-4-31B, Olmo. Scores across those two
+  groups are therefore not strictly like-for-like; the aids-ON group is receiving scaffolding the
+  aids-OFF group is not. Details and a worked example in `README-local-models.md`.
 - **Provider/compat.** Local models served via vLLM on a DGX Spark (NVFP4/MXFP4/FP8); cloud models
   via their native endpoints (`openai-codex`, DeepSeek). Tool-calling = native function calling
   (`--enable-auto-tool-choice`); reasoning models reason natively. Provider pinned per model id for
