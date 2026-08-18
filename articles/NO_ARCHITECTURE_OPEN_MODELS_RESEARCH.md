@@ -75,7 +75,8 @@ model does everything.
 
 | Class | Model | Score avg | max | min | Completion | Time/task | Cost/run |
 |---|---|---:|---:|---:|---:|---:|---:|
-| baseline (cloud) | **gpt-5.5** (low) | 90.8¹ | — | — | 98% | 25 s | **$10.04** |
+| baseline (cloud) | **gpt-5.5** | **94.5 ± 0.3**¹ | 97.2 | 92.1 | **100%** | 31 s | ~$10¹ |
+| baseline (cloud) | gpt-5.5 (**low** effort) | 90.8¹ | — | — | 98% | 25 s | **$10.04** |
 | **open (cloud)** | **deepseek-v4-pro** | **89.6** | 90.0 | 89.3 | 99% | 28 s | **$0.46** |
 | **open (cloud)** | **Kimi K2.6** (Moonshot) | **86.6 ± 1.0** | 90.0 | 79.6 | 99% | 79 s | $2.62 |
 | open (cloud) | **GLM-5.2** (Together) | **81.5 ± 1.3** | 88.9 | 74.7 | 99% | 43 s | $3.63 |
@@ -102,8 +103,18 @@ model does everything.
 | open (local) | Qwen3-Next-80B-A3B-Instruct | 40.6 | 43.1 | 36.7 | 87% | 210 s | $0 API² |
 | **open (local)** | **ECOM1-8B-A1B-BF16** (same weights, on-device; GB10) | **37.5** | 42.0 | 33.0 | 92% | 50 s⁴ | $0 API² |
 
-¹ gpt-5.5's measured cost-probe run was at `low` effort (90.8); at higher effort the reference is
-~94.8. ² Local = free per run on owned hardware, but ~40–110 min wall-clock/run (bandwidth-bound).
+¹ **gpt-5.5's headline is now a 29-run mean, not a single run.** `gpt55full1`–`gpt55full30`
+(2026-06-29/30, `MAX_STEPS=30`) were executed to capture FULL_TRANSCRIPT teacher traces for the
+Olmo-3.1 and LFM2.5 SFT work, and they double as by far the best-sampled baseline in this study:
+**94.45 ± 0.25** (sd 1.33, range 92.1–97.2), **99.7% completion**, ~31 s/task, n=29. Every other row
+here rests on 3–10 runs with sem 0.7–2.0, so this is the one figure whose uncertainty is negligible.
+It supersedes the previously quoted **94.8**, which was a *single* run (`gen29-prod`, 94.80) sitting
+1.4 sem above the campaign mean — not a contradiction, just a less-measured estimate. The separate
+**90.8** row is a different operating point: the one-off **`low`-effort cost probe**, retained
+because it is the run with cost data attached ($10.04). *(A tenth-of-a-campaign caveat: an earlier
+batch of ten runs launched in parallel on 2026-06-29 scored 55–90 and is excluded — codex quota
+throttling degraded them mid-run, and every one was re-run sequentially under the same label. The
+29 above are those clean sequential runs. `gpt55full30` never produced a valid record.)* ² Local = free per run on owned hardware, but ~40–110 min wall-clock/run (bandwidth-bound).
 ³ The two **ECOM1-32B** rows are *our fine-tune* of Olmo-3.1-32B-Think (see the Olmo-family section below), not raw open models: **BF16** measured on a rented Modal H200 (11 s/task); **NVFP4A16** on the owned GB10 Spark (50 s/task, ~30 min/run with `TASK_CAP_S=300`). Both `bitgn/ecom1-prod`; the ~1.6-pt BF16→NVFP4A16 gap is the quantization tax.
 ⁴ The two **ECOM1-8B-A1B-BF16** rows are our LoRA SFT of **`LiquidAI/LFM2.5-8B-A1B`** (Liquid AI's 8.3B-total / **1.5B-active** on-device MoE) — the *same* gpt-5.5 ECOM1 trajectories and the *same* imposed ChatML+Hermes pipeline as ECOM1-32B (`LORA_TARGETS=all-linear` for the MoE, r=32, 1 epoch, BF16 merge; `scripts/train_modal.py --base LiquidAI/LFM2.5-8B-A1B`). **Raw** LFM2.5 scored ~7% (it wouldn't commit to tool calls); the SFT fixed exactly that → 44. **Same BF16 weights, two boxes:** a rented **H100** (44.0, 3-run) and the owned **DGX Spark GB10** (37.5, 10-run) — the ~6.5-pt gap is the serving stack (Blackwell + vLLM 26.05 vs Hopper), not capability. Because SFT taught the Hermes format, serve with the packaged `--tool-call-parser hermes` (no recovery). See `README-LFM2.5-8B-A1B.md`.
 
@@ -270,7 +281,7 @@ Qwen3.6-27B's June build (77.4) and Qwen3.6-35B-A3B's (71.6) are both handled th
 
 | Scenario | Pick | Why |
 |---|---|---|
-| Max quality | gpt-5.5 (94.8) | Highest, if the ~$10/run is fine. |
+| Max quality | gpt-5.5 (**94.5 ± 0.3**, 29 runs) | Highest, if the ~$10/run is fine. |
 | **Best quality / dollar** | **deepseek-v4-pro** | ~90 at $0.46/run — ~22× cheaper than gpt-5.5 for ~5 fewer points. |
 | Cheap + fast cloud | deepseek-v4-flash | 77, ~26 s/task, $0.17/run. |
 | **Local — best quality (tied)** | **Gemma-4-31B-IT-NVFP4-0713** (thinking) | **80.7 ± 0.7** (10 runs), $0 API, data stays on the box — beats gpt-5.4-mini & deepseek-flash, level with cloud GLM-5.2. **Statistically tied with Qwen3.6-27B-0712 (80.2) and Muse-Glimmer (79.9)**, both far faster per run. Slow: ~528 s/task, ~2 h/run. |
@@ -971,8 +982,8 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   of completing), under-denies injections (10/run), miscounts, mis-cites, doesn't reliably finish.
 - **Verdict.** Not viable; useful only as the lower bound and to quantify the solver's contribution.
 
-### Baselines — gpt-5.5 (94.8) & gpt-5.4-mini (71.8)
-- **gpt-5.5** (cloud): 94.8 reference (90.8 at `low`), 98–100% completion, ~$10/run. The ceiling;
+### Baselines — gpt-5.5 (94.5 ± 0.3, 29 runs) & gpt-5.4-mini (71.8)
+- **gpt-5.5** (cloud): **94.5 ± 0.3** over 29 runs (90.8 at `low`), 99.7% completion, ~$10/run. The ceiling;
   its residual is dispatch/fraud — the same structural buckets, just smaller. The premium buys the
   last ~5 pts over deepseek-pro.
 - **gpt-5.4-mini** (cloud, xhigh): 71.8 ± 1.0 (10 runs), ~$3.64/run. Strong on **security** (0.8
@@ -988,6 +999,7 @@ branch `local-gen1` (gen1–14). Cost via the gated `COST_PROBE` in `src/agent.t
 
 | Model | Records (label) | Score(s) | Runs |
 |---|---|---|---|
+| **gpt-5.5** (baseline; FULL_TRANSCRIPT teacher-capture campaign) | `gpt55full1`–`gpt55full29` | 92.1–97.2 (mean 94.45 ± 0.25) | 29 |
 | deepseek-v4-pro | `dspro1`, `dspro2` | 89.3, 90.0 | 2 |
 | **Kimi K2.6** (Moonshot, `kimi-k2.6`) | `kimiprod1`–`kimiprod10` | 79.6–90.0 (mean 86.6, $2.62/run) | 10 |
 | GLM-5.2 (Together, `zai-org/GLM-5.2`) | `glm52tgprod1`–`glm52tgprod10` | 74.7–88.9 (mean 81.5, $3.63/run) | 10 |
