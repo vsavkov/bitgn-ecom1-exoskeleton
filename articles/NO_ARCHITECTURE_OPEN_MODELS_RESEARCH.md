@@ -908,8 +908,12 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   speculative decoding**: NVIDIA's Spark recipe pairs it with the 967M `-NVFP4-DSpark` **draft**
   checkpoint via `--speculative_config`, deliberately omitted because speculative decoding measured
   as harmful on both Qwen3.6 sizes (`README-MTP.md`). So this is the model's own baseline rather than
-  the vendor's tuned setup — spec-dec would have to *raise* the score by 10 points to reach the older
-  Nemotron, which nothing in our MTP data suggests is plausible.
+  the vendor's tuned setup. **That omission cannot explain the result**: speculative decoding is a
+  *decode-speed* mechanism, provably output-equivalent when done exactly — its best case is
+  score-neutral — and where we have measured it, it was worse than neutral (−4.17 and −6.47 on the
+  two Qwen3.6 sizes). It is also not what this model needs: it had **0.0 cap-timeouts**, so nothing
+  was lost to running out of clock. *(Not measured on this model specifically — the MTP figures are
+  Qwen heads, a different implementation.)*
 - **Note on `-DSpark`.** It is **not** a Spark-optimised model, despite the name: it is a 967M draft
   checkpoint for speculative decoding. The model to serve is the plain `-NVFP4` repo.
 - **Verdict.** **Not recommended.** Newer, smaller and far roomier on KV than Nemotron-3-Super, and
