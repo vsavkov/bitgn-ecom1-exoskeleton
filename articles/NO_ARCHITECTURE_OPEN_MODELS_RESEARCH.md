@@ -75,8 +75,7 @@ model does everything.
 
 | Class | Model | Score avg | max | min | Completion | Time/task | Cost/run |
 |---|---|---:|---:|---:|---:|---:|---:|
-| baseline (cloud) | **gpt-5.5** | **94.5 ± 0.3**¹ | 97.2 | 92.1 | **100%** | 31 s | ~$10¹ |
-| baseline (cloud) | gpt-5.5 (**low** effort) | 90.8¹ | — | — | 98% | 25 s | **$10.04** |
+| baseline (cloud) | **gpt-5.5** (low) | **94.5 ± 0.3**¹ | 97.2 | 92.1 | **100%** | 31 s | **~$10**¹ |
 | **open (cloud)** | **deepseek-v4-pro** | **89.6** | 90.0 | 89.3 | 99% | 28 s | **$0.46** |
 | **open (cloud)** | **Kimi K2.6** (Moonshot) | **86.6 ± 1.0** | 90.0 | 79.6 | 99% | 79 s | $2.62 |
 | open (cloud) | **GLM-5.2** (Together) | **81.5 ± 1.3** | 88.9 | 74.7 | 99% | 43 s | $3.63 |
@@ -109,9 +108,10 @@ Olmo-3.1 and LFM2.5 SFT work, and they double as by far the best-sampled baselin
 **94.45 ± 0.25** (sd 1.33, range 92.1–97.2), **99.7% completion**, ~31 s/task, n=29. Every other row
 here rests on 3–10 runs with sem 0.7–2.0, so this is the one figure whose uncertainty is negligible.
 It supersedes the previously quoted **94.8**, which was a *single* run (`gen29-prod`, 94.80) sitting
-1.4 sem above the campaign mean — not a contradiction, just a less-measured estimate. The separate
-**90.8** row is a different operating point: the one-off **`low`-effort cost probe**, retained
-because it is the run with cost data attached ($10.04). *(A tenth-of-a-campaign caveat: an earlier
+1.4 sem above the campaign mean — not a contradiction, just a less-measured estimate. All 29 ran at **`low`** reasoning effort. **On cost:** these runs were not cost-probed
+individually, so **~$10/run** is carried over from the one gpt-5.5 cost probe that was
+($10.04) — taken at the same `low` effort, so it transfers directly, but treat it as the right
+order of magnitude rather than a measurement of these 29. *(A tenth-of-a-campaign caveat: an earlier
 batch of ten runs launched in parallel on 2026-06-29 scored 55–90 and is excluded — codex quota
 throttling degraded them mid-run, and every one was re-run sequentially under the same label. The
 29 above are those clean sequential runs. `gpt55full30` never produced a valid record.)* ² Local = free per run on owned hardware, but ~40–110 min wall-clock/run (bandwidth-bound).
@@ -281,7 +281,7 @@ Qwen3.6-27B's June build (77.4) and Qwen3.6-35B-A3B's (71.6) are both handled th
 
 | Scenario | Pick | Why |
 |---|---|---|
-| Max quality | gpt-5.5 (**94.5 ± 0.3**, 29 runs) | Highest, if the ~$10/run is fine. |
+| Max quality | gpt-5.5 (**94.5 ± 0.3**, 29 runs at `low`) | Highest, if the ~$10/run is fine. |
 | **Best quality / dollar** | **deepseek-v4-pro** | ~90 at $0.46/run — ~22× cheaper than gpt-5.5 for ~5 fewer points. |
 | Cheap + fast cloud | deepseek-v4-flash | 77, ~26 s/task, $0.17/run. |
 | **Local — best quality (tied)** | **Gemma-4-31B-IT-NVFP4-0713** (thinking) | **80.7 ± 0.7** (10 runs), $0 API, data stays on the box — beats gpt-5.4-mini & deepseek-flash, level with cloud GLM-5.2. **Statistically tied with Qwen3.6-27B-0712 (80.2) and Muse-Glimmer (79.9)**, both far faster per run. Slow: ~528 s/task, ~2 h/run. |
@@ -349,13 +349,17 @@ min-cost routing isn't profit-optimal; that's architecture, not model.
 
 | Model | Cost/run | Driver | Score |
 |---|---:|---|---:|
-| gpt-5.5 (low) | **$10.04** | input ($7.07) — tiny output at low effort | 90.8 |
+| gpt-5.5 (low, **cost probe**) | **$10.04** | input ($7.07) — tiny output at low effort | 90.8† |
 | gpt-5.4-mini (xhigh) | **$3.64** | **output ($2.35)** — xhigh = 9.5× the reasoning tokens | 71.8 |
 | GLM-5.2 (Together) | **$3.63** | $4.40/M output (reasoning) — ~price of gpt-5.4-mini, but deepseek-pro beats it on both | 81.5 |
 | Kimi K2.6 (Moonshot) | **$2.62** | $4.00/M output (reasoning) — 2nd-best cloud; beats GLM-5.2 on score *and* cost | 86.6 |
 | deepseek-v4-pro | **$0.46** | output (reasoning) at $0.87/M | 89.6 |
 | deepseek-v4-flash | **$0.17** | $0.28/M output | 77.1 |
 | local (Qwen3 / gpt-oss / GLM) | **$0 API** | owned DGX Spark; ~40–110 min/run | 40–68 |
+
+† This is the single cost-probe run, kept here because it is the one gpt-5.5 run with
+measured spend. It is **not** the study's gpt-5.5 score — that is the 29-run **94.5 ± 0.3** (also at
+`low`; the probe was an earlier solver generation).
 
 Why "cheap tokens ≠ cheap runs," and the inverse:
 - **gpt-5.5 at `low` is input-bound**: 1.4M uncached input @ $5/M dominates; prompt-caching (2.65M
@@ -982,8 +986,8 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   of completing), under-denies injections (10/run), miscounts, mis-cites, doesn't reliably finish.
 - **Verdict.** Not viable; useful only as the lower bound and to quantify the solver's contribution.
 
-### Baselines — gpt-5.5 (94.5 ± 0.3, 29 runs) & gpt-5.4-mini (71.8)
-- **gpt-5.5** (cloud): **94.5 ± 0.3** over 29 runs (90.8 at `low`), 99.7% completion, ~$10/run. The ceiling;
+### Baselines — gpt-5.5 (94.5 ± 0.3, 29 runs at `low`) & gpt-5.4-mini (71.8)
+- **gpt-5.5** (cloud, `low` effort): **94.5 ± 0.3** over 29 runs, 99.7% completion, ~$10/run. The ceiling;
   its residual is dispatch/fraud — the same structural buckets, just smaller. The premium buys the
   last ~5 pts over deepseek-pro.
 - **gpt-5.4-mini** (cloud, xhigh): 71.8 ± 1.0 (10 runs), ~$3.64/run. Strong on **security** (0.8
