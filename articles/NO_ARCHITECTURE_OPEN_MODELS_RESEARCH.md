@@ -821,9 +821,14 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   serve it. At the model's native 262K context a *single* sequence would need ~68 GB, so the default
   full-context serve is not viable on a 128 GB box. At `--max-model-len 65536 --kv-cache-dtype fp8`
   vLLM reports **79.0 GiB KV = 2,252,800 tokens → 34.4× concurrency** (12.1× without the fp8 KV).
-- **Throughput.** ~8.0 tok/s/stream decode at conc 16, aggregate **71.6 / 127.6 / 208.3 tok/s** at conc
-  8/16/32 — about **2× the BF16 build** (33.5 / 63.1). Healthy, but *below* Muse-Glimmer-30B-NVFP4's
-  194/365 at conc 16/32, which is why its runs come in at ~46 min despite a similar nominal size.
+- **Throughput, and the gap between probe and campaign.** The *peak synthetic probe* gives ~8.0
+  tok/s/stream decode at conc 16, aggregate **71.6 / 127.6 / 208.3 tok/s** at conc 8/16/32 — about
+  **2× the BF16 build** (33.5 / 63.1). *Sustained under real campaign load it is 12–23% lower*:
+  **62.9** at conc 8, **98.3** at conc 16, **6.14 tok/s/stream**. Neither figure is wrong — the probe
+  keeps every stream decoding continuously, while a benchmark run interleaves prefill with decode and
+  spends its head and tail at low occupancy. **Plan capacity from the sustained numbers**; sizing from
+  127.6 leaves you ~25% short. Either way it sits *below* Muse-Glimmer-30B-NVFP4's 194/365 at conc
+  16/32, which is why its runs come in at ~46 min despite a similar nominal size (`README-tps.md`).
 - **Where it stumbles.** **Citation 15.5/run is the wall, and it is the whole story of this model's
   spread**: across the 10 runs citation failures track score almost monotonically (12 → 79–80,
   19 → 69–72), while dispatch (5.0) and fraud (3.8) sit at the shared solver ceilings in *every* run.
