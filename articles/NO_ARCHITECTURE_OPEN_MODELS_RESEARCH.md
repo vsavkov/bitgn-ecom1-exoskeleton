@@ -98,6 +98,7 @@ model does everything.
 | baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 79.3 | 67.7 | 92% | 69 s | $3.64 |
 | **open (local)** | **Qwen3.6-35B-A3B-NVFP4-0712** (thinking, MoE, no-MTP)¹⁰ | **73.8 ± 0.7** | 77.6 | 70.2 | 98% | **106 s** | **$0 API²** |
 | **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
+| **open (local)** | **Laguna-S-2.1-NVFP4** (poolside, 117.6B-A8.5B MoE, no spec-dec)¹⁴ | **69.7 ± 0.9** | 72.9 | 64.8 | 94% | 842 s | **$0 API²** |
 | **open (local)** | **GLM-4.5-Air** | **67.7** | 69.2 | 66.0 | **100%** | 520 s | $0 API² |
 | **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
 | **open (local)** | **Qwen-AgentWorld-35B-A3B-NVFP4** (world model, MoE)¹² | **66.4 ± 1.0** | 70.7 | 60.7 | 96% | 614 s | **$0 API²** |
@@ -247,6 +248,19 @@ it with the 967M `-NVFP4-DSpark` *draft* checkpoint via `--speculative_config`, 
 because speculative decoding measured as harmful on both Qwen3.6 sizes here (`README-MTP.md`) — so
 this is the model's own baseline, not the vendor's tuned configuration. KV was never a constraint:
 **253.88x concurrency** at 65536 ctx, the roomiest measured.
+
+¹⁴ **Laguna-S-2.1-NVFP4** — poolside's open-weight release of 2026-07-21 (OpenMDW-1.1,
+`LagunaForCausalLM`, 117.6B total / **8.5B active** MoE, 256 experts + 1 shared at top-10, 48 layers
+of which 36 use a **512-token sliding window**, 8 KV heads at head_dim 128, 1M context via YaRN).
+**10 runs: 69.66 ± 0.89** (sd 2.82, 64.8–72.9), 94% completion, ~842 s/task at concurrency 7, zero
+empty answers across 1000 trials. Served on **vLLM 0.27.1** with the `poolside_v1` tool-call and
+reasoning parsers, ctx 32768, `--gpu-memory-utilization 0.88`, **no speculative decoding** (the
+separate `-DFlash` draft checkpoint was omitted, consistent with the MTP result in `README-MTP.md`).
+**The NVFP4 checkpoint measures 99.7 GB on disk, not the ~71 GB the model card states** — the
+quantization `ignore` list leaves attention, `lm_head`, all shared experts, layer 0's MLP and every
+expert in layers 40–47 in BF16 — which is why utilisation rather than context length is the
+concurrency knob on a 128 GB box. Its two dominant losses are the wall-clock (5.3 cap-timeouts/run,
+5.2 points) and a **0.00 mean on OCR-crosslist export tasks**, an operation gpt-5.5 solves at 0.97.
 
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 80.7, Qwen3.6-27B-NVFP4-0712 80.2 and Muse-Glimmer-30B-NVFP4 79.9 are a three-way tie at the top of local](images/leaderboard.svg)
 
@@ -966,6 +980,44 @@ Qwen3.6-27B at 77.4, the June build current at the time). Full recipe + both mea
   and faster, the Qwen3.6-27B is +9 and ~2× faster. NVIDIA's "best Spark agent" claim rests on different
   benchmarks than grounding-heavy ops.
 
+### Laguna-S-2.1 — the West's "most capable open-weight model", mid-field here (≈69.7)
+
+poolside released **Laguna S 2.1** on 2026-07-21 under OpenMDW-1.1 — 117.6B total / 8.5B active MoE
+(256 experts + 1 shared, top-10), 48 layers of which **36 use a 512-token sliding window**, 1M
+context, marketed as the West's most capable open-weight model and explicitly optimised down to a
+single DGX Spark. On this benchmark it scores **69.66 ± 0.89** over 10 runs (64.8–72.9, 94%
+completion, ~842 s/task) — between Qwen-AgentWorld (66.4) and Qwen3.6-35B-A3B (73.8), and **11 points
+below** Gemma-4-31B and Qwen3.6-27B on the same box. It is also the slowest arm in the study at
+~3.4 h/run.
+
+**The checkpoint is 99.7 GB, not the ~71 GB the model card states.** Its `quantization_config`
+`ignore` list leaves attention, `lm_head`, every shared expert, layer 0's MLP and **all experts in
+layers 40–47** in BF16; parameter arithmetic off `config.json` independently predicts ~92.6 GB, which
+matches the measurement. Coverage quoting ~59 GB is further off still. This is not pedantry — it
+decides whether the model is serveable: 92.9 GiB of weights inside 128 GB leaves KV as a thin
+residual, and **`--gpu-memory-utilization`, not context length, becomes the concurrency knob**
+(0.85 → 0.88 takes headroom 4.2× → 7.7×, because three points of utilisation is ~3.6 GB straight into
+a cache that only had ~4.5). Check the files, not the card.
+
+**Speculative decoding left off.** poolside pairs the model with a separate `-DFlash` draft
+checkpoint. We omitted it, consistent with every other arm here: MTP cost 4.17 points on Qwen3.6-27B
+and 6.47 on Qwen3.6-35B-A3B, both statistically real. Independent reports put DFlash acceptance at
+0–15% on this hardware against a claimed 2.9–3.1 tokens per step, so the vendor's own headline decode
+figures do not reproduce either.
+
+**Where it loses.** Two failures dominate, and both are worth more than any serving change we made.
+**A quarter of its losses are the clock**: 5.3 tasks per run exhaust a 3600 s cap, costing 5.2 points,
+because at conc 7 each stream decodes ~7 tok/s. And it scores **exactly 0.00 on every OCR-crosslist
+task** (~3.9 per run) — an operation gpt-5.5 solves at 0.97 and Qwen3.8-27B at 0.84. The instructive
+part is that its finished attempts fail too: it reads the spec, writes a well-formed 13-column TSV
+with computed quantities, verifies it, and cites correctly — and the content is still wrong. Giving it
+more clock would only convert timeouts into wrong files.
+
+**Verdict.** Serving is solved and stable — zero empty answers across 1000 trials — but the score is
+mid-field and the wall-clock is the worst here. On this box, a 31B dense model beats a 118B MoE by 11
+points at half the runtime. **Parameter count did not transfer to agentic ability**, which is the same
+lesson this study keeps finding from the other direction.
+
 ### gpt-oss-120b — capable but stalls (≈52.8)
 - **What it is.** OpenAI open-weight 120B/5.1B-active MoE, MXFP4, harmony format, on the Spark.
 - **Numbers.** 1 run: 52.8, **70% completion**, ~149 s/task, $0 API.
@@ -1041,6 +1093,7 @@ for Gemma — the latter two inconclusive), and deleting them would leave those 
 | Qwen3.6-27B-NVFP4 (thinking, MTP — worse) | `q36prod1`–`q36prod3` | 72.8, 74.2, 72.6 | 3 |
 | **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (vLLM v0.27.1, no spec-dec, conc 16) | `nemo35a`–`nemo35j` | 55.2–66.9 (mean 60.89 ± 1.14) | 10 |
 | **Qwen-AgentWorld-35B-A3B-NVFP4** (lovedheart NVFP4, world model, conc 16) | `awa`–`awj` | 60.7–70.7 (mean 66.40 ± 0.99) | 10 |
+| **Laguna-S-2.1-NVFP4** (poolside, vLLM 0.27.1, no spec-dec, ctx 32768, util 0.88, conc 7) | `laguna04-01`–`laguna04-10` | 64.8–72.9 (mean 69.66 ± 0.89) | 10 |
 | **Qwen3.6-35B-A3B-NVFP4-0712** (rev `739af1e7`, vLLM 0.26.1rc1, thinking, MoE, no-MTP, conc 8) | `q35b0712a`–`q35b0712j` | 70.2–77.6 (mean 73.78 ± 0.67) | 10 |
 | Qwen3.6-35B-A3B-NVFP4 (June rev `612d523c`, NGC 26.05, **superseded**‡) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 (mean 71.64 ± 1.77) | 6 |
 | Qwen3.6-35B-A3B-NVFP4 (thinking, MoE, MTP — worse) | `q36mprod1`–`q36mprod3` | 63.9, 63.2, 68.4 | 3 |
