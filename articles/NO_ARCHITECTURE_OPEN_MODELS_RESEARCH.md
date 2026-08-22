@@ -80,37 +80,94 @@ model does everything.
 
 ## Key results
 
-**Leaderboard** (open models ranked by avg score; baselines for reference):
+**Leaderboard** (open models ranked by avg score; baselines for reference). Cost is in
+[Cost](#cost-cloud-only) and spread/completion in [Spread and completion](#spread-and-completion),
+so this table stays readable:
 
-| Class | Model | Score avg | max | min | Completion | Time/task | Cost/run |
-|---|---|---:|---:|---:|---:|---:|---:|
-| baseline (cloud) | **gpt-5.5** (low) | **94.5 ± 0.3**¹ | 97.2 | 92.1 | **100%** | 31 s | **~$10**¹ |
-| **open (cloud)** | **deepseek-v4-pro** | **89.6** | 90.0 | 89.3 | 99% | 28 s | **$0.46** |
-| **open (cloud)** | **Kimi K2.6** (Moonshot) | **86.6 ± 1.0** | 90.0 | 79.6 | 99% | 79 s | $2.62 |
-| open (cloud) | **GLM-5.2** (Together) | **81.5 ± 1.3** | 88.9 | 74.7 | 99% | 43 s | $3.63 |
-| **open (local)** | **Gemma-4-31B-IT-NVFP4-0713** (dense, thinking)¹¹ | **80.7 ± 0.7** | 84.0 | 75.7 | 99% | 528 s | **$0 API²** |
-| **open (local)** | **Qwen3.6-27B-NVFP4-0712** (dense, thinking)⁹ | **80.2 ± 0.8** | 83.4 | 75.7 | **100%** | 204 s | **$0 API²** |
-| **open (local)** | **Muse-Glimmer-30B-NVFP4** (dense, thinking)⁷ | **79.9 ± 0.8** | 83.4 | 76.4 | 98% | **322 s** | **$0 API²** |
-| **open (local)** | **Muse-Glimmer-30B** (dense, thinking, BF16) | **77.9**⁶ | 79.1 | 76.7 | 97%⁶ | 776 s | **$0 API²** |
-| open (cloud) | **deepseek-v4-flash** | **77.1** | 79.1 | 75.1 | 95% | 26 s | **$0.17** |
-| **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **low**)⁸ | **75.7 ± 1.0** | 79.7 | 69.5 | **100%** | **299 s** | **$0 API²** |
-| **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **xhigh**)⁸ | **75.2 ± 1.1** | 80.4 | 68.9 | **100%** | 375 s | **$0 API²** |
-| baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 79.3 | 67.7 | 92% | 69 s | $3.64 |
-| **open (local)** | **Qwen3.6-35B-A3B-NVFP4-0712** (thinking, MoE, no-MTP)¹⁰ | **73.8 ± 0.7** | 77.6 | 70.2 | 98% | **106 s** | **$0 API²** |
-| **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 74.2 | 68.7 | 99% | 431 s | $0 API² |
-| **open (local)** | **Laguna-S-2.1-NVFP4** (poolside, 117.6B-A8.5B MoE, no spec-dec)¹⁴ | **69.7 ± 0.9** | 72.9 | 64.8 | 94% | 842 s | **$0 API²** |
-| **open (local)** | **GLM-4.5-Air** | **67.7** | 69.2 | 66.0 | **100%** | 520 s | $0 API² |
-| **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 70.1 | 65.4 | 96% | 233 s | $0 API² |
-| **open (local)** | **Qwen-AgentWorld-35B-A3B-NVFP4** (world model, MoE)¹² | **66.4 ± 1.0** | 70.7 | 60.7 | 96% | 614 s | **$0 API²** |
-| **open (local)** | **deepseek-v4-flash** (q2, non-thinking; 1 Spark)⁵ | **63.4** | 67.7 | 61.3 | 82% | 375 s | $0 API² |
-| **open (local)** | **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (Mamba-2/MoE)¹³ | **60.9 ± 1.1** | 66.9 | 55.2 | 97% | 392 s | **$0 API²** |
-| **open (cloud)** | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | **56.2** | 60.2 | 53.8 | 99% | 11 s³ | $0 API² |
-| **open (local)** | **ECOM1-32B-NVFP4A16** (ECOM1-32B-BF16 quantized) | **54.6** | 57.2 | 51.8 | 98% | 50 s³ | $0 API² |
-| open (local) | gpt-oss-120b | 52.8 | — | — | 70% | 149 s | $0 API² |
-| open (local) | Qwen3-Next-80B-A3B-Thinking | 51.5 | 52.4 | 50.6 | 95% | 443 s | $0 API² |
-| **open (cloud)** | **ECOM1-8B-A1B-BF16** (LFM2.5-8B-A1B + SFT; H100) | **44.0** | 46.0 | 42.0 | 96% | 10 s⁴ | $0 API² |
-| open (local) | Qwen3-Next-80B-A3B-Instruct | 40.6 | 43.1 | 36.7 | 87% | 210 s | $0 API² |
-| **open (local)** | **ECOM1-8B-A1B-BF16** (same weights, on-device; GB10) | **37.5** | 42.0 | 33.0 | 92% | 50 s⁴ | $0 API² |
+| Class | Model | Score avg | Time/task | **LLM calls/task** |
+|---|---|---:|---:|---:|
+| baseline (cloud) | **gpt-5.5** (low) | **94.5 ± 0.3**¹ | 31 s | 8.8‡ |
+| **open (cloud)** | **deepseek-v4-pro** | **89.6** | 28 s | 9.4 |
+| **open (cloud)** | **Kimi K2.6** (Moonshot) | **86.6 ± 1.0** | 79 s | 9.7 |
+| open (cloud) | **GLM-5.2** (Together) | **81.5 ± 1.3** | 43 s | 9.4 |
+| **open (local)** | **Gemma-4-31B-IT-NVFP4-0713** (dense, thinking)¹¹ | **80.7 ± 0.7** | 528 s | 7.0 |
+| **open (local)** | **Qwen3.6-27B-NVFP4-0712** (dense, thinking)⁹ | **80.2 ± 0.8** | 204 s | 8.8 |
+| **open (local)** | **Muse-Glimmer-30B-NVFP4** (dense, thinking)⁷ | **79.9 ± 0.8** | **322 s** | 10.8‡ |
+| **open (local)** | **Muse-Glimmer-30B** (dense, thinking, BF16) | **77.9**⁶ | 776 s | 10.8‡ |
+| open (cloud) | **deepseek-v4-flash** | **77.1** | 26 s | 10.4 |
+| **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **low**)⁸ | **75.7 ± 1.0** | **299 s** | 7.8 |
+| **open (local)** | **Qwen3.8-27B-NVFP4** (dense, thinking, **xhigh**)⁸ | **75.2 ± 1.1** | 375 s | 8.3 |
+| baseline (cloud) | gpt-5.4-mini (xhigh) | 71.8 | 69 s | 14.5‡ |
+| **open (local)** | **Qwen3.6-35B-A3B-NVFP4-0712** (thinking, MoE, no-MTP)¹⁰ | **73.8 ± 0.7** | **106 s** | 9.8 |
+| **open (local)** | **Nemotron-3-Super** (NVIDIA, 120B-A12B) | **71.0 ± 2.3** | 431 s | 9.0 |
+| **open (local)** | **Laguna-S-2.1-NVFP4** (poolside, 117.6B-A8.5B MoE, no spec-dec)¹⁴ | **69.7 ± 0.9** | 842 s | 11.0 |
+| **open (local)** | **GLM-4.5-Air** | **67.7** | 520 s | 9.6‡ |
+| **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 233 s | 9.4‡ |
+| **open (local)** | **Qwen-AgentWorld-35B-A3B-NVFP4** (world model, MoE)¹² | **66.4 ± 1.0** | 614 s | 8.7 |
+| **open (local)** | **deepseek-v4-flash** (q2, non-thinking; 1 Spark)⁵ | **63.4** | 375 s | 10.4 |
+| **open (local)** | **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (Mamba-2/MoE)¹³ | **60.9 ± 1.1** | 392 s | 11.8 |
+| **open (cloud)** | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | **56.2** | 11 s³ | — |
+| **open (local)** | **ECOM1-32B-NVFP4A16** (ECOM1-32B-BF16 quantized) | **54.6** | 50 s³ | — |
+| open (local) | gpt-oss-120b | 52.8 | 149 s | 5.7 |
+| open (local) | Qwen3-Next-80B-A3B-Thinking | 51.5 | 443 s | 6.0 |
+| **open (cloud)** | **ECOM1-8B-A1B-BF16** (LFM2.5-8B-A1B + SFT; H100) | **44.0** | 10 s⁴ | — |
+| open (local) | Qwen3-Next-80B-A3B-Instruct | 40.6 | 210 s | 8.4‡ |
+| **open (local)** | **ECOM1-8B-A1B-BF16** (same weights, on-device; GB10) | **37.5** | 50 s⁴ | — |
+
+‡ the figure is that model id's mean across all its runs, where this row is a subset of them.
+**LLM calls/task is an ESTIMATE** — `1 seed + steps + re-prompts + nudges` — not a measurement;
+method, per-model inputs and the parallel-tool-call caveat are in `README-tps.md`. `—` marks rows
+whose runs do not map 1:1 onto a single model id in the records.
+
+### Cost (cloud only)
+
+Only rows classed *cloud* appear here. Every **local** row is `$0 API` by construction — it runs on
+hardware already bought, so its real cost is box time, which lives in the leaderboard's `Time/task`.
+The two `$0 API²` rows below are cloud-*hosted* but **self-served** (our own ECOM1 checkpoints on
+rented GPUs), so they pay compute rather than per-token API spend.
+
+| Model | Cost/run |
+|---|---:|
+| **gpt-5.5** (low) | **~$10**¹ |
+| **deepseek-v4-pro** | **$0.46** |
+| **Kimi K2.6** (Moonshot) | $2.62 |
+| **GLM-5.2** (Together) | $3.63 |
+| **deepseek-v4-flash** | **$0.17** |
+| gpt-5.4-mini (xhigh) | $3.64 |
+| **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | $0 API² |
+| **ECOM1-8B-A1B-BF16** (LFM2.5-8B-A1B + SFT; H100) | $0 API² |
+
+### Spread and completion
+
+| Model | max | min | Completion |
+|---|---:|---:|---:|
+| **gpt-5.5** (low) | 97.2 | 92.1 | **100%** |
+| **deepseek-v4-pro** | 90.0 | 89.3 | 99% |
+| **Kimi K2.6** (Moonshot) | 90.0 | 79.6 | 99% |
+| **GLM-5.2** (Together) | 88.9 | 74.7 | 99% |
+| **Gemma-4-31B-IT-NVFP4-0713** (dense, thinking)¹¹ | 84.0 | 75.7 | 99% |
+| **Qwen3.6-27B-NVFP4-0712** (dense, thinking)⁹ | 83.4 | 75.7 | **100%** |
+| **Muse-Glimmer-30B-NVFP4** (dense, thinking)⁷ | 83.4 | 76.4 | 98% |
+| **Muse-Glimmer-30B** (dense, thinking, BF16) | 79.1 | 76.7 | 97%⁶ |
+| **deepseek-v4-flash** | 79.1 | 75.1 | 95% |
+| **Qwen3.8-27B-NVFP4** (dense, thinking, **low**)⁸ | 79.7 | 69.5 | **100%** |
+| **Qwen3.8-27B-NVFP4** (dense, thinking, **xhigh**)⁸ | 80.4 | 68.9 | **100%** |
+| gpt-5.4-mini (xhigh) | 79.3 | 67.7 | 92% |
+| **Qwen3.6-35B-A3B-NVFP4-0712** (thinking, MoE, no-MTP)¹⁰ | 77.6 | 70.2 | 98% |
+| **Nemotron-3-Super** (NVIDIA, 120B-A12B) | 74.2 | 68.7 | 99% |
+| **Laguna-S-2.1-NVFP4** (poolside, 117.6B-A8.5B MoE, no spec-dec)¹⁴ | 72.9 | 64.8 | 94% |
+| **GLM-4.5-Air** | 69.2 | 66.0 | **100%** |
+| **Gemma-4-26B-A4B** (thinking) | 70.1 | 65.4 | 96% |
+| **Qwen-AgentWorld-35B-A3B-NVFP4** (world model, MoE)¹² | 70.7 | 60.7 | 96% |
+| **deepseek-v4-flash** (q2, non-thinking; 1 Spark)⁵ | 67.7 | 61.3 | 82% |
+| **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (Mamba-2/MoE)¹³ | 66.9 | 55.2 | 97% |
+| **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | 60.2 | 53.8 | 99% |
+| **ECOM1-32B-NVFP4A16** (ECOM1-32B-BF16 quantized) | 57.2 | 51.8 | 98% |
+| gpt-oss-120b | — | — | 70% |
+| Qwen3-Next-80B-A3B-Thinking | 52.4 | 50.6 | 95% |
+| **ECOM1-8B-A1B-BF16** (LFM2.5-8B-A1B + SFT; H100) | 46.0 | 42.0 | 96% |
+| Qwen3-Next-80B-A3B-Instruct | 43.1 | 36.7 | 87% |
+| **ECOM1-8B-A1B-BF16** (same weights, on-device; GB10) | 42.0 | 33.0 | 92% |
 
 ¹ **gpt-5.5's headline is now a 29-run mean, not a single run.** `gpt55full1`–`gpt55full30`
 (2026-06-29/30, `MAX_STEPS=30`) were executed to capture FULL_TRANSCRIPT teacher traces for the
