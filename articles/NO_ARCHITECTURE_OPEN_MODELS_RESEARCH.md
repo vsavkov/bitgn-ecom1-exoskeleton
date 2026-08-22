@@ -1139,12 +1139,23 @@ nothing else.
 every run; at 0.75 its *rate* is unremarkable. The failures are filtering and arithmetic over the
 catalogue, which is exactly the column no amount of KV headroom touches.
 
-**It independently reproduces Laguna's strangest failure.** Ling scores **0.15** on OCR-crosslist
-export — the operation Laguna scores **exactly 0.00** on, and which gpt-5.5 solves at 0.97,
-Qwen3.8-27B at 0.84 and Muse-Glimmer at 0.65. Two unrelated architectures from two vendors failing
-the same operation almost completely, while the rest of the field clears 0.57, shifts the likely
-cause from *two model quirks* to something task-side that strong models paper over. That is now the
-single best-evidenced open lead in this study.
+**It reproduces Laguna's strangest failure — and together they locate it.** Ling scores **0.15** on
+OCR-crosslist export, where Laguna scores **exactly 0.00**. It is tempting to read two unrelated
+architectures failing one operation as a task defect; the per-model numbers say otherwise. Across
+five catalogue/document operations, the two large sparse MoE models collapse while the three dense
+~27–31B locals sit at or above the field mean:
+
+| operation | field | ceiling | Ling | Laguna | Muse-Glimmer | Gemma-4-31B | Qwen3.6-27B |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `competitor_request_ocr` | 0.59 | 0.97 | **0.15** | **0.00** | 0.68 | 0.57 | 0.60 |
+| `constrained_search` | 0.62 | 0.78 | **0.17** | **0.28** | 0.79 | 0.75 | 0.72 |
+| `described_product_match` | 0.79 | 0.96 | **0.37** | **0.68** | 0.97 | 1.00 | 0.80 |
+| `availability_multi_count` | 0.66 | 0.99 | **0.28** | **0.32** | 0.97 | 0.82 | 0.82 |
+| `sku_variant_resolution` | 0.74 | 0.89 | **0.57** | **0.70** | 0.90 | 0.80 | 0.73 |
+
+Catalogue search, description matching and stock counting are exactly where **low active-parameter
+MoE** gives way, and it is the same axis this study keeps landing on from other directions — now
+resolved per operation rather than per model.
 
 **Serving it is a three-part trap, and none of the parts is the one that looks likely.** The
 `AtomicChat` NVFP4 repack ships `config.json` **with no `model_type` key**; vLLM's `is_deepseek_mla()`
