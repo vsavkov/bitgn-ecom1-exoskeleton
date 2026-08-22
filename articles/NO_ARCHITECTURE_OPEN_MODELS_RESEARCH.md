@@ -29,6 +29,10 @@ is to isolate **what the model itself contributes** when the architecture is min
 > - **"Thinking" models can ship with reasoning off.** Gemma-4 scored 49.9 looking non-reasoning, 67.0
 >   (A4B) / ~81 (31B) with `enable_thinking` turned on server-side — always check the default. (And a
 >   contiguous 25-task probe scored the 31B at 64%, ~19 pts low — **confirm with full runs, not subsets**.)
+> - **A better-served model is not a better model.** Ling-3.0-flash was picked to fix the memory
+>   pressure and slow decode that capped Laguna on one Spark, and it fixed both — 92.5× KV headroom
+>   vs 7.7×, ~2× the speed, essentially no cap-timeouts — and scored **4.5 points lower** (65.2 vs
+>   69.7). Serving wins convert into score only while a model is running out of time.
 > - **No open model needs an exoskeleton to be useful here.** A single capable model + deterministic
 >   tools gets DeepSeek-pro to ~90. The residual gap to gpt-5.5 is model class, not scaffolding.
 
@@ -104,6 +108,7 @@ so this table stays readable:
 | **open (local)** | **GLM-4.5-Air** | **67.7** | 520 s | 9.6‡ |
 | **open (local)** | **Gemma-4-26B-A4B** (thinking) | **67.0** | 233 s | 9.4‡ |
 | **open (local)** | **Qwen-AgentWorld-35B-A3B-NVFP4** (world model, MoE)¹² | **66.4 ± 1.0** | 614 s | 8.7 |
+| **open (local)** | **Ling-3.0-flash-NVFP4** (inclusionAI, 124.4B-A5.1B hybrid MoE, no spec-dec)¹⁵ | **65.2 ± 0.9** | 444 s | 6.6* |
 | **open (local)** | **deepseek-v4-flash** (q2, non-thinking; 1 Spark)⁵ | **63.4** | 375 s | 10.4 |
 | **open (local)** | **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (Mamba-2/MoE)¹³ | **60.9 ± 1.1** | 392 s | 11.8 |
 | **open (cloud)** | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | **56.2** | 11 s³ | — |
@@ -115,7 +120,11 @@ so this table stays readable:
 | **open (local)** | **ECOM1-8B-A1B-BF16** (same weights, on-device; GB10) | **37.5** | 50 s⁴ | — |
 
 ‡ the figure is that model id's mean across all its runs, where this row is a subset of them.
-**LLM calls/task is an ESTIMATE** — `1 seed + steps + re-prompts + nudges` — not a measurement;
+\* **measured**, not estimated: `llmCalls` became a recorded field on the trial record on
+2026-08-21, so Ling is the first row here whose call count is counted rather than reconstructed.
+It lands **below** every estimate in the column, which is worth knowing before the estimates are
+read as measurements — the formula counts re-prompts and nudges that a well-behaved run never fires.
+**LLM calls/task is otherwise an ESTIMATE** — `1 seed + steps + re-prompts + nudges` — not a measurement;
 method, per-model inputs and the parallel-tool-call caveat are in `README-tps.md`. `—` marks rows
 whose runs do not map 1:1 onto a single model id in the records.
 
@@ -159,6 +168,7 @@ rented GPUs), so they pay compute rather than per-token API spend.
 | **GLM-4.5-Air** | 69.2 | 66.0 | **100%** |
 | **Gemma-4-26B-A4B** (thinking) | 70.1 | 65.4 | 96% |
 | **Qwen-AgentWorld-35B-A3B-NVFP4** (world model, MoE)¹² | 70.7 | 60.7 | 96% |
+| **Ling-3.0-flash-NVFP4** (inclusionAI, 124.4B-A5.1B hybrid MoE, no spec-dec)¹⁵ | 68.9 | 61.0 | 97% |
 | **deepseek-v4-flash** (q2, non-thinking; 1 Spark)⁵ | 67.7 | 61.3 | 82% |
 | **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (Mamba-2/MoE)¹³ | 66.9 | 55.2 | 97% |
 | **ECOM1-32B-BF16** (Olmo-3.1-32B-Think + SFT) | 60.2 | 53.8 | 99% |
@@ -319,6 +329,21 @@ expert in layers 40–47 in BF16 — which is why utilisation rather than contex
 concurrency knob on a 128 GB box. Its two dominant losses are the wall-clock (5.3 cap-timeouts/run,
 5.2 points) and a **0.00 mean on OCR-crosslist export tasks**, an operation gpt-5.5 solves at 0.97.
 
+¹⁵ **Ling-3.0-flash-NVFP4** — inclusionAI (Ant Group), MIT, `BailingMoeV3ForCausalLM`, 124.4B
+total / **~5.1B active** MoE (512 routed experts + 1 shared, 8 active per token) with **hybrid
+attention: 35 KDA linear-attention layers to 7 Gated-MLA layers in a 5:1 stack**, 42 layers,
+256K context, thinking on by default. **10 runs: 65.18 ± 0.91** (sd 2.87, 61.0–68.9), **97%
+completion**, ~444 s/task at concurrency 16, **1 empty answer and 3 cap-timeouts across 998
+trials**. Served on the **stock** `vllm/vllm-openai:nightly-aarch64` with the `ling3` parsers,
+ctx 32768, `--gpu-memory-utilization 0.80 --max-num-seqs 32`, no speculative decoding (the NVFP4
+quant retains an MTP block at layer 42; omitted per `README-MTP.md`). Two engine-side notes it
+cost two days to establish: the `AtomicChat` repack ships `config.json` **with no `model_type`**,
+which alone blocks the model (vLLM's `is_deepseek_mla()` is a model_type allowlist that already
+contained `bailing_hybrid`), and its Triton MLA decode kernel asks for 102400 bytes of shared
+memory against the GB10's 101376 — over by exactly 1 KiB, fixed by widening a guard vLLM already
+has. A self-built engine from the vendor's own fork served cleanly and produced **NaN garbage**;
+a known-good control model on the same box exposed it. Full recipe in `lingrun.sh`.
+
 ![ECOM1/prod score leaderboard — deepseek-v4-pro 89.6 leads the open models; Gemma-4-31B 80.7, Qwen3.6-27B-NVFP4-0712 80.2 and Muse-Glimmer-30B-NVFP4 79.9 are a three-way tie at the top of local](images/leaderboard.svg)
 
 *The charts show **one row per model**: where a model has been measured in more than one build, the
@@ -356,6 +381,13 @@ Qwen3.6-27B's June build (77.4) and Qwen3.6-35B-A3B's (71.6) are both handled th
 - **Completion discipline is a hard gate**, separate from intelligence: gpt-oss is *capable*
   (76% pass-rate *when it completes*) but only completes 70% of tasks, so it scores like the weak
   Qwen3-Thinking. GLM and DeepSeek complete 99–100% and convert their capability into score.
+- **Serving efficiency stops converting into score the moment a model stops running out of time,**
+  and Ling-3.0-flash is the clean test of it. It was chosen to fix exactly what held Laguna back on
+  this box, and it did — **92.5× KV headroom against 7.7×, 444 s/task against 842, 3 cap-timeouts per
+  1000 trials against 53** — for a score **4.5 points lower** (65.2 ± 0.9 vs 69.7 ± 0.9). Laguna was
+  losing to the clock; Ling loses on answers, in catalogue search and counting. Memory footprint and
+  decode speed predict wall-clock and nothing else, so they are the wrong axis on which to pick the
+  next candidate — which is how this one was picked.
 
 **Decision matrix.**
 
@@ -1075,6 +1107,61 @@ mid-field and the wall-clock is the worst here. On this box, a 31B dense model b
 points at half the runtime. **Parameter count did not transfer to agentic ability**, which is the same
 lesson this study keeps finding from the other direction.
 
+### Ling-3.0-flash — the box's best *serving* fit, and it buys nothing (≈65.2)
+
+inclusionAI (Ant Group) released **Ling-3.0-flash** under MIT: 124.4B total / **~5.1B active** MoE,
+512 routed experts + 1 shared, and — the reason it was tested — **hybrid attention, 35 KDA
+(Kimi Delta Attention, linear) layers to 7 Gated-MLA layers in a 5:1 stack**, 256K context. It was
+picked as the direct answer to the two things that sank Laguna on this hardware: a 76.9 GB NVFP4
+checkpoint instead of 99.7 GB, and linear attention whose state does not grow with context.
+
+**Both hypotheses were confirmed, and neither was worth a point.** Against Laguna on the same box:
+
+| | Laguna-S-2.1 | Ling-3.0-flash |
+|---|---:|---:|
+| KV headroom @ ctx 32768 | 7.7× | **92.5×** |
+| Time/task | 842 s | **444 s** |
+| Cap-timeouts | 5.3/run (53 per 1000 trials) | **3 per 1000 trials** |
+| Empty answers | 0/1000 | 1/998 |
+| Campaign wall-clock (10 runs) | ~33 h | **~10 h** |
+| **Score** | **69.7 ± 0.9** | **65.2 ± 0.9** |
+
+It scores **4.5 points lower at 3.5 SE** — a real gap, in the wrong direction, on every
+serving axis it was supposed to win. **Laguna was losing to the clock; Ling loses on answers**, and
+the clock was never its binding constraint. That is the transferable result: once a model has stopped
+running out of time, further serving-side wins stop converting into score. Picking the next candidate
+on memory footprint and decode speed — which is how this one was chosen — predicts wall-clock and
+nothing else.
+
+**Where it loses.** 34.7 points per run, concentrated in catalogue search and counting:
+`constrained_search` **0.17**, `availability_multi_count` **0.28**, `described_product_match` **0.37**,
+`discount_apply` **0.29**. `checkout` leads the raw table at 5.4 points/run only because it is 22% of
+every run; at 0.75 its *rate* is unremarkable. The failures are filtering and arithmetic over the
+catalogue, which is exactly the column no amount of KV headroom touches.
+
+**It independently reproduces Laguna's strangest failure.** Ling scores **0.15** on OCR-crosslist
+export — the operation Laguna scores **exactly 0.00** on, and which gpt-5.5 solves at 0.97,
+Qwen3.8-27B at 0.84 and Muse-Glimmer at 0.65. Two unrelated architectures from two vendors failing
+the same operation almost completely, while the rest of the field clears 0.57, shifts the likely
+cause from *two model quirks* to something task-side that strong models paper over. That is now the
+single best-evidenced open lead in this study.
+
+**Serving it is a three-part trap, and none of the parts is the one that looks likely.** The
+`AtomicChat` NVFP4 repack ships `config.json` **with no `model_type` key**; vLLM's `is_deepseek_mla()`
+is a *model_type allowlist* that returns False on its first line when the attribute is absent, so
+head size falls through to the generic 128 and MLA rejects it. `bailing_hybrid` was already in that
+allowlist in every image on the box — so a two-day "unsupported architecture" was one missing config
+key. Past that, the Triton MLA decode kernel requests **102400 bytes of shared memory against the
+GB10's 101376** — over by exactly 1 KiB, in a code path vLLM already guards for a larger block size.
+And a source build from the vendor's own fork, made on the theory that upstream could not run this
+attention, served cleanly while emitting **NaN garbage on every prompt**; it was caught only by
+running a known-good model through the same engine. **Run a control model before trusting a
+self-built engine** — a numerically dead server passes every liveness check there is.
+
+**Verdict.** The best-served large local model in this study, and mid-field on score. Its value here
+is negative evidence: it is the clean test of whether serving efficiency converts into agentic
+quality on this benchmark, and the answer is no.
+
 ### gpt-oss-120b — capable but stalls (≈52.8)
 - **What it is.** OpenAI open-weight 120B/5.1B-active MoE, MXFP4, harmony format, on the Spark.
 - **Numbers.** 1 run: 52.8, **70% completion**, ~149 s/task, $0 API.
@@ -1151,6 +1238,7 @@ for Gemma — the latter two inconclusive), and deleting them would leave those 
 | **Nemotron-3.5-Lightning-30B-A3B-NVFP4** (vLLM v0.27.1, no spec-dec, conc 16) | `nemo35a`–`nemo35j` | 55.2–66.9 (mean 60.89 ± 1.14) | 10 |
 | **Qwen-AgentWorld-35B-A3B-NVFP4** (lovedheart NVFP4, world model, conc 16) | `awa`–`awj` | 60.7–70.7 (mean 66.40 ± 0.99) | 10 |
 | **Laguna-S-2.1-NVFP4** (poolside, vLLM 0.27.1, no spec-dec, ctx 32768, util 0.88, conc 7) | `laguna04-01`–`laguna04-10` | 64.8–72.9 (mean 69.66 ± 0.89) | 10 |
+| **Ling-3.0-flash-NVFP4** (AtomicChat NVFP4, stock nightly-aarch64 + GB10 smem patch, `model_type` override, thinking, no spec-dec, conc 16, `TASK_CAP_S=3600`) | `ling01-01`–`ling01-10` | 61.0–68.9 (mean 65.18 ± 0.91) | 10 |
 | **Qwen3.6-35B-A3B-NVFP4-0712** (rev `739af1e7`, vLLM 0.26.1rc1, thinking, MoE, no-MTP, conc 8) | `q35b0712a`–`q35b0712j` | 70.2–77.6 (mean 73.78 ± 0.67) | 10 |
 | Qwen3.6-35B-A3B-NVFP4 (June rev `612d523c`, NGC 26.05, **superseded**‡) | `q36nomtp1`–`q36nomtp6` | 75.9, 65.8, 68.4, 73.2, 69.8, 76.7 (mean 71.64 ± 1.77) | 6 |
 | Qwen3.6-35B-A3B-NVFP4 (thinking, MoE, MTP — worse) | `q36mprod1`–`q36mprod3` | 63.9, 63.2, 68.4 | 3 |
